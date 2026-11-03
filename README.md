@@ -77,6 +77,12 @@ ttydeck connect prod-db
 ttydeck favorite prod-db on
 ttydeck tag prod-db prod db
 ttydeck note prod-db "primary database"
+
+# Record, replay, and search sessions
+ttydeck -record
+ttydeck connect -record prod-db
+ttydeck replay ~/.config/ttydeck/recordings/prod-db-*.cast
+ttydeck search "error"
 ```
 
 ### Keys

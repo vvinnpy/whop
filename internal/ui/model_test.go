@@ -60,7 +60,7 @@ func newTestModel(t *testing.T, hosts []sshconfig.Host) (*Model, *string) {
 		Load: func() ([]sshconfig.Host, error) {
 			return hosts, nil
 		},
-		Connect: func(host sshconfig.Host) tea.Cmd {
+		Connect: func(host sshconfig.Host, _ bool) tea.Cmd {
 			connected = host.Alias
 			return nil
 		},
@@ -276,7 +276,7 @@ func TestToggleFavorite(t *testing.T) {
 		Load: func() ([]sshconfig.Host, error) {
 			return hosts, nil
 		},
-		Connect: func(sshconfig.Host) tea.Cmd { return nil },
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
 		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
 			toggledAlias = host.Alias
 			toggledValue = favorite
@@ -295,5 +295,34 @@ func TestToggleFavorite(t *testing.T) {
 	}
 	if !strings.Contains(plainView(m), "*prod-db") {
 		t.Fatalf("favorite marker missing:\n%s", plainView(m))
+	}
+}
+
+func TestRecordToggle(t *testing.T) {
+	hosts := testHosts()
+	var recorded bool
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(_ sshconfig.Host, record bool) tea.Cmd {
+			recorded = record
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("R"))
+	if !m.record {
+		t.Fatal("recording should be enabled")
+	}
+	if !strings.Contains(plainView(m), "rec") {
+		t.Fatalf("recording badge missing:\n%s", plainView(m))
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !recorded {
+		t.Fatal("connect did not receive recording flag")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	gliderssh "github.com/gliderlabs/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 
+	"ttydeck/internal/session"
 	"ttydeck/internal/sshconfig"
 )
 
@@ -479,5 +480,34 @@ func TestKeyboardInteractiveAuth(t *testing.T) {
 	}
 	if provider.calls == 0 {
 		t.Fatal("keyboard-interactive provider was not called")
+	}
+}
+
+func TestInteractiveSessionRecording(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	server := newTestSSHServer(t, public)
+	connector := newTestConnector()
+	var cast, transcript bytes.Buffer
+	runner := NewRunner(connector, func() (int, int) { return 80, 24 })
+	runner.RecordingFactory = func(_ sshconfig.Host, width, height int) (io.WriteCloser, error) {
+		return session.NewRecording(&cast, &transcript, width, height, time.Now())
+	}
+
+	host := sshconfig.Host{
+		Alias:         "test-host",
+		HostName:      "127.0.0.1",
+		Port:          server.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(context.Background(), host, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(transcript.String(), "hello from test") {
+		t.Fatalf("transcript = %q", transcript.String())
+	}
+	if !strings.Contains(cast.String(), `"o"`) || !strings.Contains(cast.String(), "hello from test") {
+		t.Fatalf("cast = %q", cast.String())
 	}
 }

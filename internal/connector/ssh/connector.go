@@ -388,10 +388,14 @@ func expandHome(path string) string {
 	return path
 }
 
+// RecordingFactory starts an output recorder for one session.
+type RecordingFactory func(host sshconfig.Host, width, height int) (io.WriteCloser, error)
+
 // Runner runs an interactive SSH shell.
 type Runner struct {
-	Connector *Connector
-	Size      func() (width, height int)
+	Connector        *Connector
+	Size             func() (width, height int)
+	RecordingFactory RecordingFactory
 }
 
 // NewRunner creates an interactive runner.
@@ -432,8 +436,21 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		return fmt.Errorf("request pty on %s: %w", host.Alias, err)
 	}
 
+	stdoutWriter := stdout
+	if stdoutWriter == nil {
+		stdoutWriter = io.Discard
+	}
+	if r.RecordingFactory != nil {
+		recorder, err := r.RecordingFactory(host, width, height)
+		if err != nil {
+			return fmt.Errorf("start recording on %s: %w", host.Alias, err)
+		}
+		defer recorder.Close()
+		stdoutWriter = io.MultiWriter(stdoutWriter, recorder)
+	}
+
 	session.Stdin = stdin
-	session.Stdout = stdout
+	session.Stdout = stdoutWriter
 	session.Stderr = stderr
 	if err := session.Shell(); err != nil {
 		return fmt.Errorf("start shell on %s: %w", host.Alias, err)

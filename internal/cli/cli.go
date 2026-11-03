@@ -16,6 +16,7 @@ import (
 
 	sshconn "ttydeck/internal/connector/ssh"
 	"ttydeck/internal/core"
+	"ttydeck/internal/session"
 	"ttydeck/internal/sshconfig"
 	"ttydeck/internal/store"
 	"ttydeck/internal/ui"
@@ -26,13 +27,14 @@ const Version = "0.1.0-dev"
 
 // Deps contains injectable process dependencies for tests.
 type Deps struct {
-	Stdin      io.Reader
-	Stdout     io.Writer
-	Stderr     io.Writer
-	LoadConfig func(string) ([]sshconfig.Host, error)
-	Connect    func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer) error
-	RunTUI     func(ui.Options) error
-	OpenStore  func() (MetaStore, error)
+	Stdin        io.Reader
+	Stdout       io.Writer
+	Stderr       io.Writer
+	LoadConfig   func(string) ([]sshconfig.Host, error)
+	Connect      func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool) error
+	RunTUI       func(ui.Options) error
+	OpenStore    func() (MetaStore, error)
+	RecordingDir string
 }
 
 // MetaStore is the metadata surface used by the CLI and TUI.
@@ -48,13 +50,14 @@ type MetaStore interface {
 // NewDeps returns OS-backed dependencies.
 func NewDeps() Deps {
 	return Deps{
-		Stdin:      os.Stdin,
-		Stdout:     os.Stdout,
-		Stderr:     os.Stderr,
-		LoadConfig: sshconfig.Load,
-		Connect:    defaultConnect,
-		RunTUI:     defaultRunTUI,
-		OpenStore:  defaultOpenStore,
+		Stdin:        os.Stdin,
+		Stdout:       os.Stdout,
+		Stderr:       os.Stderr,
+		LoadConfig:   sshconfig.Load,
+		Connect:      defaultConnect,
+		RunTUI:       defaultRunTUI,
+		OpenStore:    defaultOpenStore,
+		RecordingDir: defaultRecordingDir(),
 	}
 }
 
@@ -76,6 +79,10 @@ func Run(args []string, deps Deps) int {
 		return runNote(args[1:], deps)
 	case "tag":
 		return runTag(args[1:], deps)
+	case "replay":
+		return runReplay(args[1:], deps)
+	case "search":
+		return runSearch(args[1:], deps)
 	case "version", "--version", "-v":
 		fmt.Fprintf(deps.Stdout, "ttydeck %s\n", Version)
 		return 0
@@ -113,6 +120,9 @@ func normalizeDeps(deps Deps) Deps {
 	if deps.OpenStore == nil {
 		deps.OpenStore = defaultOpenStore
 	}
+	if deps.RecordingDir == "" {
+		deps.RecordingDir = defaultRecordingDir()
+	}
 	return deps
 }
 
@@ -120,6 +130,7 @@ func runTUI(args []string, deps Deps) int {
 	fs := newFlagSet("ttydeck", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	showAll := fs.Bool("all", false, "show Git/Auth hosts too")
+	record := fs.Bool("record", false, "record interactive sessions")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -140,14 +151,15 @@ func runTUI(args []string, deps Deps) int {
 		ConfigPath:    configPathValue,
 		InitialFilter: initialFilter,
 		ShowAll:       *showAll,
+		Record:        *record,
 		Load: func() ([]sshconfig.Host, error) {
 			return loadHosts(deps, metaStore, configPathValue)
 		},
 		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
 			return metaStore.SetFavorite(host.Alias, favorite)
 		},
-		Connect: func(host sshconfig.Host) tea.Cmd {
-			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue), Host: host}, func(err error) tea.Msg {
+		Connect: func(host sshconfig.Host, record bool) tea.Cmd {
+			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir), Host: host}, func(err error) tea.Msg {
 				if err == nil {
 					_ = metaStore.RecordConnect(host.Alias, time.Now())
 				}
@@ -219,6 +231,7 @@ func runList(args []string, deps Deps) int {
 func runConnect(args []string, deps Deps) int {
 	fs := newFlagSet("ttydeck connect", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	record := fs.Bool("record", false, "record the session")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -240,7 +253,7 @@ func runConnect(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
 		return 1
 	}
-	if err := deps.Connect(host, hosts, deps.Stdin, deps.Stdout, deps.Stderr); err != nil {
+	if err := deps.Connect(host, hosts, deps.Stdin, deps.Stdout, deps.Stderr, *record); err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
@@ -397,17 +410,61 @@ func runTag(args []string, deps Deps) int {
 	return 0
 }
 
-func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) error {
-	runner := sshRunnerWithHosts(hosts)
+func runReplay(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck replay", deps)
+	speed := fs.Float64("speed", 1, "playback speed")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck replay [flags] <file.cast>")
+		return 2
+	}
+	if err := session.ReplayFile(fs.Arg(0), deps.Stdout, *speed); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runSearch(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck search", deps)
+	dir := fs.String("dir", deps.RecordingDir, "recording directory")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() == 0 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck search [flags] <query>")
+		return 2
+	}
+	matches, err := session.Search(*dir, strings.Join(fs.Args(), " "))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	for _, match := range matches {
+		fmt.Fprintf(deps.Stdout, "%s:%d: %s\n", match.Path, match.Line, match.Text)
+	}
+	return 0
+}
+
+func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool) error {
+	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir())
 	return runner.Run(context.Background(), host, stdin, stdout, stderr)
 }
 
-func sshRunnerForConfig(path string) *sshconn.Runner {
+func sshRunnerForConfig(path string, record bool, recordingDir string) *sshconn.Runner {
 	hosts, _ := sshconfig.Load(path)
-	return sshRunnerWithHosts(hosts)
+	return sshRunnerWithHosts(hosts, record, recordingDir)
 }
 
-func sshRunnerWithHosts(hosts []sshconfig.Host) *sshconn.Runner {
+func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string) *sshconn.Runner {
 	byAlias := make(map[string]sshconfig.Host, len(hosts))
 	for _, host := range hosts {
 		byAlias[host.Alias] = host
@@ -419,7 +476,14 @@ func sshRunnerWithHosts(hosts []sshconfig.Host) *sshconn.Runner {
 			return host, ok
 		},
 	})
-	return sshconn.NewRunner(connector, nil)
+	runner := sshconn.NewRunner(connector, nil)
+	if record {
+		runner.RecordingFactory = func(host sshconfig.Host, width, height int) (io.WriteCloser, error) {
+			recording, _, err := session.NewFileRecording(recordingDir, host.Alias, width, height, time.Now())
+			return recording, err
+		}
+	}
+	return runner
 }
 
 func defaultRunTUI(opts ui.Options) error {
@@ -445,6 +509,14 @@ func defaultStorePath() string {
 		dir = "."
 	}
 	return filepath.Join(dir, "ttydeck", "state.db")
+}
+
+func defaultRecordingDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		dir = "."
+	}
+	return filepath.Join(dir, "ttydeck", "recordings")
 }
 
 func defaultConfigPath() string {
@@ -484,11 +556,14 @@ Usage:
   ttydeck favorite [flags] <alias> <on|off>
   ttydeck note [flags] <alias> [text...]
   ttydeck tag [flags] <alias> [tag...]
+  ttydeck replay [flags] <file.cast>
+  ttydeck search [flags] <query>
   ttydeck version                   print version
 
 Flags for ttydeck:
   -config path   path to ssh config (default ~/.ssh/config)
   -all           show Git/Auth hosts too
+  -record        record interactive sessions
 
 Flags for list:
   -config path   path to ssh config
@@ -496,5 +571,6 @@ Flags for list:
   -json          emit JSON
 
 Flags for connect:
-  -config path   path to ssh config`)
+  -config path   path to ssh config
+  -record        record the session`)
 }

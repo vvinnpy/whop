@@ -51,7 +51,11 @@ func (m *Model) View() string {
 func (m *Model) viewHeader(width int) string {
 	count := fmt.Sprintf("%d/%d hosts", len(m.filtered), len(m.allHosts))
 	left := styleTitle.Render(" ttydeck ") + styleDim.Render(" "+count+"  "+m.configPath)
-	mode := styleAccent.Render("[" + m.modeLabel() + "]")
+	modeText := m.modeLabel()
+	if m.record {
+		modeText += " rec"
+	}
+	mode := styleAccent.Render("[" + modeText + "]")
 	if ansi.StringWidth(left)+ansi.StringWidth(mode)+1 > width {
 		left = ansi.Truncate(left, max(1, width-ansi.StringWidth(mode)-1), "~")
 	}
@@ -197,6 +201,7 @@ func (m *Model) viewHelp(width int) string {
 		"  r           reload config",
 		"  a           toggle servers / all",
 		"  f           toggle favorite",
+		"  R           toggle session recording",
 		"  esc         clear filter or quit",
 		"  ?           close help",
 	}
@@ -211,7 +216,7 @@ func (m *Model) viewFooter(width int) string {
 	if m.filterFocused {
 		hint = " type filter  enter connect  esc clear  ctrl+u clear"
 	} else {
-		hint = " enter connect  / filter  j/k  f fav  r reload  a all  ? help  q quit"
+		hint = " enter connect  / filter  j/k  f fav  R rec  a all  ? help  q quit"
 	}
 	return styleDim.Render(ansi.Truncate(hint, width, "~"))
 }

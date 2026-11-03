@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +40,7 @@ type testDeps struct {
 	tuiErr    error
 	loadPath  string
 	metaStore *store.Store
+	recorded  bool
 }
 
 func newTestDeps() *testDeps {
@@ -54,8 +57,9 @@ func newTestDeps() *testDeps {
 			td.loadPath = path
 			return cliHosts(), nil
 		},
-		Connect: func(host sshconfig.Host, _ []sshconfig.Host, _ io.Reader, _, _ io.Writer) error {
+		Connect: func(host sshconfig.Host, _ []sshconfig.Host, _ io.Reader, _, _ io.Writer, record bool) error {
 			td.connected = host.Alias
+			td.recorded = record
 			return nil
 		},
 		RunTUI: func(opts ui.Options) error {
@@ -69,6 +73,7 @@ func newTestDeps() *testDeps {
 		OpenStore: func() (MetaStore, error) {
 			return persistentTestStore{td.metaStore}, nil
 		},
+		RecordingDir: filepath.Join(os.TempDir(), "ttydeck-test-recordings"),
 	}
 	return td
 }
@@ -167,7 +172,7 @@ func TestConnectUsage(t *testing.T) {
 
 func TestTUIOptions(t *testing.T) {
 	td := newTestDeps()
-	if code := Run([]string{"-config", "/tmp/ssh_config", "-all", "prod", "db"}, td.deps); code != 0 {
+	if code := Run([]string{"-config", "/tmp/ssh_config", "-all", "-record", "prod", "db"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d, stderr=%s", code, td.stderr.String())
 	}
 	if !td.tuiRan {
@@ -178,6 +183,9 @@ func TestTUIOptions(t *testing.T) {
 	}
 	if !td.tuiOpts.ShowAll {
 		t.Fatal("show all not set")
+	}
+	if !td.tuiOpts.Record {
+		t.Fatal("record flag not set")
 	}
 	if td.tuiOpts.ConfigPath != "/tmp/ssh_config" {
 		t.Fatalf("config path = %q", td.tuiOpts.ConfigPath)
@@ -314,5 +322,49 @@ func TestConnectRecordsLastConnection(t *testing.T) {
 	}
 	if meta.ConnectCount != 1 || meta.LastConnectedAt.IsZero() {
 		t.Fatalf("connection not recorded: %+v", meta)
+	}
+}
+
+func TestConnectRecordFlag(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"connect", "-record", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	if !td.recorded {
+		t.Fatal("record flag was not passed to connector")
+	}
+}
+
+func TestReplayCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.cast")
+	cast := `{"version":2,"width":80,"height":24,"timestamp":0}
+[0,"o","hello replay\n"]
+`
+	if err := os.WriteFile(path, []byte(cast), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	if code := Run([]string{"replay", "-speed", "1000", path}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	if !strings.Contains(td.stdout.String(), "hello replay") {
+		t.Fatalf("replay output = %q", td.stdout.String())
+	}
+}
+
+func TestSearchCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.txt")
+	if err := os.WriteFile(path, []byte("line one\nprod database\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	td.deps.RecordingDir = dir
+	if code := Run([]string{"search", "prod"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	if !strings.Contains(td.stdout.String(), path+":2: prod database") {
+		t.Fatalf("search output = %q", td.stdout.String())
 	}
 }

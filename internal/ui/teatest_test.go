@@ -17,7 +17,7 @@ func TestTeatestInitialRenderAndFilter(t *testing.T) {
 		Load: func() ([]sshconfig.Host, error) {
 			return testHosts(), nil
 		},
-		Connect: func(sshconfig.Host) tea.Cmd { return nil },
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
 	})
 
 	tm := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(120, 30))

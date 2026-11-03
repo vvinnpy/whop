@@ -15,13 +15,14 @@ import (
 type HostLoader func() ([]sshconfig.Host, error)
 
 // ConnectFunc starts a connection and returns a Bubble Tea command.
-type ConnectFunc func(sshconfig.Host) tea.Cmd
+type ConnectFunc func(sshconfig.Host, bool) tea.Cmd
 
 // Options configures the TUI model.
 type Options struct {
 	ConfigPath     string
 	InitialFilter  string
 	ShowAll        bool
+	Record         bool
 	Load           HostLoader
 	Connect        ConnectFunc
 	ToggleFavorite func(sshconfig.Host, bool) error
@@ -51,6 +52,7 @@ type Model struct {
 	filter        string
 	filterFocused bool
 	showAll       bool
+	record        bool
 	help          bool
 
 	width  int
@@ -70,6 +72,7 @@ func New(opts Options) *Model {
 		toggleFavorite: opts.ToggleFavorite,
 		filter:         opts.InitialFilter,
 		showAll:        opts.ShowAll,
+		record:         opts.Record,
 		width:          100,
 		height:         30,
 	}
@@ -201,6 +204,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "f":
 		m.toggleSelectedFavorite()
+	case "R":
+		m.record = !m.record
+		if m.record {
+			m.status = "recording enabled for next session"
+		} else {
+			m.status = "recording disabled"
+		}
 	case "?":
 		m.help = true
 	case "esc":
@@ -234,7 +244,7 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 	}
 	m.err = nil
 	m.status = fmt.Sprintf("connecting to %s...", host.Alias)
-	return m, m.connect(host)
+	return m, m.connect(host, m.record)
 }
 
 func (m *Model) toggleSelectedFavorite() {

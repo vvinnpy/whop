@@ -33,11 +33,12 @@ connector/session abstractions rather than bolted onto the UI.
 
 ### M2 — sessions and recording
 
-- interactive session runner with PTY handover
-- asciicast v2 writer
-- transcript indexing in SQLite FTS5
-- built-in playback with `charmbracelet/x/vt`
-- per-host recording policy and redaction
+- [x] interactive session runner with PTY handover
+- [x] asciicast v2 writer
+- [x] plain-text transcript search
+- [x] built-in playback with `charmbracelet/x/vt`
+- [ ] SQLite FTS5 transcript index
+- [ ] per-host recording policy and redaction
 
 ### M3 — automation
 
