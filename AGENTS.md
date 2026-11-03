@@ -94,6 +94,7 @@ For a significant dependency or architectural choice, add an ADR under `docs/adr
 
 - `github.com/gliderlabs/ssh` — in-process SSH server for integration tests; never imported by the runtime.
 - `golang.org/x/term` — terminal size and password reads; pure Go.
+- `github.com/charmbracelet/x/exp/teatest` — Bubble Tea event-loop tests; test-only.
 
 ### Under evaluation
 

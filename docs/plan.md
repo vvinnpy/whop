@@ -70,6 +70,25 @@ connector/session abstractions rather than bolted onto the UI.
 - checksums and signing
 - auto-update with signature verification
 
+## M0 status
+
+Completed in this iteration:
+
+- [x] SSH config discovery, Include expansion, host classification
+- [x] host model and nccm-style filter
+- [x] Bubble Tea host list, detail panel, filter bar, help overlay
+- [x] in-process SSH connector using `x/crypto/ssh`
+- [x] key and ssh-agent authentication
+- [x] CLI: `ttydeck`, `ttydeck list`, `ttydeck connect`, `ttydeck version`
+- [x] unit tests and an in-process SSH integration test
+- [x] three-platform CI with `CGO_ENABLED=0`
+
+Deferred to the next milestone:
+
+- [ ] password/keyboard-interactive prompts
+- [ ] ProxyJump
+- [ ] safe config writes and metadata
+
 ## M0 architecture
 
 ```text
