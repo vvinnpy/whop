@@ -58,6 +58,40 @@ Existing connection managers are good at one or two things, but rarely all of th
 Read [AGENTS.md](AGENTS.md) before contributing. It defines the hard constraints for
 pure-Go, cross-platform, config-safe development.
 
+## Usage
+
+```bash
+# Interactive host list
+ttydeck
+
+# Start with an initial filter
+ttydeck prod
+
+# Machine-readable host list
+ttydeck list --json
+
+# Connect from the CLI
+ttydeck connect prod-db
+```
+
+### Keys
+
+| Key | Action |
+|---|---|
+| `enter` | connect |
+| `/` | focus filter |
+| `j` / `k` | move |
+| `g` / `G` | first / last |
+| `ctrl+d` / `ctrl+u` | page down / up |
+| `r` | reload config |
+| `a` | toggle servers / all |
+| `?` | help |
+| `q` | quit |
+
+The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides
+Git/Auth entries (`github.com`, `gitlab.com`, wildcard blocks, `Match` blocks)
+from the default server list. Use `-all` to inspect them.
+
 ## Status
 
 Bootstrapping. No usable release yet.

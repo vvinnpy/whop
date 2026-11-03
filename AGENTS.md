@@ -90,6 +90,15 @@ For a significant dependency or architectural choice, add an ADR under `docs/adr
 - `github.com/go-git/go-git/v5`
 - `golang.design/x/clipboard`
 
+### Test-only dependencies
+
+- `github.com/gliderlabs/ssh` — in-process SSH server for integration tests; never imported by the runtime.
+- `golang.org/x/term` — terminal size and password reads; pure Go.
+
+### Under evaluation
+
+- `github.com/xx25/go-zmodem` — pure-Go ZMODEM implementation for M4; pin/vendor and add integration tests before adoption.
+
 ### Rejected dependencies
 
 - `github.com/atotto/clipboard` — shells out to `xclip` / `xsel` / `pbcopy`.
