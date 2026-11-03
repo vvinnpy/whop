@@ -103,6 +103,7 @@ The SSH-first V0.1 scope is functional:
 - responsive nccm-style TUI
 - SSH key/password/keyboard-interactive/agent auth
 - single-hop ProxyJump
+- structured connection diagnostics (`ttydeck diagnose -json`)
 - safe single-Host config editing
 - favorites, tags, notes, recents
 - asciicast recording, replay, transcript search

@@ -41,6 +41,7 @@ type Deps struct {
 	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, io.Writer) error
 	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, io.Writer) error
 	RunCommand   func(sshconfig.Host, []sshconfig.Host, string) (string, error)
+	Diagnose     func(sshconfig.Host, []sshconfig.Host) error
 }
 
 // MetaStore is the metadata surface used by the CLI and TUI.
@@ -70,6 +71,7 @@ func NewDeps() Deps {
 		ZmodemPut:    defaultZmodemPut,
 		ZmodemGet:    defaultZmodemGet,
 		RunCommand:   defaultRunCommand,
+		Diagnose:     defaultDiagnose,
 	}
 }
 
@@ -101,6 +103,8 @@ func Run(args []string, deps Deps) int {
 		return runRemoteCommand(args[1:], deps)
 	case "snippet":
 		return runSnippet(args[1:], deps)
+	case "diagnose":
+		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
 		fmt.Fprintf(deps.Stdout, "ttydeck %s\n", Version)
 		return 0
@@ -149,6 +153,9 @@ func normalizeDeps(deps Deps) Deps {
 	}
 	if deps.RunCommand == nil {
 		deps.RunCommand = defaultRunCommand
+	}
+	if deps.Diagnose == nil {
+		deps.Diagnose = defaultDiagnose
 	}
 	return deps
 }
@@ -268,6 +275,7 @@ func runConnect(args []string, deps Deps) int {
 	fs := newFlagSet("ttydeck connect", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	record := fs.Bool("record", false, "record the session")
+	asJSON := fs.Bool("json", false, "output structured error diagnostics")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -289,13 +297,21 @@ func runConnect(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
 		return 1
 	}
-	if err := deps.Connect(host, hosts, deps.Stdin, deps.Stdout, deps.Stderr, *record); err != nil {
+	stdout, stderr := deps.Stdout, deps.Stderr
+	if *asJSON {
+		stdout, stderr = io.Discard, io.Discard
+	}
+	if err := deps.Connect(host, hosts, deps.Stdin, stdout, stderr, *record); err != nil {
+		if *asJSON {
+			writeDiagnostic(deps, host.Alias, err, true)
+			return 1
+		}
 		if errors.Is(err, sshconn.ErrInteractiveUnavailable) {
 			fmt.Fprintf(deps.Stderr, "ttydeck: %s is a Git/Auth endpoint; interactive shell is unavailable\n", host.Alias)
 			fmt.Fprintf(deps.Stderr, "try: ttydeck run %s help\n", host.Alias)
 			return 0
 		}
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		writeDiagnostic(deps, host.Alias, err, false)
 		return 1
 	}
 	if metaStore, err := deps.OpenStore(); err == nil {
@@ -699,6 +715,73 @@ func runSnippetRun(args []string, deps Deps) int {
 	return 0
 }
 
+func writeDiagnostic(deps Deps, host string, err error, asJSON bool) {
+	diagnostic := sshconn.Diagnose(host, err)
+	if asJSON {
+		encoded, encodeErr := json.Marshal(diagnostic)
+		if encodeErr != nil {
+			fmt.Fprintf(deps.Stderr, "{\"error\":\"encode diagnostic: %s\"}\n", encodeErr)
+			return
+		}
+		fmt.Fprintln(deps.Stdout, string(encoded))
+		return
+	}
+	fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+	if diagnostic.Stage != "" {
+		fmt.Fprintf(deps.Stderr, "  stage: %s\n  category: %s\n", diagnostic.Stage, diagnostic.Category)
+	}
+	if diagnostic.Hint != "" {
+		fmt.Fprintf(deps.Stderr, "  hint: %s\n", diagnostic.Hint)
+	}
+}
+
+func runDiagnose(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck diagnose", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	asJSON := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck diagnose [flags] <alias>")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	host, ok := sshconfig.Find(hosts, fs.Arg(0))
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		return 1
+	}
+	if err := deps.Diagnose(host, hosts); err != nil {
+		writeDiagnostic(deps, host.Alias, err, *asJSON)
+		return 1
+	}
+	if *asJSON {
+		diagnostic := sshconn.Diagnostic{Stage: "handshake", Category: "ok", Host: host.Alias, Message: "SSH handshake and authentication succeeded"}
+		encoded, _ := json.Marshal(diagnostic)
+		fmt.Fprintln(deps.Stdout, string(encoded))
+	} else {
+		fmt.Fprintf(deps.Stdout, "ok: %s SSH handshake and authentication succeeded\n", host.Alias)
+	}
+	return 0
+}
+
+func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host) error {
+	connector := sshConnectorWithHosts(hosts)
+	client, err := connector.Dial(context.Background(), host)
+	if err != nil {
+		return err
+	}
+	return client.Close()
+}
+
 func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command string) (string, error) {
 	connector := sshConnectorWithHosts(hosts)
 	output, err := connector.RunCommand(context.Background(), host, command)
@@ -941,6 +1024,7 @@ Usage:
   ttydeck zmodem get [flags] <alias> <remote-file...>
   ttydeck run [flags] <alias> <command...>
   ttydeck snippet <set|list|delete|run> ...
+  ttydeck diagnose [flags] <alias>
   ttydeck version                   print version
 
 Flags for ttydeck:

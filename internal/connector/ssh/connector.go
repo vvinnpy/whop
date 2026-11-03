@@ -86,7 +86,7 @@ func (c *Connector) Dial(ctx context.Context, host sshconfig.Host) (*ssh.Client,
 func (c *Connector) dialDirect(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
 	cfg, cleanup, err := c.newClientConfig(host)
 	if err != nil {
-		return nil, err
+		return nil, &StageError{Stage: "auth", Host: host.Alias, Err: err}
 	}
 	defer cleanup()
 
@@ -94,13 +94,13 @@ func (c *Connector) dialDirect(ctx context.Context, host sshconfig.Host) (*ssh.C
 	dialer := net.Dialer{Timeout: c.opts.Timeout}
 	netConn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", address, err)
+		return nil, &StageError{Stage: "dial", Host: host.Alias, Err: fmt.Errorf("dial %s: %w", address, err)}
 	}
 
 	conn, chans, reqs, err := ssh.NewClientConn(netConn, address, cfg)
 	if err != nil {
 		_ = netConn.Close()
-		return nil, fmt.Errorf("ssh handshake %s: %w", address, err)
+		return nil, &StageError{Stage: "handshake", Host: host.Alias, Err: fmt.Errorf("ssh handshake %s: %w", address, err)}
 	}
 	return ssh.NewClient(conn, chans, reqs), nil
 }
@@ -108,37 +108,37 @@ func (c *Connector) dialDirect(ctx context.Context, host sshconfig.Host) (*ssh.C
 func (c *Connector) dialViaJump(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
 	specs := strings.Split(host.ProxyJump, ",")
 	if len(specs) != 1 {
-		return nil, fmt.Errorf("%w: multi-hop ProxyJump %q", ErrProxyJump, host.ProxyJump)
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("%w: multi-hop ProxyJump %q", ErrProxyJump, host.ProxyJump)}
 	}
 
 	alias, user, port := parseJumpSpec(specs[0])
 	if alias == "" {
-		return nil, fmt.Errorf("ProxyJump %q has no host", host.ProxyJump)
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("ProxyJump %q has no host", host.ProxyJump)}
 	}
 	if strings.EqualFold(alias, host.Alias) {
-		return nil, fmt.Errorf("ProxyJump %q points to itself", host.ProxyJump)
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("ProxyJump %q points to itself", host.ProxyJump)}
 	}
 
 	jumpHost, err := c.resolveJumpHost(alias, user, port)
 	if err != nil {
-		return nil, err
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: err}
 	}
 	jumpClient, err := c.Dial(ctx, jumpHost)
 	if err != nil {
-		return nil, fmt.Errorf("dial jump host %s: %w", jumpHost.Alias, err)
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("dial jump host %s: %w", jumpHost.Alias, err)}
 	}
 
 	targetConn, err := jumpClient.Dial("tcp", host.Address())
 	if err != nil {
 		_ = jumpClient.Close()
-		return nil, fmt.Errorf("open %s via %s: %w", host.Address(), jumpHost.Alias, err)
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("open %s via %s: %w", host.Address(), jumpHost.Alias, err)}
 	}
 
 	cfg, cleanup, err := c.newClientConfig(host)
 	if err != nil {
 		_ = targetConn.Close()
 		_ = jumpClient.Close()
-		return nil, err
+		return nil, &StageError{Stage: "auth", Host: host.Alias, Err: err}
 	}
 	defer cleanup()
 
@@ -146,7 +146,7 @@ func (c *Connector) dialViaJump(ctx context.Context, host sshconfig.Host) (*ssh.
 	if err != nil {
 		_ = targetConn.Close()
 		_ = jumpClient.Close()
-		return nil, fmt.Errorf("ssh handshake %s via %s: %w", host.Address(), jumpHost.Alias, err)
+		return nil, &StageError{Stage: "handshake", Host: host.Alias, Err: fmt.Errorf("ssh handshake %s via %s: %w", host.Address(), jumpHost.Alias, err)}
 	}
 	client := ssh.NewClient(conn, chans, reqs)
 	go func() {
@@ -235,13 +235,13 @@ func (c *Connector) RunCommand(ctx context.Context, host sshconfig.Host, command
 
 	session, err := client.NewSession()
 	if err != nil {
-		return nil, fmt.Errorf("open session %s: %w", host.Alias, err)
+		return nil, &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open session: %w", err)}
 	}
 	defer session.Close()
 
 	output, err := session.CombinedOutput(command)
 	if err != nil {
-		return output, fmt.Errorf("run command on %s: %w", host.Alias, err)
+		return output, &StageError{Stage: "command", Host: host.Alias, Err: fmt.Errorf("run command: %w", err)}
 	}
 	return output, nil
 }
@@ -405,7 +405,7 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 
 	session, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("open session %s: %w", host.Alias, err)
+		return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open session: %w", err)}
 	}
 	defer session.Close()
 
@@ -424,7 +424,7 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 	ptyRejected := false
 	if err := session.RequestPty("xterm-256color", height, width, modes); err != nil {
 		if !isPTYRejected(err) {
-			return fmt.Errorf("request pty on %s: %w", host.Alias, err)
+			return &StageError{Stage: "pty", Host: host.Alias, Err: fmt.Errorf("request pty: %w", err)}
 		}
 		ptyRejected = true
 		if stderr != nil {
@@ -439,7 +439,7 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 	if r.RecordingFactory != nil {
 		recorder, err := r.RecordingFactory(host, width, height)
 		if err != nil {
-			return fmt.Errorf("start recording on %s: %w", host.Alias, err)
+			return &StageError{Stage: "record", Host: host.Alias, Err: fmt.Errorf("start recording: %w", err)}
 		}
 		defer recorder.Close()
 		stdoutWriter = io.MultiWriter(stdoutWriter, recorder)
@@ -449,17 +449,17 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 	session.Stdout = stdoutWriter
 	session.Stderr = stderr
 	if err := session.Shell(); err != nil {
-		return fmt.Errorf("start shell on %s: %w", host.Alias, err)
+		return &StageError{Stage: "shell", Host: host.Alias, Err: fmt.Errorf("start shell: %w", err)}
 	}
 	if err := session.Wait(); err != nil {
 		if ptyRejected {
-			return fmt.Errorf("%w: %s", ErrInteractiveUnavailable, host.Alias)
+			return &StageError{Stage: "pty", Host: host.Alias, Err: ErrInteractiveUnavailable}
 		}
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) {
-			return fmt.Errorf("remote shell on %s exited with status %d", host.Alias, exit.ExitStatus())
+			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("remote shell exited with status %d", exit.ExitStatus())}
 		}
-		return fmt.Errorf("wait for shell on %s: %w", host.Alias, err)
+		return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("wait for shell: %w", err)}
 	}
 	return nil
 }

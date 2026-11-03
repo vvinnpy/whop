@@ -123,6 +123,15 @@ blocks, `Match` blocks) from the default server list. Use `-all` to inspect them
 ttydeck run aur.archlinux.org help
 ```
 
+For machine-readable connection diagnostics:
+
+```bash
+ttydeck diagnose -json aur.archlinux.org
+```
+
+This reports the failing stage (`dial`, `handshake`, `auth`, `host_key`,
+`pty`, `session`), a category, and a hint without running an interactive shell.
+
 ## Status
 
 Early V0.1 development: the SSH-first TUI, safe config editing, metadata,

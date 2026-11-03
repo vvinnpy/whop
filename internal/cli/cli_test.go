@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	sshconn "ttydeck/internal/connector/ssh"
 	"ttydeck/internal/sshconfig"
 	"ttydeck/internal/store"
 	"ttydeck/internal/ui"
@@ -90,6 +92,7 @@ func newTestDeps() *testDeps {
 			td.zmPutOverwrite = overwrite
 			return nil
 		},
+		Diagnose: func(sshconfig.Host, []sshconfig.Host) error { return nil },
 		RunCommand: func(host sshconfig.Host, _ []sshconfig.Host, command string) (string, error) {
 			td.ranHosts = append(td.ranHosts, host.Alias)
 			td.ranCommands = append(td.ranCommands, command)
@@ -510,5 +513,75 @@ func TestSnippetUsage(t *testing.T) {
 		if code := Run(args, td.deps); code != 2 {
 			t.Fatalf("%v exit = %d", args, code)
 		}
+	}
+}
+
+func TestConnectJSONErrorDiagnostic(t *testing.T) {
+	td := newTestDeps()
+	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool) error {
+		return fmt.Errorf("ssh: handshake failed: EOF")
+	}
+	if code := Run([]string{"connect", "-json", "prod-db"}, td.deps); code != 1 {
+		t.Fatalf("exit code = %d", code)
+	}
+	var diagnostic sshconn.Diagnostic
+	if err := json.Unmarshal(td.stdout.Bytes(), &diagnostic); err != nil {
+		t.Fatalf("invalid diagnostic json: %v\n%s", err, td.stdout.String())
+	}
+	if diagnostic.Stage != "handshake" || diagnostic.Category != "peer_closed" {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+}
+
+func TestConnectHumanDiagnostic(t *testing.T) {
+	td := newTestDeps()
+	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool) error {
+		return fmt.Errorf("ssh: handshake failed: EOF")
+	}
+	if code := Run([]string{"connect", "prod-db"}, td.deps); code != 1 {
+		t.Fatalf("exit code = %d", code)
+	}
+	for _, want := range []string{"stage: handshake", "category: peer_closed", "hint:"} {
+		if !strings.Contains(td.stderr.String(), want) {
+			t.Fatalf("stderr missing %q: %s", want, td.stderr.String())
+		}
+	}
+}
+
+func TestDiagnoseJSONSuccess(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"diagnose", "-json", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	var diagnostic sshconn.Diagnostic
+	if err := json.Unmarshal(td.stdout.Bytes(), &diagnostic); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, td.stdout.String())
+	}
+	if diagnostic.Category != "ok" || diagnostic.Host != "prod-db" {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+}
+
+func TestDiagnoseJSONError(t *testing.T) {
+	td := newTestDeps()
+	td.deps.Diagnose = func(sshconfig.Host, []sshconfig.Host) error {
+		return fmt.Errorf("ssh: handshake failed: EOF")
+	}
+	if code := Run([]string{"diagnose", "-json", "prod-db"}, td.deps); code != 1 {
+		t.Fatalf("exit code = %d", code)
+	}
+	var diagnostic sshconn.Diagnostic
+	if err := json.Unmarshal(td.stdout.Bytes(), &diagnostic); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, td.stdout.String())
+	}
+	if diagnostic.Stage != "handshake" || diagnostic.Category != "peer_closed" {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+}
+
+func TestDiagnoseUsage(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"diagnose"}, td.deps); code != 2 {
+		t.Fatalf("exit code = %d", code)
 	}
 }
