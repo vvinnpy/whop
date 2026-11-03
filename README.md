@@ -53,6 +53,11 @@ Existing connection managers are good at one or two things, but rarely all of th
 - Docker/Podman fleet management
 - Team sync / hosted service
 
+## Development
+
+Read [AGENTS.md](AGENTS.md) before contributing. It defines the hard constraints for
+pure-Go, cross-platform, config-safe development.
+
 ## Status
 
 Bootstrapping. No usable release yet.
