@@ -167,6 +167,13 @@ Rules:
 - Playback uses `github.com/charmbracelet/x/vt`; do not require the `asciinema` binary.
 - Transcript search indexes plain text in SQLite FTS5; recordings remain the source of truth.
 
+## 7.1 UX contract
+
+- Follow `docs/ux.md`: type-to-filter, enter-to-connect, one-screen workflow.
+- The TUI must be keyboard-first and usable without a mouse.
+- Keep the common path (open, filter, connect) free of modal dialogs.
+- Prefer a compact list plus progressive detail over a dashboard of panels.
+
 ## 8. Coding standards
 
 - `gofmt` is mandatory.
