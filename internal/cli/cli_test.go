@@ -222,6 +222,9 @@ func TestTUIOptions(t *testing.T) {
 	if td.tuiOpts.Load == nil || td.tuiOpts.Connect == nil {
 		t.Fatal("tui callbacks must be configured")
 	}
+	if td.tuiOpts.EditHost == nil || td.tuiOpts.SetTags == nil || td.tuiOpts.SaveNotes == nil {
+		t.Fatal("tui metadata callbacks must be configured")
+	}
 	if td.tuiErr != nil || len(td.tuiHosts) != 3 {
 		t.Fatalf("load returned %#v, %v", td.tuiHosts, td.tuiErr)
 	}

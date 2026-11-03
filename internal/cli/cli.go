@@ -184,6 +184,15 @@ func runTUI(args []string, deps Deps) int {
 		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
 			return metaStore.SetFavorite(host.Alias, favorite)
 		},
+		EditHost: func(host sshconfig.Host, edit sshconfig.Edit) error {
+			return sshconfig.EditHost(configPathValue, host.Alias, edit)
+		},
+		SetTags: func(host sshconfig.Host, tags []string) error {
+			return metaStore.SetTags(host.Alias, tags)
+		},
+		SaveNotes: func(host sshconfig.Host, note string) error {
+			return metaStore.SetNotes(host.Alias, note)
+		},
 		Connect: func(host sshconfig.Host, record bool) tea.Cmd {
 			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir), Host: host}, func(err error) tea.Msg {
 				if err == nil {

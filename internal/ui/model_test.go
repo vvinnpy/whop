@@ -326,3 +326,103 @@ func TestRecordToggle(t *testing.T) {
 		t.Fatal("connect did not receive recording flag")
 	}
 }
+
+func TestEditFormSave(t *testing.T) {
+	hosts := testHosts()
+	var edited sshconfig.Edit
+	var editedTags []string
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		EditHost: func(_ sshconfig.Host, edit sshconfig.Edit) error {
+			edited = edit
+			return nil
+		},
+		SetTags: func(_ sshconfig.Host, tags []string) error {
+			editedTags = tags
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("e"))
+	if !m.editing {
+		t.Fatal("edit mode should be active")
+	}
+	if !strings.Contains(plainView(m), "EDIT prod-db") {
+		t.Fatalf("edit view missing title:\n%s", plainView(m))
+	}
+	m.editFields[0].SetValue("10.0.0.99")
+	m.editFields[1].SetValue("admin")
+	m.editFields[2].SetValue("2222")
+	m.editFields[3].SetValue("bastion")
+	m.editFields[4].SetValue("prod,db")
+	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.editing {
+		t.Fatal("edit mode should close after save")
+	}
+	if cmd == nil {
+		t.Fatal("save should trigger reload")
+	}
+	if edited.HostName == nil || *edited.HostName != "10.0.0.99" {
+		t.Fatalf("hostname not edited: %+v", edited)
+	}
+	if edited.Port == nil || *edited.Port != 2222 {
+		t.Fatalf("port not edited: %+v", edited)
+	}
+	if len(editedTags) != 2 || editedTags[0] != "prod" || editedTags[1] != "db" {
+		t.Fatalf("tags = %#v", editedTags)
+	}
+}
+
+func TestEditFormRejectsInvalidPort(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	sendKey(m, runeKey("e"))
+	m.editFields[2].SetValue("not-a-port")
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.editing {
+		t.Fatal("edit mode should remain active")
+	}
+	if !strings.Contains(plainView(m), "invalid port") {
+		t.Fatalf("invalid port not shown:\n%s", plainView(m))
+	}
+}
+
+func TestNotesEditorSave(t *testing.T) {
+	hosts := testHosts()
+	var savedAlias, savedNote string
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		SaveNotes: func(host sshconfig.Host, note string) error {
+			savedAlias = host.Alias
+			savedNote = note
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("n"))
+	if !m.notesMode {
+		t.Fatal("notes mode should be active")
+	}
+	m.notesInput.SetValue("primary database")
+	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if m.notesMode {
+		t.Fatal("notes mode should close after save")
+	}
+	if cmd == nil {
+		t.Fatal("notes save should reload")
+	}
+	if savedAlias != "prod-db" || savedNote != "primary database" {
+		t.Fatalf("saved = %q %q", savedAlias, savedNote)
+	}
+}

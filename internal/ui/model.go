@@ -3,8 +3,10 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"ttydeck/internal/core"
@@ -26,6 +28,9 @@ type Options struct {
 	Load           HostLoader
 	Connect        ConnectFunc
 	ToggleFavorite func(sshconfig.Host, bool) error
+	EditHost       func(sshconfig.Host, sshconfig.Edit) error
+	SetTags        func(sshconfig.Host, []string) error
+	SaveNotes      func(sshconfig.Host, string) error
 }
 
 // ConnectFinishedMsg is emitted after an interactive session returns.
@@ -44,6 +49,9 @@ type Model struct {
 	load           HostLoader
 	connect        ConnectFunc
 	toggleFavorite func(sshconfig.Host, bool) error
+	editHost       func(sshconfig.Host, sshconfig.Edit) error
+	setTags        func(sshconfig.Host, []string) error
+	saveNotes      func(sshconfig.Host, string) error
 
 	allHosts []sshconfig.Host
 	filtered []sshconfig.Host
@@ -61,6 +69,15 @@ type Model struct {
 	loaded bool
 	status string
 	err    error
+
+	editing    bool
+	editFields []textinput.Model
+	editFocus  int
+	editTarget sshconfig.Host
+
+	notesMode   bool
+	notesInput  textinput.Model
+	notesTarget sshconfig.Host
 }
 
 // New creates a new TUI model.
@@ -70,6 +87,9 @@ func New(opts Options) *Model {
 		load:           opts.Load,
 		connect:        opts.Connect,
 		toggleFavorite: opts.ToggleFavorite,
+		editHost:       opts.EditHost,
+		setTags:        opts.SetTags,
+		saveNotes:      opts.SaveNotes,
 		filter:         opts.InitialFilter,
 		showAll:        opts.ShowAll,
 		record:         opts.Record,
@@ -125,6 +145,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+
+	if m.editing {
+		return m.updateEdit(msg)
+	}
+	if m.notesMode {
+		return m.updateNotes(msg)
 	}
 
 	if m.help {
@@ -204,6 +231,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "f":
 		m.toggleSelectedFavorite()
+	case "e":
+		m.startEdit()
+	case "n":
+		m.startNotes()
 	case "R":
 		m.record = !m.record
 		if m.record {
@@ -245,6 +276,165 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 	m.err = nil
 	m.status = fmt.Sprintf("connecting to %s...", host.Alias)
 	return m, m.connect(host, m.record)
+}
+
+func (m *Model) startEdit() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	width := m.width - 20
+	if width < 20 {
+		width = 20
+	}
+	fields := []textinput.Model{
+		newTextField("HostName", host.HostName, width),
+		newTextField("User", host.User, width),
+		newTextField("Port", strconv.Itoa(host.Port), width),
+		newTextField("ProxyJump", host.ProxyJump, width),
+		newTextField("Tags", strings.Join(host.Tags, ","), width),
+	}
+	m.editFields = fields
+	m.editFocus = 0
+	m.editFields[0].Focus()
+	m.editTarget = host
+	m.editing = true
+	m.err = nil
+	m.status = "editing " + host.Alias
+}
+
+func newTextField(label, value string, width int) textinput.Model {
+	field := textinput.New()
+	field.Prompt = label + ": "
+	field.SetValue(value)
+	field.CharLimit = 512
+	field.Width = width
+	return field
+}
+
+func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.editing = false
+		m.status = "edit cancelled"
+		return m, nil
+	case "tab":
+		m.focusEditField(1)
+		return m, nil
+	case "shift+tab":
+		m.focusEditField(-1)
+		return m, nil
+	case "enter", "ctrl+s":
+		return m.saveEdit()
+	}
+	field, cmd := m.editFields[m.editFocus].Update(msg)
+	m.editFields[m.editFocus] = field
+	return m, cmd
+}
+
+func (m *Model) focusEditField(delta int) {
+	m.editFields[m.editFocus].Blur()
+	m.editFocus = (m.editFocus + delta + len(m.editFields)) % len(m.editFields)
+	m.editFields[m.editFocus].Focus()
+}
+
+func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
+	port, err := strconv.Atoi(strings.TrimSpace(m.editFields[2].Value()))
+	if err != nil || port < 1 || port > 65535 {
+		m.err = fmt.Errorf("invalid port %q", m.editFields[2].Value())
+		m.status = "invalid port"
+		return m, nil
+	}
+	hostName := strings.TrimSpace(m.editFields[0].Value())
+	user := strings.TrimSpace(m.editFields[1].Value())
+	proxyJump := strings.TrimSpace(m.editFields[3].Value())
+	tags := splitTags(m.editFields[4].Value())
+	if m.editHost == nil {
+		m.err = fmt.Errorf("edit is not configured")
+		m.status = "edit failed"
+		return m, nil
+	}
+	if err := m.editHost(m.editTarget, sshconfig.Edit{HostName: &hostName, User: &user, Port: &port, ProxyJump: &proxyJump}); err != nil {
+		m.err = err
+		m.status = "edit failed"
+		return m, nil
+	}
+	if m.setTags != nil {
+		if err := m.setTags(m.editTarget, tags); err != nil {
+			m.err = err
+			m.status = "tag update failed"
+			return m, nil
+		}
+	}
+	m.editing = false
+	m.err = nil
+	m.status = "host updated"
+	return m, m.reload
+}
+
+func splitTags(value string) []string {
+	var tags []string
+	seen := make(map[string]bool)
+	for _, tag := range strings.Split(value, ",") {
+		tag = strings.TrimSpace(tag)
+		if tag != "" && !seen[tag] {
+			seen[tag] = true
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+func (m *Model) startNotes() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	width := m.width - 20
+	if width < 20 {
+		width = 20
+	}
+	field := newTextField("Notes", host.Notes, width)
+	field.Focus()
+	m.notesInput = field
+	m.notesTarget = host
+	m.notesMode = true
+	m.err = nil
+	m.status = "notes: " + host.Alias
+}
+
+func (m *Model) updateNotes(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.notesMode = false
+		m.status = "notes cancelled"
+		return m, nil
+	case "ctrl+s":
+		if m.saveNotes == nil {
+			m.err = fmt.Errorf("notes are not configured")
+			m.status = "notes failed"
+			return m, nil
+		}
+		if err := m.saveNotes(m.notesTarget, m.notesInput.Value()); err != nil {
+			m.err = err
+			m.status = "notes failed"
+			return m, nil
+		}
+		m.notesMode = false
+		m.err = nil
+		m.status = "notes saved"
+		return m, m.reload
+	}
+	field, cmd := m.notesInput.Update(msg)
+	m.notesInput = field
+	return m, cmd
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m *Model) toggleSelectedFavorite() {

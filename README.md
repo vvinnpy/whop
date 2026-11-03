@@ -106,6 +106,10 @@ ttydeck snippet list
 | `ctrl+d` / `ctrl+u` | page down / up |
 | `r` | reload config |
 | `a` | toggle servers / all |
+| `f` | toggle favorite |
+| `e` | edit host |
+| `n` | edit notes |
+| `R` | toggle session recording |
 | `?` | help |
 | `q` | quit |
 

@@ -29,6 +29,12 @@ func (m *Model) View() string {
 
 	header := m.viewHeader(width)
 	filter := m.viewFilter(width)
+	if m.editing {
+		return strings.Join([]string{header, filter, m.viewEdit(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+	}
+	if m.notesMode {
+		return strings.Join([]string{header, filter, m.viewNotes(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+	}
 	if m.help {
 		return strings.Join([]string{header, filter, m.viewHelp(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
 	}
@@ -189,6 +195,30 @@ func (m *Model) viewDetail(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *Model) viewEdit(width int) string {
+	lines := []string{styleAccent.Render(" EDIT " + m.editTarget.Alias), ""}
+	for index, field := range m.editFields {
+		prefix := "  "
+		if index == m.editFocus {
+			prefix = "> "
+		}
+		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
+	}
+	lines = append(lines, "", styleDim.Render(" tab next  enter save  esc cancel"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) viewNotes(width int) string {
+	lines := []string{
+		styleAccent.Render(" NOTES " + m.notesTarget.Alias),
+		"",
+		ansi.Truncate("  "+m.notesInput.View(), width, "~"),
+		"",
+		styleDim.Render(" ctrl+s save  esc cancel"),
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m *Model) viewHelp(width int) string {
 	lines := []string{
 		styleAccent.Render(" KEYBOARD"),
@@ -201,6 +231,8 @@ func (m *Model) viewHelp(width int) string {
 		"  r           reload config",
 		"  a           toggle servers / all",
 		"  f           toggle favorite",
+		"  e           edit host",
+		"  n           edit notes",
 		"  R           toggle session recording",
 		"  esc         clear filter or quit",
 		"  ?           close help",
@@ -213,10 +245,14 @@ func (m *Model) viewHelp(width int) string {
 
 func (m *Model) viewFooter(width int) string {
 	var hint string
-	if m.filterFocused {
+	if m.editing {
+		hint = " tab next  enter save  esc cancel"
+	} else if m.notesMode {
+		hint = " ctrl+s save  esc cancel"
+	} else if m.filterFocused {
 		hint = " type filter  enter connect  esc clear  ctrl+u clear"
 	} else {
-		hint = " enter connect  / filter  j/k  f fav  R rec  a all  ? help  q quit"
+		hint = " enter connect  / filter  j/k  f fav  e edit  R rec  ? help  q quit"
 	}
 	return styleDim.Render(ansi.Truncate(hint, width, "~"))
 }
