@@ -19,11 +19,12 @@ type ConnectFunc func(sshconfig.Host) tea.Cmd
 
 // Options configures the TUI model.
 type Options struct {
-	ConfigPath    string
-	InitialFilter string
-	ShowAll       bool
-	Load          HostLoader
-	Connect       ConnectFunc
+	ConfigPath     string
+	InitialFilter  string
+	ShowAll        bool
+	Load           HostLoader
+	Connect        ConnectFunc
+	ToggleFavorite func(sshconfig.Host, bool) error
 }
 
 // ConnectFinishedMsg is emitted after an interactive session returns.
@@ -38,9 +39,10 @@ type hostsLoadedMsg struct {
 
 // Model is the ttydeck list/detail screen.
 type Model struct {
-	configPath string
-	load       HostLoader
-	connect    ConnectFunc
+	configPath     string
+	load           HostLoader
+	connect        ConnectFunc
+	toggleFavorite func(sshconfig.Host, bool) error
 
 	allHosts []sshconfig.Host
 	filtered []sshconfig.Host
@@ -62,13 +64,14 @@ type Model struct {
 // New creates a new TUI model.
 func New(opts Options) *Model {
 	m := &Model{
-		configPath: opts.ConfigPath,
-		load:       opts.Load,
-		connect:    opts.Connect,
-		filter:     opts.InitialFilter,
-		showAll:    opts.ShowAll,
-		width:      100,
-		height:     30,
+		configPath:     opts.ConfigPath,
+		load:           opts.Load,
+		connect:        opts.Connect,
+		toggleFavorite: opts.ToggleFavorite,
+		filter:         opts.InitialFilter,
+		showAll:        opts.ShowAll,
+		width:          100,
+		height:         30,
 	}
 	return m
 }
@@ -196,6 +199,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "showing servers only"
 		}
+	case "f":
+		m.toggleSelectedFavorite()
 	case "?":
 		m.help = true
 	case "esc":
@@ -232,6 +237,27 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 	return m, m.connect(host)
 }
 
+func (m *Model) toggleSelectedFavorite() {
+	host, ok := m.selected()
+	if !ok || m.toggleFavorite == nil {
+		return
+	}
+	next := !host.Favorite
+	if err := m.toggleFavorite(host, next); err != nil {
+		m.err = err
+		m.status = "favorite update failed"
+		return
+	}
+	m.err = nil
+	for i := range m.allHosts {
+		if m.allHosts[i].Alias == host.Alias {
+			m.allHosts[i].Favorite = next
+		}
+	}
+	m.applyFilter()
+	m.status = fmt.Sprintf("%s favorite=%v", host.Alias, next)
+}
+
 func (m *Model) selected() (sshconfig.Host, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.filtered) {
 		return sshconfig.Host{}, false
@@ -249,6 +275,7 @@ func (m *Model) applyFilter() {
 	if !m.showAll {
 		source = sshconfig.Servers(source)
 	}
+	source = core.SortHosts(source)
 	m.filtered = core.Filter(source, m.filter)
 	m.cursor = 0
 	if previous != "" {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"ttydeck/internal/sshconfig"
+	"ttydeck/internal/store"
 	"ttydeck/internal/ui"
 )
 
@@ -20,6 +21,12 @@ func cliHosts() []sshconfig.Host {
 	}
 }
 
+type persistentTestStore struct {
+	*store.Store
+}
+
+func (s persistentTestStore) Close() error { return nil }
+
 type testDeps struct {
 	deps      Deps
 	stdout    *bytes.Buffer
@@ -27,11 +34,18 @@ type testDeps struct {
 	connected string
 	tuiOpts   ui.Options
 	tuiRan    bool
+	tuiHosts  []sshconfig.Host
+	tuiErr    error
 	loadPath  string
+	metaStore *store.Store
 }
 
 func newTestDeps() *testDeps {
-	td := &testDeps{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+	metaStore, err := store.Open(":memory:")
+	if err != nil {
+		panic(err)
+	}
+	td := &testDeps{stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}, metaStore: metaStore}
 	td.deps = Deps{
 		Stdin:  strings.NewReader(""),
 		Stdout: td.stdout,
@@ -47,7 +61,13 @@ func newTestDeps() *testDeps {
 		RunTUI: func(opts ui.Options) error {
 			td.tuiRan = true
 			td.tuiOpts = opts
+			if opts.Load != nil {
+				td.tuiHosts, td.tuiErr = opts.Load()
+			}
 			return nil
+		},
+		OpenStore: func() (MetaStore, error) {
+			return persistentTestStore{td.metaStore}, nil
 		},
 	}
 	return td
@@ -165,9 +185,8 @@ func TestTUIOptions(t *testing.T) {
 	if td.tuiOpts.Load == nil || td.tuiOpts.Connect == nil {
 		t.Fatal("tui callbacks must be configured")
 	}
-	hosts, err := td.tuiOpts.Load()
-	if err != nil || len(hosts) != 3 {
-		t.Fatalf("load returned %#v, %v", hosts, err)
+	if td.tuiErr != nil || len(td.tuiHosts) != 3 {
+		t.Fatalf("load returned %#v, %v", td.tuiHosts, td.tuiErr)
 	}
 }
 
@@ -242,5 +261,58 @@ func TestBareInvocationRunsTUI(t *testing.T) {
 	}
 	if !td.tuiRan {
 		t.Fatal("bare invocation should run the TUI")
+	}
+}
+
+func TestFavoriteNoteAndTagCommands(t *testing.T) {
+	td := newTestDeps()
+
+	if code := Run([]string{"favorite", "prod-db", "on"}, td.deps); code != 0 {
+		t.Fatalf("favorite exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"list"}, td.deps); code != 0 {
+		t.Fatalf("list exit = %d: %s", code, td.stderr.String())
+	}
+	if !strings.Contains(td.stdout.String(), "*") {
+		t.Fatalf("favorite marker missing: %q", td.stdout.String())
+	}
+
+	td.stderr.Reset()
+	if code := Run([]string{"note", "prod-db", "primary", "database"}, td.deps); code != 0 {
+		t.Fatalf("note exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"note", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("note read exit = %d: %s", code, td.stderr.String())
+	}
+	if strings.TrimSpace(td.stdout.String()) != "primary database" {
+		t.Fatalf("note = %q", td.stdout.String())
+	}
+
+	td.stderr.Reset()
+	if code := Run([]string{"tag", "prod-db", "prod", "db"}, td.deps); code != 0 {
+		t.Fatalf("tag exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"tag", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("tag read exit = %d: %s", code, td.stderr.String())
+	}
+	if strings.TrimSpace(td.stdout.String()) != "db,prod" {
+		t.Fatalf("tags = %q", td.stdout.String())
+	}
+}
+
+func TestConnectRecordsLastConnection(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"connect", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("connect exit = %d: %s", code, td.stderr.String())
+	}
+	meta, err := td.metaStore.Get("prod-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ConnectCount != 1 || meta.LastConnectedAt.IsZero() {
+		t.Fatalf("connection not recorded: %+v", meta)
 	}
 }

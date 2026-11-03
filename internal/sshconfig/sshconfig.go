@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kevinburke/ssh_config"
 )
@@ -33,6 +34,12 @@ type Host struct {
 	Kind          Kind
 	Tags          []string
 	Source        string
+
+	// Metadata is populated by the local metadata store, not by ssh config.
+	Favorite        bool      `json:"favorite,omitempty"`
+	Notes           string    `json:"notes,omitempty"`
+	LastConnectedAt time.Time `json:"last_connected_at,omitempty"`
+	ConnectCount    int       `json:"connect_count,omitempty"`
 }
 
 // IsServer reports whether the host should appear in the default server list.

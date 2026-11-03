@@ -59,7 +59,8 @@ func matches(host sshconfig.Host, term string) bool {
 		containsFold(host.User, term) ||
 		containsFold(strconv.Itoa(host.Port), term) ||
 		containsFold(string(host.Kind), term) ||
-		contains(host.Tags, term)
+		contains(host.Tags, term) ||
+		containsFold(host.Notes, term)
 }
 
 func containsFold(value, term string) bool {

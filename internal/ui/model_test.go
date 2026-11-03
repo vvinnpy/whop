@@ -266,3 +266,34 @@ func TestViewFitsCommonWidths(t *testing.T) {
 		}
 	}
 }
+
+func TestToggleFavorite(t *testing.T) {
+	hosts := testHosts()
+	var toggledAlias string
+	var toggledValue bool
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host) tea.Cmd { return nil },
+		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
+			toggledAlias = host.Alias
+			toggledValue = favorite
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("f"))
+	if toggledAlias != "prod-db" || !toggledValue {
+		t.Fatalf("favorite callback = %q %v", toggledAlias, toggledValue)
+	}
+	if !m.allHosts[0].Favorite {
+		t.Fatal("host favorite flag not updated")
+	}
+	if !strings.Contains(plainView(m), "*prod-db") {
+		t.Fatalf("favorite marker missing:\n%s", plainView(m))
+	}
+}

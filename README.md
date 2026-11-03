@@ -72,6 +72,11 @@ ttydeck list --json
 
 # Connect from the CLI
 ttydeck connect prod-db
+
+# Local metadata
+ttydeck favorite prod-db on
+ttydeck tag prod-db prod db
+ttydeck note prod-db "primary database"
 ```
 
 ### Keys

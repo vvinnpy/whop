@@ -116,7 +116,11 @@ func (m *Model) viewList(width, height int) []string {
 		if selected {
 			prefix = "> "
 		}
-		line := padTo(rowLine(columns, prefix+host.Alias, host.HostName, host.User, fmt.Sprintf("%d", host.Port), strings.Join(host.Tags, ",")), listWidth)
+		name := host.Alias
+		if host.Favorite {
+			name = "*" + name
+		}
+		line := padTo(rowLine(columns, prefix+name, host.HostName, host.User, fmt.Sprintf("%d", host.Port), strings.Join(host.Tags, ",")), listWidth)
 		if selected {
 			line = styleSelected.Render(padTo(line, listWidth))
 		}
@@ -152,6 +156,18 @@ func (m *Model) viewDetail(width int) string {
 		tags = "-"
 	}
 
+	last := "-"
+	if !host.LastConnectedAt.IsZero() {
+		last = host.LastConnectedAt.Local().Format("2006-01-02 15:04")
+	}
+	favorite := "no"
+	if host.Favorite {
+		favorite = "yes"
+	}
+	notes := host.Notes
+	if notes == "" {
+		notes = "-"
+	}
 	lines := []string{
 		styleAccent.Render(fit(strings.ToUpper(host.Alias), detailWidth)),
 		detailLine("host", host.Address(), detailWidth),
@@ -160,6 +176,10 @@ func (m *Model) viewDetail(width int) string {
 		detailLine("proxy", proxy, detailWidth),
 		detailLine("tags", tags, detailWidth),
 		detailLine("kind", string(host.Kind), detailWidth),
+		detailLine("favorite", favorite, detailWidth),
+		detailLine("last", last, detailWidth),
+		detailLine("count", fmt.Sprintf("%d", host.ConnectCount), detailWidth),
+		detailLine("notes", notes, detailWidth),
 		detailLine("source", host.Source, detailWidth),
 	}
 	return strings.Join(lines, "\n")
@@ -176,6 +196,7 @@ func (m *Model) viewHelp(width int) string {
 		"  ctrl+d/u    page down / up",
 		"  r           reload config",
 		"  a           toggle servers / all",
+		"  f           toggle favorite",
 		"  esc         clear filter or quit",
 		"  ?           close help",
 	}
@@ -190,7 +211,7 @@ func (m *Model) viewFooter(width int) string {
 	if m.filterFocused {
 		hint = " type filter  enter connect  esc clear  ctrl+u clear"
 	} else {
-		hint = " enter connect  / filter  j/k  g/G  r reload  a all  ? help  q quit"
+		hint = " enter connect  / filter  j/k  f fav  r reload  a all  ? help  q quit"
 	}
 	return styleDim.Render(ansi.Truncate(hint, width, "~"))
 }

@@ -10,11 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	sshconn "ttydeck/internal/connector/ssh"
+	"ttydeck/internal/core"
 	"ttydeck/internal/sshconfig"
+	"ttydeck/internal/store"
 	"ttydeck/internal/ui"
 )
 
@@ -29,6 +32,17 @@ type Deps struct {
 	LoadConfig func(string) ([]sshconfig.Host, error)
 	Connect    func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer) error
 	RunTUI     func(ui.Options) error
+	OpenStore  func() (MetaStore, error)
+}
+
+// MetaStore is the metadata surface used by the CLI and TUI.
+type MetaStore interface {
+	All() (map[string]store.Meta, error)
+	SetFavorite(string, bool) error
+	SetNotes(string, string) error
+	SetTags(string, []string) error
+	RecordConnect(string, time.Time) error
+	Close() error
 }
 
 // NewDeps returns OS-backed dependencies.
@@ -40,6 +54,7 @@ func NewDeps() Deps {
 		LoadConfig: sshconfig.Load,
 		Connect:    defaultConnect,
 		RunTUI:     defaultRunTUI,
+		OpenStore:  defaultOpenStore,
 	}
 }
 
@@ -55,6 +70,12 @@ func Run(args []string, deps Deps) int {
 		return runList(args[1:], deps)
 	case "connect":
 		return runConnect(args[1:], deps)
+	case "favorite":
+		return runFavorite(args[1:], deps)
+	case "note":
+		return runNote(args[1:], deps)
+	case "tag":
+		return runTag(args[1:], deps)
 	case "version", "--version", "-v":
 		fmt.Fprintf(deps.Stdout, "ttydeck %s\n", Version)
 		return 0
@@ -89,6 +110,9 @@ func normalizeDeps(deps Deps) Deps {
 	if deps.RunTUI == nil {
 		deps.RunTUI = defaultRunTUI
 	}
+	if deps.OpenStore == nil {
+		deps.OpenStore = defaultOpenStore
+	}
 	return deps
 }
 
@@ -105,15 +129,28 @@ func runTUI(args []string, deps Deps) int {
 
 	configPathValue := resolvePath(*configPath)
 	initialFilter := strings.Join(fs.Args(), " ")
-	err := deps.RunTUI(ui.Options{
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: open metadata: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+
+	err = deps.RunTUI(ui.Options{
 		ConfigPath:    configPathValue,
 		InitialFilter: initialFilter,
 		ShowAll:       *showAll,
 		Load: func() ([]sshconfig.Host, error) {
-			return deps.LoadConfig(configPathValue)
+			return loadHosts(deps, metaStore, configPathValue)
+		},
+		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
+			return metaStore.SetFavorite(host.Alias, favorite)
 		},
 		Connect: func(host sshconfig.Host) tea.Cmd {
 			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue), Host: host}, func(err error) tea.Msg {
+				if err == nil {
+					_ = metaStore.RecordConnect(host.Alias, time.Now())
+				}
 				return ui.ConnectFinishedMsg{Err: err}
 			})
 		},
@@ -137,7 +174,7 @@ func runList(args []string, deps Deps) int {
 		return 2
 	}
 
-	hosts, err := deps.LoadConfig(resolvePath(*configPath))
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
@@ -163,10 +200,18 @@ func runList(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stdout, "no hosts found")
 		return 0
 	}
-	fmt.Fprintln(deps.Stdout, "NAME\tHOST\tUSER\tPORT\tKIND\tTAGS")
+	fmt.Fprintln(deps.Stdout, "NAME\tHOST\tUSER\tPORT\tKIND\tTAGS\tFAV\tLAST")
 	for _, host := range hosts {
-		fmt.Fprintf(deps.Stdout, "%s\t%s\t%s\t%d\t%s\t%s\n",
-			host.Alias, host.HostName, valueOrDash(host.User), host.Port, host.Kind, strings.Join(host.Tags, ","))
+		favorite := "-"
+		if host.Favorite {
+			favorite = "*"
+		}
+		last := "-"
+		if !host.LastConnectedAt.IsZero() {
+			last = host.LastConnectedAt.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Fprintf(deps.Stdout, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			host.Alias, host.HostName, valueOrDash(host.User), host.Port, host.Kind, strings.Join(host.Tags, ","), favorite, last)
 	}
 	return 0
 }
@@ -185,7 +230,7 @@ func runConnect(args []string, deps Deps) int {
 		return 2
 	}
 
-	hosts, err := deps.LoadConfig(resolvePath(*configPath))
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
@@ -199,6 +244,156 @@ func runConnect(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
+	if metaStore, err := deps.OpenStore(); err == nil {
+		_ = metaStore.RecordConnect(host.Alias, time.Now())
+		_ = metaStore.Close()
+	}
+	return 0
+}
+
+func loadHosts(deps Deps, metaStore MetaStore, configPath string) ([]sshconfig.Host, error) {
+	hosts, err := deps.LoadConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if metaStore == nil {
+		metaStore, err = deps.OpenStore()
+		if err != nil {
+			return nil, fmt.Errorf("open metadata: %w", err)
+		}
+		defer metaStore.Close()
+	}
+	metas, err := metaStore.All()
+	if err != nil {
+		return nil, fmt.Errorf("load metadata: %w", err)
+	}
+	return core.ApplyMetadata(hosts, metas), nil
+}
+
+func runFavorite(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck favorite", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck favorite [flags] <alias> <on|off>")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	alias := fs.Arg(0)
+	if _, ok := sshconfig.Find(hosts, alias); !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		return 1
+	}
+	value := strings.ToLower(fs.Arg(1))
+	favorite := value == "on" || value == "true" || value == "yes" || value == "1"
+	if value != "on" && value != "off" && value != "true" && value != "false" && value != "yes" && value != "no" && value != "1" && value != "0" {
+		fmt.Fprintln(deps.Stderr, "usage: favorite value must be on/off")
+		return 2
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	if err := metaStore.SetFavorite(alias, favorite); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(deps.Stdout, "%s favorite=%v\n", alias, favorite)
+	return 0
+}
+
+func runNote(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck note", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck note [flags] <alias> [text...]")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	alias := fs.Arg(0)
+	host, ok := sshconfig.Find(hosts, alias)
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		return 1
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	if fs.NArg() > 1 {
+		if err := metaStore.SetNotes(alias, strings.Join(fs.Args()[1:], " ")); err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(deps.Stdout, "%s note updated\n", alias)
+		return 0
+	}
+	fmt.Fprintln(deps.Stdout, host.Notes)
+	return 0
+}
+
+func runTag(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck tag", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck tag [flags] <alias> [tag...]")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	alias := fs.Arg(0)
+	host, ok := sshconfig.Find(hosts, alias)
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		return 1
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	if fs.NArg() > 1 {
+		if err := metaStore.SetTags(alias, fs.Args()[1:]); err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(deps.Stdout, "%s tags updated\n", alias)
+		return 0
+	}
+	fmt.Fprintln(deps.Stdout, strings.Join(host.Tags, ","))
 	return 0
 }
 
@@ -240,6 +435,18 @@ func newFlagSet(name string, deps Deps) *flag.FlagSet {
 	return fs
 }
 
+func defaultOpenStore() (MetaStore, error) {
+	return store.Open(defaultStorePath())
+}
+
+func defaultStorePath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		dir = "."
+	}
+	return filepath.Join(dir, "ttydeck", "state.db")
+}
+
 func defaultConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -274,6 +481,9 @@ Usage:
   ttydeck [flags] [filter...]       open the interactive host list
   ttydeck list [flags]              list hosts
   ttydeck connect [flags] <alias>   connect to a host
+  ttydeck favorite [flags] <alias> <on|off>
+  ttydeck note [flags] <alias> [text...]
+  ttydeck tag [flags] <alias> [tag...]
   ttydeck version                   print version
 
 Flags for ttydeck:
