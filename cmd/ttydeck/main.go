@@ -1,9 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"os"
 
-const version = "0.1.0-dev"
+	"ttydeck/internal/cli"
+)
 
 func main() {
-	fmt.Printf("ttydeck %s\n", version)
+	os.Exit(cli.Run(os.Args[1:], cli.NewDeps()))
 }
