@@ -97,7 +97,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.allHosts = msg.hosts
 		m.applyFilter()
-		m.status = fmt.Sprintf("%d servers loaded", len(sshconfig.Servers(m.allHosts)))
+		m.status = fmt.Sprintf("%d servers / %d total", len(sshconfig.Servers(m.allHosts)), len(m.allHosts))
 		return m, nil
 
 	case ConnectFinishedMsg:
@@ -191,6 +191,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		m.showAll = !m.showAll
 		m.applyFilter()
+		if m.showAll {
+			m.status = "showing all hosts"
+		} else {
+			m.status = "showing servers only"
+		}
 	case "?":
 		m.help = true
 	case "esc":

@@ -36,7 +36,7 @@ func (m *Model) View() string {
 	list := m.viewList(width, height)
 	if width < 96 {
 		if summary := m.selectedSummary(); summary != "" {
-			list = append(list, styleDim.Render("  "+summary))
+			list = append(list, styleDim.Render(ansi.Truncate("  "+summary, width, "~")))
 		}
 	}
 	detail := m.viewDetail(width)
@@ -188,9 +188,9 @@ func (m *Model) viewHelp(width int) string {
 func (m *Model) viewFooter(width int) string {
 	var hint string
 	if m.filterFocused {
-		hint = " type to filter   enter connect   esc clear   ctrl+u clear   tab leave filter"
+		hint = " type filter  enter connect  esc clear  ctrl+u clear"
 	} else {
-		hint = " enter connect   / filter   j/k move   g/G top/bottom   r reload   a all   ? help   q quit"
+		hint = " enter connect  / filter  j/k  g/G  r reload  a all  ? help  q quit"
 	}
 	return styleDim.Render(ansi.Truncate(hint, width, "~"))
 }

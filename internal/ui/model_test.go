@@ -254,3 +254,15 @@ func TestLoadError(t *testing.T) {
 		t.Fatal("error not shown")
 	}
 }
+
+func TestViewFitsCommonWidths(t *testing.T) {
+	for _, width := range []int{60, 80, 96, 120} {
+		m, _ := newTestModel(t, testHosts())
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+		for _, line := range strings.Split(plainView(m), "\n") {
+			if got := ansi.StringWidth(line); got > width {
+				t.Fatalf("width %d: line width %d: %q", width, got, line)
+			}
+		}
+	}
+}
