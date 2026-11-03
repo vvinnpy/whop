@@ -1,0 +1,308 @@
+package sshconfig
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gofrs/flock"
+	"github.com/kevinburke/ssh_config"
+	"github.com/natefinch/atomic"
+)
+
+var (
+	// ErrHostNotFound means the requested alias has no concrete Host block.
+	ErrHostNotFound = fmt.Errorf("sshconfig: host not found")
+	// ErrConfigChanged means the file changed while we were editing it.
+	ErrConfigChanged = fmt.Errorf("sshconfig: config changed while editing")
+)
+
+// Edit describes safe changes to a single concrete Host block.
+type Edit struct {
+	HostName     *string
+	User         *string
+	Port         *int
+	ProxyJump    *string
+	IdentityFile *string
+	Tags         *[]string
+}
+
+// EditHost edits one Host block in place while preserving unrelated text.
+//
+// It uses an advisory lock, a pre-write conflict check, a timestamped backup,
+// a temporary file, and an atomic replace. Include files are not edited yet:
+// the alias must be present in path itself.
+func EditHost(path, alias string, edit Edit) error {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return fmt.Errorf("sshconfig: empty host alias")
+	}
+	if edit.Port != nil && (*edit.Port < 1 || *edit.Port > 65535) {
+		return fmt.Errorf("sshconfig: invalid port %d", *edit.Port)
+	}
+
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	}
+
+	lock := flock.New(target + ".lock")
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("sshconfig: lock %s: %w", target, err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	original, err := os.ReadFile(target)
+	if err != nil {
+		return fmt.Errorf("sshconfig: read %s: %w", target, err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("sshconfig: stat %s: %w", target, err)
+	}
+
+	lines := strings.Split(string(original), "\n")
+	start, end, err := findHostBlock(lines, alias)
+	if err != nil {
+		return err
+	}
+
+	if edit.HostName != nil {
+		setKV(&lines, &start, &end, "HostName", *edit.HostName)
+	}
+	if edit.User != nil {
+		setKV(&lines, &start, &end, "User", *edit.User)
+	}
+	if edit.Port != nil {
+		setKV(&lines, &start, &end, "Port", strconv.Itoa(*edit.Port))
+	}
+	if edit.ProxyJump != nil {
+		setKV(&lines, &start, &end, "ProxyJump", *edit.ProxyJump)
+	}
+	if edit.IdentityFile != nil {
+		replaceAllKV(&lines, &start, &end, "IdentityFile", *edit.IdentityFile)
+	}
+	if edit.Tags != nil {
+		applyTags(&lines, &start, &end, *edit.Tags)
+	}
+
+	updated := strings.Join(lines, "\n")
+	if _, err := ssh_config.Decode(strings.NewReader(updated)); err != nil {
+		return fmt.Errorf("sshconfig: edited config is invalid: %w", err)
+	}
+	if _, _, err := findHostBlock(strings.Split(updated, "\n"), alias); err != nil {
+		return fmt.Errorf("sshconfig: edited config lost host %s: %w", alias, err)
+	}
+
+	current, err := os.ReadFile(target)
+	if err != nil {
+		return fmt.Errorf("sshconfig: re-read %s: %w", target, err)
+	}
+	if !bytes.Equal(current, original) {
+		return ErrConfigChanged
+	}
+
+	mode := info.Mode().Perm()
+	if mode == 0 {
+		mode = 0o600
+	}
+	backup := fmt.Sprintf("%s.bak.%s", target, time.Now().Format("20060102-150405.000"))
+	if err := os.WriteFile(backup, original, mode); err != nil {
+		return fmt.Errorf("sshconfig: backup %s: %w", backup, err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".ttydeck-config-*")
+	if err != nil {
+		return fmt.Errorf("sshconfig: create temporary file: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("sshconfig: chmod temporary file: %w", err)
+	}
+	if _, err := tmp.WriteString(updated); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("sshconfig: write temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("sshconfig: sync temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("sshconfig: close temporary file: %w", err)
+	}
+	if err := atomic.ReplaceFile(tmpName, target); err != nil {
+		cleanup()
+		return fmt.Errorf("sshconfig: replace %s: %w", target, err)
+	}
+	return nil
+}
+
+func findHostBlock(lines []string, alias string) (start, end int, err error) {
+	for i, line := range lines {
+		if !isHostLine(line) {
+			continue
+		}
+		patterns := hostPatterns(line)
+		matched := false
+		for _, pattern := range patterns {
+			if strings.EqualFold(cleanPattern(pattern), alias) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		start = i
+		end = len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if isHostLine(lines[j]) || isMatchLine(lines[j]) {
+				end = j
+				break
+			}
+		}
+		return start, end, nil
+	}
+	return 0, 0, fmt.Errorf("%w: %s", ErrHostNotFound, alias)
+}
+
+func isHostLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	return lower == "host" || strings.HasPrefix(lower, "host ") || strings.HasPrefix(lower, "host=")
+}
+
+func isMatchLine(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	return lower == "match" || strings.HasPrefix(lower, "match ") || strings.HasPrefix(lower, "match=")
+}
+
+func hostPatterns(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	rest := strings.TrimSpace(trimmed[len("Host"):])
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "="))
+	if rest == "" {
+		return nil
+	}
+	return strings.Fields(rest)
+}
+
+func setKV(lines *[]string, start, end *int, key, value string) {
+	for i := *start + 1; i < *end; i++ {
+		if keyMatches((*lines)[i], key) {
+			(*lines)[i] = rewriteKV((*lines)[i], key, value)
+			return
+		}
+	}
+	insertBlockLine(lines, start, end, "  "+key+" "+value)
+}
+
+func replaceAllKV(lines *[]string, start, end *int, key, value string) {
+	kept := make([]string, 0, len(*lines))
+	for i, line := range *lines {
+		if i > *start && i < *end && keyMatches(line, key) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	removed := len(*lines) - len(kept)
+	*lines = kept
+	*end -= removed
+	insertBlockLine(lines, start, end, "  "+key+" "+value)
+}
+
+func insertBlockLine(lines *[]string, start, end *int, line string) {
+	insertAt := *end
+	for insertAt > *start+1 && strings.TrimSpace((*lines)[insertAt-1]) == "" {
+		insertAt--
+	}
+	updated := make([]string, 0, len(*lines)+1)
+	updated = append(updated, (*lines)[:insertAt]...)
+	updated = append(updated, line)
+	updated = append(updated, (*lines)[insertAt:]...)
+	*lines = updated
+	*end++
+}
+
+func keyMatches(line, key string) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	key = strings.ToLower(key)
+	if !strings.HasPrefix(lower, key) {
+		return false
+	}
+	if len(trimmed) == len(key) {
+		return true
+	}
+	next := trimmed[len(key)]
+	return next == ' ' || next == '\t' || next == '='
+}
+
+func rewriteKV(line, key, value string) string {
+	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+	body := strings.TrimLeft(line, " \t")
+	comment := ""
+	if index := strings.Index(body, "#"); index >= 0 {
+		comment = body[index:]
+		body = strings.TrimSpace(body[:index])
+	}
+	separator := " "
+	if strings.Contains(body, "=") {
+		separator = " = "
+	}
+	updated := indent + key + separator + value
+	if comment != "" {
+		updated += " " + comment
+	}
+	return updated
+}
+
+func applyTags(lines *[]string, start, end *int, tags []string) {
+	value := strings.Join(normalizeTags(tags), ",")
+	const marker = "ttydeck:tags="
+	for i := *start + 1; i < *end; i++ {
+		line := (*lines)[i]
+		index := strings.Index(strings.ToLower(line), marker)
+		if index < 0 {
+			continue
+		}
+		before := line[:index]
+		after := line[index+len(marker):]
+		suffix := ""
+		if fields := strings.Fields(after); len(fields) > 0 {
+			if offset := strings.Index(after, fields[0]); offset >= 0 {
+				suffix = after[offset+len(fields[0]):]
+			}
+		}
+		(*lines)[i] = before + marker + value + suffix
+		return
+	}
+	insertBlockLine(lines, start, end, "  # "+marker+value)
+}
+
+func normalizeTags(tags []string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	return out
+}
