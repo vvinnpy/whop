@@ -1,0 +1,299 @@
+package ui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
+
+var (
+	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"})
+	styleAccent   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"})
+	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6C6C6C", Dark: "#808080"})
+	styleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#D7EEF7", Dark: "#1F3A46"}).Foreground(lipgloss.AdaptiveColor{Light: "#003B4A", Dark: "#E6FBFF"}).Bold(true)
+	styleError    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#AF0000", Dark: "#FF5F5F"})
+)
+
+// View implements tea.Model.
+func (m *Model) View() string {
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	height := m.height
+	if height <= 0 {
+		height = 30
+	}
+
+	header := m.viewHeader(width)
+	filter := m.viewFilter(width)
+	if m.help {
+		return strings.Join([]string{header, filter, m.viewHelp(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+	}
+
+	list := m.viewList(width, height)
+	if width < 96 {
+		if summary := m.selectedSummary(); summary != "" {
+			list = append(list, styleDim.Render("  "+summary))
+		}
+	}
+	detail := m.viewDetail(width)
+	body := strings.Join(list, "\n")
+	if detail != "" {
+		body = joinColumns(list, strings.Split(detail, "\n"), width)
+	}
+
+	return strings.Join([]string{header, filter, body, m.viewFooter(width), m.viewStatus(width)}, "\n")
+}
+
+func (m *Model) viewHeader(width int) string {
+	count := fmt.Sprintf("%d/%d hosts", len(m.filtered), len(m.allHosts))
+	left := styleTitle.Render(" ttydeck ") + styleDim.Render(" "+count+"  "+m.configPath)
+	mode := styleAccent.Render("[" + m.modeLabel() + "]")
+	if ansi.StringWidth(left)+ansi.StringWidth(mode)+1 > width {
+		left = ansi.Truncate(left, max(1, width-ansi.StringWidth(mode)-1), "~")
+	}
+	gap := width - ansi.StringWidth(left) - ansi.StringWidth(mode)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + mode
+}
+
+func (m *Model) viewFilter(width int) string {
+	label := styleAccent.Render(" / filter: ")
+	value := m.filterSummary()
+	if m.filterFocused {
+		value = m.filter + "█"
+		if value == "█" {
+			value = "█"
+		}
+	} else if m.filter != "" {
+		value = m.filter
+	} else {
+		value = styleDim.Render("(type to filter)")
+	}
+	return ansi.Truncate(label+value, width, "~")
+}
+
+func (m *Model) viewList(width, height int) []string {
+	listWidth := width
+	detailVisible := width >= 96
+	if detailVisible {
+		listWidth = max(55, width*3/5)
+		if listWidth > width-30 {
+			listWidth = width - 30
+		}
+	}
+
+	columns := listColumns(listWidth)
+	lines := []string{styleDim.Render(padTo(rowLine(columns, "NAME", "HOST", "USER", "PORT", "TAGS"), listWidth))}
+
+	available := height - 7
+	if available < 3 {
+		available = 3
+	}
+	if len(m.filtered) == 0 {
+		lines = append(lines, styleDim.Render("  no hosts match"))
+		return lines
+	}
+
+	start := 0
+	if m.cursor >= available {
+		start = m.cursor - available + 1
+	}
+	end := start + available
+	if end > len(m.filtered) {
+		end = len(m.filtered)
+	}
+
+	for index := start; index < end; index++ {
+		host := m.filtered[index]
+		selected := index == m.cursor
+		prefix := "  "
+		if selected {
+			prefix = "> "
+		}
+		line := padTo(rowLine(columns, prefix+host.Alias, host.HostName, host.User, fmt.Sprintf("%d", host.Port), strings.Join(host.Tags, ",")), listWidth)
+		if selected {
+			line = styleSelected.Render(padTo(line, listWidth))
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func (m *Model) viewDetail(width int) string {
+	host, ok := m.selected()
+	if !ok {
+		return ""
+	}
+
+	if width < 96 {
+		return ""
+	}
+
+	detailWidth := width - max(55, width*3/5) - 2
+	if detailWidth < 24 {
+		detailWidth = 24
+	}
+	identity := strings.Join(host.IdentityFiles, ", ")
+	if identity == "" {
+		identity = "-"
+	}
+	proxy := host.ProxyJump
+	if proxy == "" {
+		proxy = "-"
+	}
+	tags := strings.Join(host.Tags, ",")
+	if tags == "" {
+		tags = "-"
+	}
+
+	lines := []string{
+		styleAccent.Render(fit(strings.ToUpper(host.Alias), detailWidth)),
+		detailLine("host", host.Address(), detailWidth),
+		detailLine("user", valueOrDash(host.User), detailWidth),
+		detailLine("identity", identity, detailWidth),
+		detailLine("proxy", proxy, detailWidth),
+		detailLine("tags", tags, detailWidth),
+		detailLine("kind", string(host.Kind), detailWidth),
+		detailLine("source", host.Source, detailWidth),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) viewHelp(width int) string {
+	lines := []string{
+		styleAccent.Render(" KEYBOARD"),
+		"",
+		"  enter       connect to selected host",
+		"  /           focus filter",
+		"  j / k       move down / up",
+		"  g / G       first / last",
+		"  ctrl+d/u    page down / up",
+		"  r           reload config",
+		"  a           toggle servers / all",
+		"  esc         clear filter or quit",
+		"  ?           close help",
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "~")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) viewFooter(width int) string {
+	var hint string
+	if m.filterFocused {
+		hint = " type to filter   enter connect   esc clear   ctrl+u clear   tab leave filter"
+	} else {
+		hint = " enter connect   / filter   j/k move   g/G top/bottom   r reload   a all   ? help   q quit"
+	}
+	return styleDim.Render(ansi.Truncate(hint, width, "~"))
+}
+
+func (m *Model) viewStatus(width int) string {
+	if m.err != nil {
+		return styleError.Render(ansi.Truncate(" error: "+m.err.Error(), width, "~"))
+	}
+	if m.status == "" {
+		if m.loaded {
+			return ""
+		}
+		return styleDim.Render(" loading...")
+	}
+	return styleDim.Render(ansi.Truncate(" "+m.status, width, "~"))
+}
+
+type columns struct {
+	name, host, user, port, tags int
+	showUser, showPort, showTags bool
+}
+
+func listColumns(width int) columns {
+	switch {
+	case width >= 100:
+		return columns{name: 24, host: 30, user: 12, port: 5, tags: max(8, width-24-30-12-5-6), showUser: true, showPort: true, showTags: true}
+	case width >= 72:
+		return columns{name: 20, host: 24, user: 10, port: 5, showUser: true, showPort: true}
+	case width >= 52:
+		hostWidth := max(12, (width-18-8)/2)
+		userWidth := max(8, width-18-hostWidth-6)
+		return columns{name: 18, host: hostWidth, user: userWidth, showUser: true}
+	default:
+		return columns{name: 16, host: max(8, width-18)}
+	}
+}
+
+func rowLine(columns columns, name, host, user, port, tags string) string {
+	line := "  " + fit(name, columns.name) + " " + fit(host, columns.host)
+	if columns.showUser {
+		line += " " + fit(user, columns.user)
+	}
+	if columns.showPort {
+		line += " " + fit(port, columns.port)
+	}
+	if columns.showTags {
+		line += " " + fit(tags, columns.tags)
+	}
+	return line
+}
+
+func detailLine(label, value string, width int) string {
+	labelWidth := 9
+	left := styleDim.Render(fit(label, labelWidth))
+	return left + " " + fit(valueOrDash(value), max(1, width-labelWidth-1))
+}
+
+func valueOrDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func joinColumns(left, right []string, width int) string {
+	leftWidth := max(55, width*3/5)
+	if leftWidth > width-30 {
+		leftWidth = width - 30
+	}
+	rows := max(len(left), len(right))
+	lines := make([]string, 0, rows)
+	for i := 0; i < rows; i++ {
+		var l, r string
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		lines = append(lines, padTo(l, leftWidth)+"  "+r)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fit(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	value = ansi.Truncate(value, width, "~")
+	gap := width - ansi.StringWidth(value)
+	if gap > 0 {
+		value += strings.Repeat(" ", gap)
+	}
+	return value
+}
+
+func padTo(value string, width int) string {
+	return fit(value, width)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
