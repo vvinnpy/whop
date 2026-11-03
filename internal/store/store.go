@@ -75,6 +75,19 @@ func (s *Store) init() error {
 			command TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS transcript_index (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL UNIQUE,
+			path TEXT NOT NULL,
+			host TEXT NOT NULL,
+			started_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS transcript_index_started_at
+			ON transcript_index(started_at DESC)`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
+			text,
+			tokenize = 'unicode61 remove_diacritics 2'
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {

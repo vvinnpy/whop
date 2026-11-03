@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,5 +160,171 @@ func TestSnippets(t *testing.T) {
 	}
 	if err := db.SetSnippet("x", ""); err == nil {
 		t.Fatal("expected empty command error")
+	}
+}
+
+func TestTranscriptIndexSearchAndPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2026, 11, 3, 10, 0, 0, 123456789, time.UTC)
+	if err := db.IndexTranscript(Transcript{
+		SessionID: "prod-db-1",
+		Path:      "/recordings/prod-db-1.txt",
+		Host:      "prod-db",
+		StartedAt: started,
+		Text:      "backup started\nproduction database backup completed\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.IndexTranscript(Transcript{
+		SessionID: "staging-1",
+		Path:      "/recordings/staging-1.txt",
+		Host:      "staging",
+		StartedAt: started.Add(time.Minute),
+		Text:      "staging database maintenance\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := db.SearchTranscripts("database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches = %#v", matches)
+	}
+	if matches[0].Host != "staging" && matches[1].Host != "staging" {
+		t.Fatalf("missing staging result: %#v", matches)
+	}
+	var prod *TranscriptMatch
+	for index := range matches {
+		if matches[index].Host == "prod-db" {
+			prod = &matches[index]
+		}
+	}
+	if prod == nil {
+		t.Fatalf("missing prod-db result: %#v", matches)
+	}
+	if prod.Path != "/recordings/prod-db-1.txt" || !prod.StartedAt.Equal(started) {
+		t.Fatalf("unexpected prod result: %+v", *prod)
+	}
+	if !strings.Contains(strings.ToLower(prod.Snippet), "database") ||
+		!strings.Contains(prod.Snippet, ">>>") || !strings.Contains(prod.Snippet, "<<<") {
+		t.Fatalf("unexpected snippet: %q", prod.Snippet)
+	}
+
+	if err := db.IndexTranscript(Transcript{
+		SessionID: "prod-db-1",
+		Path:      "/recordings/prod-db-1.txt",
+		Host:      "prod-db",
+		StartedAt: started,
+		Text:      "restore completed successfully\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldMatches, err := db.SearchTranscripts("backup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldMatches) != 0 {
+		t.Fatalf("old index content survived replacement: %#v", oldMatches)
+	}
+	newMatches, err := db.SearchTranscripts("restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newMatches) != 1 || newMatches[0].Host != "prod-db" {
+		t.Fatalf("replacement not searchable: %#v", newMatches)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	persisted, err := reopened.SearchTranscripts("restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) != 1 || persisted[0].Path != "/recordings/prod-db-1.txt" ||
+		!persisted[0].StartedAt.Equal(started) {
+		t.Fatalf("transcript index did not persist: %#v", persisted)
+	}
+}
+
+func TestTranscriptIndexValidation(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	valid := Transcript{
+		SessionID: "session",
+		Path:      "session.txt",
+		Host:      "host",
+		StartedAt: time.Now(),
+		Text:      "text",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Transcript)
+	}{
+		{name: "session", mutate: func(value *Transcript) { value.SessionID = " " }},
+		{name: "path", mutate: func(value *Transcript) { value.Path = "" }},
+		{name: "host", mutate: func(value *Transcript) { value.Host = "" }},
+		{name: "time", mutate: func(value *Transcript) { value.StartedAt = time.Time{} }},
+		{name: "text", mutate: func(value *Transcript) { value.Text = " " }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transcript := valid
+			test.mutate(&transcript)
+			if err := db.IndexTranscript(transcript); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestTranscriptQueryValidationAndEscaping(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.IndexTranscript(Transcript{
+		SessionID: "session",
+		Path:      "session.txt",
+		Host:      "host",
+		StartedAt: time.Now(),
+		Text:      "disk full; disk:error; quoted \"full\" value\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, query := range []string{"", "   ", "\n\t", "***", "\x00disk", strings.Repeat("x", maxTranscriptQueryLength+1)} {
+		if _, err := db.SearchTranscripts(query); err == nil {
+			t.Fatalf("query %q should fail", query)
+		}
+	}
+	if _, err := db.SearchTranscripts(""); !errors.Is(err, ErrEmptyTranscriptQuery) {
+		t.Fatalf("empty query error = %v", err)
+	}
+	if _, err := db.SearchTranscripts("***"); !errors.Is(err, ErrInvalidTranscriptQuery) {
+		t.Fatalf("invalid query error = %v", err)
+	}
+
+	for _, query := range []string{`disk AND full`, `disk:*`, `quoted "full"`} {
+		if _, err := db.SearchTranscripts(query); err != nil {
+			t.Fatalf("literal query %q failed: %v", query, err)
+		}
 	}
 }

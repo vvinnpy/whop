@@ -147,3 +147,124 @@ func TestSanitizeName(t *testing.T) {
 		t.Fatalf("sanitizeName = %q", got)
 	}
 }
+
+func TestRecordingRedactsTranscriptByDefault(t *testing.T) {
+	var cast, transcript bytes.Buffer
+	rec, err := NewRecording(&cast, &transcript, 80, 24, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chunk := range []string{
+		"Password: hun",
+		"ter2\nAPI_KEY=abc123\nAuthorization: Bearer bearer-secret\n",
+		"token=tail-secret",
+	} {
+		if _, err := rec.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	plain := transcript.String()
+	for _, secret := range []string{"hunter2", "abc123", "bearer-secret", "tail-secret"} {
+		if strings.Contains(plain, secret) {
+			t.Fatalf("transcript leaked %q: %q", secret, plain)
+		}
+	}
+	if count := strings.Count(plain, "[REDACTED]"); count != 4 {
+		t.Fatalf("redaction count = %d: %q", count, plain)
+	}
+
+	assertValidCastJSONL(t, cast.String())
+	castText := castEventData(t, cast.String())
+	if !strings.Contains(castText, "hunter2") {
+		t.Fatalf("cast should preserve the original playback stream: %q", castText)
+	}
+}
+
+func TestRecordingCustomRedactionRules(t *testing.T) {
+	var transcript bytes.Buffer
+	rec, err := NewRecordingWithOptions(nil, &transcript, 80, 24, time.Now(), RecordingOptions{
+		RedactionRules: []RedactionRule{{
+			Name:        "bearer",
+			Pattern:     `(?i)bearer\s+\S+`,
+			Replacement: "Bearer [REDACTED]",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Write([]byte("Bearer custom-secret\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := transcript.String(); got != "Bearer [REDACTED]\n" {
+		t.Fatalf("transcript = %q", got)
+	}
+}
+
+func TestRecordingCanDisableRedaction(t *testing.T) {
+	var transcript bytes.Buffer
+	rec, err := NewRecordingWithOptions(nil, &transcript, 80, 24, time.Now(), RecordingOptions{
+		DisableRedaction: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.Write([]byte("Password: visible\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := transcript.String(); got != "Password: visible\n" {
+		t.Fatalf("transcript = %q", got)
+	}
+}
+
+func TestRecordingRejectsInvalidRedactionPattern(t *testing.T) {
+	_, err := NewRecordingWithOptions(nil, &bytes.Buffer{}, 80, 24, time.Now(), RecordingOptions{
+		RedactionRules: []RedactionRule{{Pattern: "["}},
+	})
+	if err == nil {
+		t.Fatal("expected invalid pattern error")
+	}
+}
+
+func assertValidCastJSONL(t *testing.T, value string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("empty cast")
+	}
+	for index, line := range lines {
+		if !json.Valid([]byte(line)) {
+			t.Fatalf("cast line %d is not valid JSON: %q", index+1, line)
+		}
+	}
+}
+
+func castEventData(t *testing.T, value string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	var result strings.Builder
+	for _, line := range lines[1:] {
+		var event []json.RawMessage
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if len(event) != 3 {
+			t.Fatalf("event = %#v", event)
+		}
+		var data string
+		if err := json.Unmarshal(event[2], &data); err != nil {
+			t.Fatal(err)
+		}
+		result.WriteString(data)
+	}
+	return result.String()
+}

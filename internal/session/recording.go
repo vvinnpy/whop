@@ -20,14 +20,22 @@ type Recording struct {
 	mu         sync.Mutex
 	cast       io.Writer
 	transcript io.Writer
+	redactor   *transcriptRedactor
 	closers    []io.Closer
 	start      time.Time
 	closeOnce  sync.Once
 	closeErr   error
 }
 
-// NewRecording creates a recording writer. cast and transcript may be nil.
+// NewRecording creates a recording writer with the default transcript
+// redaction rules. cast and transcript may be nil.
 func NewRecording(cast, transcript io.Writer, width, height int, start time.Time) (*Recording, error) {
+	return NewRecordingWithOptions(cast, transcript, width, height, start, RecordingOptions{})
+}
+
+// NewRecordingWithOptions creates a recording writer with transcript redaction
+// options. Redaction never modifies the asciicast stream.
+func NewRecordingWithOptions(cast, transcript io.Writer, width, height int, start time.Time, opts RecordingOptions) (*Recording, error) {
 	if start.IsZero() {
 		start = time.Now()
 	}
@@ -36,6 +44,10 @@ func NewRecording(cast, transcript io.Writer, width, height int, start time.Time
 	}
 	if height <= 0 {
 		height = 24
+	}
+	redactor, err := newTranscriptRedactor(transcript, opts)
+	if err != nil {
+		return nil, err
 	}
 	header, err := json.Marshal(map[string]any{
 		"version":   2,
@@ -54,10 +66,15 @@ func NewRecording(cast, transcript io.Writer, width, height int, start time.Time
 			return nil, fmt.Errorf("session: write recording header: %w", err)
 		}
 	}
-	return &Recording{cast: cast, transcript: transcript, start: start}, nil
+	return &Recording{
+		cast:       cast,
+		transcript: transcript,
+		redactor:   redactor,
+		start:      start,
+	}, nil
 }
 
-// Write records one output chunk.
+// Write records one output chunk. Redaction applies only to the transcript.
 func (r *Recording) Write(data []byte) (int, error) {
 	if r == nil {
 		return len(data), nil
@@ -78,7 +95,11 @@ func (r *Recording) Write(data []byte) (int, error) {
 			return 0, fmt.Errorf("session: write recording event: %w", err)
 		}
 	}
-	if r.transcript != nil {
+	if r.redactor != nil {
+		if _, err := r.redactor.Write(data); err != nil {
+			return 0, fmt.Errorf("session: write transcript: %w", err)
+		}
+	} else if r.transcript != nil {
 		if _, err := io.WriteString(r.transcript, ansi.Strip(string(data))); err != nil {
 			return 0, fmt.Errorf("session: write transcript: %w", err)
 		}
@@ -86,12 +107,19 @@ func (r *Recording) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Close closes any files owned by the recording.
+// Close flushes the transcript and closes any files owned by the recording.
 func (r *Recording) Close() error {
 	if r == nil {
 		return nil
 	}
 	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.redactor != nil {
+			if err := r.redactor.Flush(); err != nil && r.closeErr == nil {
+				r.closeErr = err
+			}
+		}
 		for _, closer := range r.closers {
 			if err := closer.Close(); err != nil && r.closeErr == nil {
 				r.closeErr = err
@@ -101,8 +129,14 @@ func (r *Recording) Close() error {
 	return r.closeErr
 }
 
-// NewFileRecording creates .cast and .txt files under dir.
+// NewFileRecording creates .cast and .txt files under dir using the default
+// transcript redaction rules.
 func NewFileRecording(dir, alias string, width, height int, start time.Time) (*Recording, string, error) {
+	return NewFileRecordingWithOptions(dir, alias, width, height, start, RecordingOptions{})
+}
+
+// NewFileRecordingWithOptions creates .cast and .txt files under dir.
+func NewFileRecordingWithOptions(dir, alias string, width, height int, start time.Time, opts RecordingOptions) (*Recording, string, error) {
 	if start.IsZero() {
 		start = time.Now()
 	}
@@ -124,7 +158,7 @@ func NewFileRecording(dir, alias string, width, height int, start time.Time) (*R
 		return nil, "", fmt.Errorf("session: create transcript: %w", err)
 	}
 
-	recording, err := NewRecording(castFile, transcriptFile, width, height, start)
+	recording, err := NewRecordingWithOptions(castFile, transcriptFile, width, height, start, opts)
 	if err != nil {
 		_ = castFile.Close()
 		_ = transcriptFile.Close()
