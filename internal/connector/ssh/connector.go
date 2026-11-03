@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,8 +25,8 @@ import (
 var (
 	// ErrNoAuth means no usable key or agent was found.
 	ErrNoAuth = errors.New("no SSH authentication method available")
-	// ErrProxyJump is returned until ProxyJump is implemented.
-	ErrProxyJump = errors.New("ProxyJump is not implemented in this milestone")
+	// ErrProxyJump is returned for unsupported ProxyJump configurations.
+	ErrProxyJump = errors.New("ProxyJump configuration is not supported")
 )
 
 // PassphraseProvider supplies a private-key passphrase when needed.
@@ -41,6 +42,10 @@ type Options struct {
 	DisableAgent    bool
 	Timeout         time.Duration
 	Username        string
+	// ResolveHost resolves a jump-host alias to a configured host.
+	ResolveHost func(alias string) (sshconfig.Host, bool)
+	// ConfigPath is used as a fallback resolver for jump hosts.
+	ConfigPath string
 }
 
 // Connector dials SSH hosts using x/crypto/ssh.
@@ -58,22 +63,18 @@ func New(opts Options) *Connector {
 
 // Dial establishes an SSH client connection.
 func (c *Connector) Dial(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
-	if host.ProxyJump != "" {
-		return nil, fmt.Errorf("%w: host %s uses ProxyJump %q", ErrProxyJump, host.Alias, host.ProxyJump)
+	if host.ProxyJump != "" && !strings.EqualFold(host.ProxyJump, "none") {
+		return c.dialViaJump(ctx, host)
 	}
+	return c.dialDirect(ctx, host)
+}
 
-	methods, cleanup, err := c.authMethods(host)
+func (c *Connector) dialDirect(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
+	cfg, cleanup, err := c.newClientConfig(host)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-
-	cfg := &ssh.ClientConfig{
-		User:            c.username(host),
-		Auth:            methods,
-		HostKeyCallback: c.hostKeyCallback(),
-		Timeout:         c.opts.Timeout,
-	}
 
 	address := host.Address()
 	dialer := net.Dialer{Timeout: c.opts.Timeout}
@@ -88,6 +89,126 @@ func (c *Connector) Dial(ctx context.Context, host sshconfig.Host) (*ssh.Client,
 		return nil, fmt.Errorf("ssh handshake %s: %w", address, err)
 	}
 	return ssh.NewClient(conn, chans, reqs), nil
+}
+
+func (c *Connector) dialViaJump(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
+	specs := strings.Split(host.ProxyJump, ",")
+	if len(specs) != 1 {
+		return nil, fmt.Errorf("%w: multi-hop ProxyJump %q", ErrProxyJump, host.ProxyJump)
+	}
+
+	alias, user, port := parseJumpSpec(specs[0])
+	if alias == "" {
+		return nil, fmt.Errorf("ProxyJump %q has no host", host.ProxyJump)
+	}
+	if strings.EqualFold(alias, host.Alias) {
+		return nil, fmt.Errorf("ProxyJump %q points to itself", host.ProxyJump)
+	}
+
+	jumpHost, err := c.resolveJumpHost(alias, user, port)
+	if err != nil {
+		return nil, err
+	}
+	jumpClient, err := c.Dial(ctx, jumpHost)
+	if err != nil {
+		return nil, fmt.Errorf("dial jump host %s: %w", jumpHost.Alias, err)
+	}
+
+	targetConn, err := jumpClient.Dial("tcp", host.Address())
+	if err != nil {
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("open %s via %s: %w", host.Address(), jumpHost.Alias, err)
+	}
+
+	cfg, cleanup, err := c.newClientConfig(host)
+	if err != nil {
+		_ = targetConn.Close()
+		_ = jumpClient.Close()
+		return nil, err
+	}
+	defer cleanup()
+
+	conn, chans, reqs, err := ssh.NewClientConn(targetConn, host.Address(), cfg)
+	if err != nil {
+		_ = targetConn.Close()
+		_ = jumpClient.Close()
+		return nil, fmt.Errorf("ssh handshake %s via %s: %w", host.Address(), jumpHost.Alias, err)
+	}
+	client := ssh.NewClient(conn, chans, reqs)
+	go func() {
+		_ = client.Wait()
+		_ = jumpClient.Close()
+	}()
+	return client, nil
+}
+
+func (c *Connector) newClientConfig(host sshconfig.Host) (*ssh.ClientConfig, func(), error) {
+	methods, cleanup, err := c.authMethods(host)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return &ssh.ClientConfig{
+		User:            c.username(host),
+		Auth:            methods,
+		HostKeyCallback: c.hostKeyCallback(),
+		Timeout:         c.opts.Timeout,
+	}, cleanup, nil
+}
+
+func (c *Connector) resolveJumpHost(alias, user string, port int) (sshconfig.Host, error) {
+	var host sshconfig.Host
+	var ok bool
+
+	if c.opts.ResolveHost != nil {
+		host, ok = c.opts.ResolveHost(alias)
+	}
+	if !ok && c.opts.ConfigPath != "" {
+		hosts, err := sshconfig.Load(c.opts.ConfigPath)
+		if err != nil {
+			return sshconfig.Host{}, fmt.Errorf("load jump host %s: %w", alias, err)
+		}
+		host, ok = sshconfig.Find(hosts, alias)
+	}
+	if !ok {
+		host = sshconfig.Host{
+			Alias:    alias,
+			HostName: alias,
+			Port:     22,
+			Kind:     sshconfig.KindServer,
+		}
+	}
+	if user != "" {
+		host.User = user
+	}
+	if port > 0 {
+		host.Port = port
+	}
+	return host, nil
+}
+
+func parseJumpSpec(spec string) (alias, user string, port int) {
+	spec = strings.TrimSpace(spec)
+	if at := strings.LastIndex(spec, "@"); at >= 0 {
+		user = spec[:at]
+		spec = spec[at+1:]
+	}
+	alias = spec
+	if host, portText, err := net.SplitHostPort(spec); err == nil {
+		alias = host
+		if parsed, err := strconv.Atoi(portText); err == nil {
+			port = parsed
+		}
+		return alias, user, port
+	}
+	if strings.Count(spec, ":") == 1 {
+		if index := strings.LastIndex(spec, ":"); index > 0 {
+			if parsed, err := strconv.Atoi(spec[index+1:]); err == nil {
+				alias = spec[:index]
+				port = parsed
+			}
+		}
+	}
+	return alias, user, port
 }
 
 // RunCommand runs a non-interactive command and returns combined output.

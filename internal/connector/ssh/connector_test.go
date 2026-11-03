@@ -58,6 +58,11 @@ func newTestSSHServer(t *testing.T, allowed cryptossh.PublicKey) *testSSHServer 
 		},
 	}
 	server.AddHostKey(hostSigner)
+	server.ChannelHandlers = map[string]gliderssh.ChannelHandler{
+		"session":      gliderssh.DefaultChannelHandlers["session"],
+		"direct-tcpip": gliderssh.DirectTCPIPHandler,
+	}
+	server.LocalPortForwardingCallback = func(gliderssh.Context, string, uint32) bool { return true }
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -165,17 +170,60 @@ func TestNoAuthMethods(t *testing.T) {
 	}
 }
 
-func TestProxyJumpNotImplemented(t *testing.T) {
+func TestMultiHopProxyJumpNotImplemented(t *testing.T) {
 	connector := newTestConnector()
 	host := sshconfig.Host{
 		Alias:     "test",
 		HostName:  "127.0.0.1",
 		Port:      22,
-		ProxyJump: "bastion",
+		ProxyJump: "bastion,inner",
 	}
 	_, err := connector.Dial(context.Background(), host)
 	if err == nil || !strings.Contains(err.Error(), ErrProxyJump.Error()) {
 		t.Fatalf("expected ErrProxyJump, got %v", err)
+	}
+}
+
+func TestProxyJump(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	target := newTestSSHServer(t, public)
+	jump := newTestSSHServer(t, public)
+
+	jumpHost := sshconfig.Host{
+		Alias:         "jump",
+		HostName:      "127.0.0.1",
+		Port:          jump.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+	targetHost := sshconfig.Host{
+		Alias:         "target",
+		HostName:      "127.0.0.1",
+		Port:          target.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+		ProxyJump:     "jump",
+	}
+
+	connector := New(Options{
+		HostKeyCallback: cryptossh.InsecureIgnoreHostKey(),
+		DisableAgent:    true,
+		Timeout:         5 * time.Second,
+		Username:        "tester",
+		ResolveHost: func(alias string) (sshconfig.Host, bool) {
+			if alias == "jump" {
+				return jumpHost, true
+			}
+			return sshconfig.Host{}, false
+		},
+	})
+
+	output, err := connector.RunCommand(context.Background(), targetHost, "echo via-jump")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), "ran: echo via-jump") {
+		t.Fatalf("unexpected output: %q", output)
 	}
 }
 

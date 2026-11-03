@@ -27,7 +27,7 @@ type Deps struct {
 	Stdout     io.Writer
 	Stderr     io.Writer
 	LoadConfig func(string) ([]sshconfig.Host, error)
-	Connect    func(sshconfig.Host, io.Reader, io.Writer, io.Writer) error
+	Connect    func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer) error
 	RunTUI     func(ui.Options) error
 }
 
@@ -113,7 +113,7 @@ func runTUI(args []string, deps Deps) int {
 			return deps.LoadConfig(configPathValue)
 		},
 		Connect: func(host sshconfig.Host) tea.Cmd {
-			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunner(), Host: host}, func(err error) tea.Msg {
+			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue), Host: host}, func(err error) tea.Msg {
 				return ui.ConnectFinishedMsg{Err: err}
 			})
 		},
@@ -195,20 +195,34 @@ func runConnect(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
 		return 1
 	}
-	if err := deps.Connect(host, deps.Stdin, deps.Stdout, deps.Stderr); err != nil {
+	if err := deps.Connect(host, hosts, deps.Stdin, deps.Stdout, deps.Stderr); err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func defaultConnect(host sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) error {
-	runner := sshRunner()
+func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) error {
+	runner := sshRunnerWithHosts(hosts)
 	return runner.Run(context.Background(), host, stdin, stdout, stderr)
 }
 
-func sshRunner() *sshconn.Runner {
-	connector := sshconn.New(sshconn.Options{})
+func sshRunnerForConfig(path string) *sshconn.Runner {
+	hosts, _ := sshconfig.Load(path)
+	return sshRunnerWithHosts(hosts)
+}
+
+func sshRunnerWithHosts(hosts []sshconfig.Host) *sshconn.Runner {
+	byAlias := make(map[string]sshconfig.Host, len(hosts))
+	for _, host := range hosts {
+		byAlias[host.Alias] = host
+	}
+	connector := sshconn.New(sshconn.Options{
+		ResolveHost: func(alias string) (sshconfig.Host, bool) {
+			host, ok := byAlias[alias]
+			return host, ok
+		},
+	})
 	return sshconn.NewRunner(connector, nil)
 }
 

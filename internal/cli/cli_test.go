@@ -40,7 +40,7 @@ func newTestDeps() *testDeps {
 			td.loadPath = path
 			return cliHosts(), nil
 		},
-		Connect: func(host sshconfig.Host, _ io.Reader, _, _ io.Writer) error {
+		Connect: func(host sshconfig.Host, _ []sshconfig.Host, _ io.Reader, _, _ io.Writer) error {
 			td.connected = host.Alias
 			return nil
 		},

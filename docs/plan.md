@@ -79,6 +79,7 @@ Completed in this iteration:
 - [x] Bubble Tea host list, detail panel, filter bar, help overlay
 - [x] in-process SSH connector using `x/crypto/ssh`
 - [x] key and ssh-agent authentication
+- [x] single-hop ProxyJump
 - [x] CLI: `ttydeck`, `ttydeck list`, `ttydeck connect`, `ttydeck version`
 - [x] unit tests and an in-process SSH integration test
 - [x] three-platform CI with `CGO_ENABLED=0`
