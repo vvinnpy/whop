@@ -114,8 +114,14 @@ ttydeck snippet list
 | `q` | quit |
 
 The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides
-Git/Auth entries (`github.com`, `gitlab.com`, wildcard blocks, `Match` blocks)
-from the default server list. Use `-all` to inspect them.
+Git/Auth entries (`github.com`, `gitlab.com`, `aur.archlinux.org`, wildcard
+blocks, `Match` blocks) from the default server list. Use `-all` to inspect them.
+
+`aur.archlinux.org` is a Git/Auth endpoint, not an interactive shell. Use:
+
+```bash
+ttydeck run aur.archlinux.org help
+```
 
 ## Status
 

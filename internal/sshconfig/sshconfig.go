@@ -201,6 +201,7 @@ func knownGitHost(host string) bool {
 		"ssh.dev.azure.com",
 		"gitee.com",
 		"git.sr.ht",
+		"aur.archlinux.org",
 	}
 	for _, candidate := range known {
 		if host == candidate || strings.HasSuffix(host, "."+candidate) {

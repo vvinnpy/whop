@@ -4,6 +4,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -289,6 +290,11 @@ func runConnect(args []string, deps Deps) int {
 		return 1
 	}
 	if err := deps.Connect(host, hosts, deps.Stdin, deps.Stdout, deps.Stderr, *record); err != nil {
+		if errors.Is(err, sshconn.ErrInteractiveUnavailable) {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %s is a Git/Auth endpoint; interactive shell is unavailable\n", host.Alias)
+			fmt.Fprintf(deps.Stderr, "try: ttydeck run %s help\n", host.Alias)
+			return 0
+		}
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}

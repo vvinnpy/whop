@@ -30,12 +30,12 @@ type testSSHServer struct {
 
 func newTestSSHServer(t *testing.T, allowed cryptossh.PublicKey) *testSSHServer {
 	t.Helper()
-	return newTestSSHServerWithAuth(t, allowed, "", nil)
+	return newTestSSHServerWithAuth(t, allowed, "", nil, true)
 }
 
 func newTestSSHServerWithPassword(t *testing.T, password string) *testSSHServer {
 	t.Helper()
-	return newTestSSHServerWithAuth(t, nil, password, nil)
+	return newTestSSHServerWithAuth(t, nil, password, nil, true)
 }
 
 func newTestSSHServerWithKeyboardInteractive(t *testing.T, password string) *testSSHServer {
@@ -43,10 +43,15 @@ func newTestSSHServerWithKeyboardInteractive(t *testing.T, password string) *tes
 	return newTestSSHServerWithAuth(t, nil, "", func(_ gliderssh.Context, challenger cryptossh.KeyboardInteractiveChallenge) bool {
 		answers, err := challenger("Password:", "", []string{"Password:"}, []bool{false})
 		return err == nil && len(answers) == 1 && answers[0] == password
-	})
+	}, true)
 }
 
-func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, password string, keyboard gliderssh.KeyboardInteractiveHandler) *testSSHServer {
+func newTestSSHServerWithNoPTY(t *testing.T, allowed cryptossh.PublicKey) *testSSHServer {
+	t.Helper()
+	return newTestSSHServerWithAuth(t, allowed, "", nil, false)
+}
+
+func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, password string, keyboard gliderssh.KeyboardInteractiveHandler, allowPTY bool) *testSSHServer {
 	t.Helper()
 
 	_, hostPrivate, err := ed25519.GenerateKey(rand.Reader)
@@ -84,6 +89,7 @@ func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, passwor
 	if keyboard != nil {
 		server.KeyboardInteractiveHandler = keyboard
 	}
+	server.PtyCallback = func(gliderssh.Context, gliderssh.Pty) bool { return allowPTY }
 	server.AddHostKey(hostSigner)
 	server.ChannelHandlers = map[string]gliderssh.ChannelHandler{
 		"session":      gliderssh.DefaultChannelHandlers["session"],
@@ -509,5 +515,29 @@ func TestInteractiveSessionRecording(t *testing.T) {
 	}
 	if !strings.Contains(cast.String(), `"o"`) || !strings.Contains(cast.String(), "hello from test") {
 		t.Fatalf("cast = %q", cast.String())
+	}
+}
+
+func TestInteractiveSessionFallsBackWhenPTYRejected(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	server := newTestSSHServerWithNoPTY(t, public)
+	connector := newTestConnector()
+	runner := NewRunner(connector, func() (int, int) { return 80, 24 })
+	host := sshconfig.Host{
+		Alias:         "no-pty",
+		HostName:      "127.0.0.1",
+		Port:          server.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(context.Background(), host, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "refused PTY") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "hello from test") {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

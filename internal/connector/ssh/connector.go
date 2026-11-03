@@ -17,7 +17,6 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
 
 	"ttydeck/internal/sshconfig"
 )
@@ -27,6 +26,9 @@ var (
 	ErrNoAuth = errors.New("no SSH authentication method available")
 	// ErrProxyJump is returned for unsupported ProxyJump configurations.
 	ErrProxyJump = errors.New("ProxyJump configuration is not supported")
+	// ErrInteractiveUnavailable means the remote endpoint refused a PTY and
+	// does not provide an interactive shell.
+	ErrInteractiveUnavailable = errors.New("remote host does not provide an interactive shell")
 )
 
 // PassphraseProvider supplies a private-key passphrase when needed.
@@ -253,15 +255,6 @@ func (c *Connector) authMethods(host sshconfig.Host) ([]ssh.AuthMethod, func(), 
 		}
 	}
 
-	if socket := c.agentSocket(); socket != "" && runtime.GOOS != "windows" {
-		conn, err := net.Dial("unix", socket)
-		if err == nil {
-			agentClient := agent.NewClient(conn)
-			methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
-			cleanups = append(cleanups, func() { _ = conn.Close() })
-		}
-	}
-
 	files := host.IdentityFiles
 	if len(files) == 0 {
 		files = defaultIdentityFiles()
@@ -295,6 +288,19 @@ func (c *Connector) authMethods(host sshconfig.Host) ([]ssh.AuthMethod, func(), 
 			return nil, func() {}, fmt.Errorf("parse identity %s: %w", path, err)
 		}
 		methods = append(methods, ssh.PublicKeys(signer))
+	}
+
+	if socket := c.agentSocket(); socket != "" && runtime.GOOS != "windows" {
+		conn, err := net.Dial("unix", socket)
+		if err == nil {
+			agentClient := agent.NewClient(conn)
+			if keys, listErr := agentClient.List(); listErr == nil && len(keys) > 0 {
+				methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
+				cleanups = append(cleanups, func() { _ = conn.Close() })
+			} else {
+				_ = conn.Close()
+			}
+		}
 	}
 
 	if c.opts.Password != nil {
@@ -345,23 +351,6 @@ func (c *Connector) hostKeyCallback() ssh.HostKeyCallback {
 		return c.opts.HostKeyCallback
 	}
 	return defaultHostKeyCallback()
-}
-
-func defaultHostKeyCallback() ssh.HostKeyCallback {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return func(string, net.Addr, ssh.PublicKey) error {
-			return fmt.Errorf("resolve home directory for known_hosts: %w", err)
-		}
-	}
-	path := filepath.Join(home, ".ssh", "known_hosts")
-	callback, err := knownhosts.New(path)
-	if err != nil {
-		return func(string, net.Addr, ssh.PublicKey) error {
-			return fmt.Errorf("load known_hosts %s: %w", path, err)
-		}
-	}
-	return callback
 }
 
 func defaultIdentityFiles() []string {
@@ -432,8 +421,15 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}
+	ptyRejected := false
 	if err := session.RequestPty("xterm-256color", height, width, modes); err != nil {
-		return fmt.Errorf("request pty on %s: %w", host.Alias, err)
+		if !isPTYRejected(err) {
+			return fmt.Errorf("request pty on %s: %w", host.Alias, err)
+		}
+		ptyRejected = true
+		if stderr != nil {
+			fmt.Fprintf(stderr, "ttydeck: remote host refused PTY; continuing without a TTY\n")
+		}
 	}
 
 	stdoutWriter := stdout
@@ -456,6 +452,9 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		return fmt.Errorf("start shell on %s: %w", host.Alias, err)
 	}
 	if err := session.Wait(); err != nil {
+		if ptyRejected {
+			return fmt.Errorf("%w: %s", ErrInteractiveUnavailable, host.Alias)
+		}
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) {
 			return fmt.Errorf("remote shell on %s exited with status %d", host.Alias, exit.ExitStatus())
@@ -463,6 +462,15 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		return fmt.Errorf("wait for shell on %s: %w", host.Alias, err)
 	}
 	return nil
+}
+
+func isPTYRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "pty") &&
+		(strings.Contains(message, "fail") || strings.Contains(message, "reject") || strings.Contains(message, "alloc"))
 }
 
 // ExecCommand adapts Runner to bubbletea.ExecCommand.

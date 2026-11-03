@@ -37,6 +37,9 @@ Host github.com
 Host gitlab.com
   User git
 
+Host aur.archlinux.org
+  User aur
+
 Host *.internal
   User admin
 
@@ -100,6 +103,9 @@ Host staging-cache
 	}
 	if byAlias["gitlab.com"].Kind != KindGitAuth {
 		t.Fatalf("gitlab.com kind = %q", byAlias["gitlab.com"].Kind)
+	}
+	if byAlias["aur.archlinux.org"].Kind != KindGitAuth {
+		t.Fatalf("aur.archlinux.org kind = %q", byAlias["aur.archlinux.org"].Kind)
 	}
 
 	tagged, ok := byAlias["tagged"]
