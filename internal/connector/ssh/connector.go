@@ -34,10 +34,22 @@ type PassphraseProvider interface {
 	Passphrase(host sshconfig.Host, keyPath string) (string, error)
 }
 
+// PasswordProvider supplies an SSH login password when the server offers
+// password authentication.
+type PasswordProvider interface {
+	Password(host sshconfig.Host) (string, error)
+}
+
+// KeyboardInteractiveProvider answers keyboard-interactive challenges.
+type KeyboardInteractiveProvider interface {
+	KeyboardInteractive(host sshconfig.Host, name, instruction string, questions []string, echos []bool) ([]string, error)
+}
+
 // Options configures a Connector.
 type Options struct {
 	HostKeyCallback ssh.HostKeyCallback
 	Passphrase      PassphraseProvider
+	Password        PasswordProvider
 	AgentSocket     string
 	DisableAgent    bool
 	Timeout         time.Duration
@@ -283,6 +295,17 @@ func (c *Connector) authMethods(host sshconfig.Host) ([]ssh.AuthMethod, func(), 
 			return nil, func() {}, fmt.Errorf("parse identity %s: %w", path, err)
 		}
 		methods = append(methods, ssh.PublicKeys(signer))
+	}
+
+	if c.opts.Password != nil {
+		methods = append(methods, ssh.RetryableAuthMethod(ssh.PasswordCallback(func() (string, error) {
+			return c.opts.Password.Password(host)
+		}), 3))
+	}
+	if provider, ok := c.opts.Password.(KeyboardInteractiveProvider); ok {
+		methods = append(methods, ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
+			return provider.KeyboardInteractive(host, name, instruction, questions, echos)
+		}))
 	}
 
 	if len(methods) == 0 {

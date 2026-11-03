@@ -202,3 +202,45 @@ func TestHelp(t *testing.T) {
 		t.Fatalf("stdout = %q", td.stdout.String())
 	}
 }
+
+func TestVersionAliases(t *testing.T) {
+	for _, arg := range []string{"--version", "-v"} {
+		td := newTestDeps()
+		if code := Run([]string{arg}, td.deps); code != 0 {
+			t.Fatalf("%s exit code = %d", arg, code)
+		}
+		if !strings.Contains(td.stdout.String(), Version) {
+			t.Fatalf("%s stdout = %q", arg, td.stdout.String())
+		}
+	}
+}
+
+func TestSubcommandHelp(t *testing.T) {
+	for _, args := range [][]string{{"list", "-h"}, {"list", "--help"}, {"connect", "-h"}, {"connect", "--help"}} {
+		td := newTestDeps()
+		if code := Run(args, td.deps); code != 0 {
+			t.Fatalf("%v exit code = %d", args, code)
+		}
+	}
+}
+
+func TestListNoHosts(t *testing.T) {
+	td := newTestDeps()
+	td.deps.LoadConfig = func(string) ([]sshconfig.Host, error) { return nil, nil }
+	if code := Run([]string{"list"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if !strings.Contains(td.stdout.String(), "no hosts found") {
+		t.Fatalf("stdout = %q", td.stdout.String())
+	}
+}
+
+func TestBareInvocationRunsTUI(t *testing.T) {
+	td := newTestDeps()
+	if code := Run(nil, td.deps); code != 0 {
+		t.Fatalf("exit code = %d, stderr=%s", code, td.stderr.String())
+	}
+	if !td.tuiRan {
+		t.Fatal("bare invocation should run the TUI")
+	}
+}

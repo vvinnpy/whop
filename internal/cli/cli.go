@@ -218,6 +218,7 @@ func sshRunnerWithHosts(hosts []sshconfig.Host) *sshconn.Runner {
 		byAlias[host.Alias] = host
 	}
 	connector := sshconn.New(sshconn.Options{
+		Password: sshconn.TerminalPasswordProvider{In: os.Stdin, Out: os.Stderr},
 		ResolveHost: func(alias string) (sshconfig.Host, bool) {
 			host, ok := byAlias[alias]
 			return host, ok
