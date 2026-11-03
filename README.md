@@ -64,6 +64,11 @@ pure-Go, cross-platform, config-safe development.
 # Interactive host list
 ttydeck
 
+# ssh-agent is optional and disabled by default
+ttydeck -agent
+TTYDECK_SSH_AGENT=1 ttydeck
+ttydeck -no-agent
+
 # Start with an initial filter
 ttydeck prod
 

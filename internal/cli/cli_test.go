@@ -53,6 +53,7 @@ type testDeps struct {
 	zmGetOverwrite bool
 	ranHosts       []string
 	ranCommands    []string
+	useAgent       bool
 }
 
 func newTestDeps() *testDeps {
@@ -69,9 +70,10 @@ func newTestDeps() *testDeps {
 			td.loadPath = path
 			return cliHosts(), nil
 		},
-		Connect: func(host sshconfig.Host, _ []sshconfig.Host, _ io.Reader, _, _ io.Writer, record bool) error {
+		Connect: func(host sshconfig.Host, _ []sshconfig.Host, _ io.Reader, _, _ io.Writer, record bool, useAgent bool) error {
 			td.connected = host.Alias
 			td.recorded = record
+			td.useAgent = useAgent
 			return nil
 		},
 		RunTUI: func(opts ui.Options) error {
@@ -86,19 +88,19 @@ func newTestDeps() *testDeps {
 			return persistentTestStore{td.metaStore}, nil
 		},
 		RecordingDir: filepath.Join(os.TempDir(), "ttydeck-test-recordings"),
-		ZmodemPut: func(host sshconfig.Host, _ []sshconfig.Host, files []string, overwrite bool, _ io.Writer) error {
+		ZmodemPut: func(host sshconfig.Host, _ []sshconfig.Host, files []string, overwrite bool, useAgent bool, _ io.Writer) error {
 			td.zmPutHost = host.Alias
 			td.zmPutFiles = append([]string(nil), files...)
 			td.zmPutOverwrite = overwrite
 			return nil
 		},
-		Diagnose: func(sshconfig.Host, []sshconfig.Host) error { return nil },
-		RunCommand: func(host sshconfig.Host, _ []sshconfig.Host, command string) (string, error) {
+		Diagnose: func(sshconfig.Host, []sshconfig.Host, bool) error { return nil },
+		RunCommand: func(host sshconfig.Host, _ []sshconfig.Host, command string, useAgent bool) (string, error) {
 			td.ranHosts = append(td.ranHosts, host.Alias)
 			td.ranCommands = append(td.ranCommands, command)
 			return "ran " + command + " on " + host.Alias + "\n", nil
 		},
-		ZmodemGet: func(host sshconfig.Host, _ []sshconfig.Host, files []string, dest string, maxSize int64, overwrite bool, _ io.Writer) error {
+		ZmodemGet: func(host sshconfig.Host, _ []sshconfig.Host, files []string, dest string, maxSize int64, overwrite bool, useAgent bool, _ io.Writer) error {
 			td.zmGetHost = host.Alias
 			td.zmGetFiles = append([]string(nil), files...)
 			td.zmGetDest = dest
@@ -518,7 +520,7 @@ func TestSnippetUsage(t *testing.T) {
 
 func TestConnectJSONErrorDiagnostic(t *testing.T) {
 	td := newTestDeps()
-	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool) error {
+	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error {
 		return fmt.Errorf("ssh: handshake failed: EOF")
 	}
 	if code := Run([]string{"connect", "-json", "prod-db"}, td.deps); code != 1 {
@@ -535,7 +537,7 @@ func TestConnectJSONErrorDiagnostic(t *testing.T) {
 
 func TestConnectHumanDiagnostic(t *testing.T) {
 	td := newTestDeps()
-	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool) error {
+	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error {
 		return fmt.Errorf("ssh: handshake failed: EOF")
 	}
 	if code := Run([]string{"connect", "prod-db"}, td.deps); code != 1 {
@@ -564,7 +566,7 @@ func TestDiagnoseJSONSuccess(t *testing.T) {
 
 func TestDiagnoseJSONError(t *testing.T) {
 	td := newTestDeps()
-	td.deps.Diagnose = func(sshconfig.Host, []sshconfig.Host) error {
+	td.deps.Diagnose = func(sshconfig.Host, []sshconfig.Host, bool) error {
 		return fmt.Errorf("ssh: handshake failed: EOF")
 	}
 	if code := Run([]string{"diagnose", "-json", "prod-db"}, td.deps); code != 1 {
@@ -583,5 +585,36 @@ func TestDiagnoseUsage(t *testing.T) {
 	td := newTestDeps()
 	if code := Run([]string{"diagnose"}, td.deps); code != 2 {
 		t.Fatalf("exit code = %d", code)
+	}
+}
+
+func TestAgentFlagDefaultOff(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"connect", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if td.useAgent {
+		t.Fatal("ssh-agent must be disabled by default")
+	}
+}
+
+func TestAgentFlagOn(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"-agent", "connect", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if !td.useAgent {
+		t.Fatal("-agent did not enable ssh-agent")
+	}
+}
+
+func TestAgentEnvAndNoAgent(t *testing.T) {
+	t.Setenv("TTYDECK_SSH_AGENT", "1")
+	td := newTestDeps()
+	if code := Run([]string{"-no-agent", "connect", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if td.useAgent {
+		t.Fatal("-no-agent did not override env")
 	}
 }

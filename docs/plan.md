@@ -101,7 +101,8 @@ Deferred to the next milestone:
 The SSH-first V0.1 scope is functional:
 
 - responsive nccm-style TUI
-- SSH key/password/keyboard-interactive/agent auth
+- SSH key/password/keyboard-interactive auth
+- optional ssh-agent integration (disabled by default)
 - single-hop ProxyJump
 - structured connection diagnostics (`ttydeck diagnose -json`)
 - safe single-Host config editing

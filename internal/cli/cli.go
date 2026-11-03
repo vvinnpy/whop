@@ -34,14 +34,15 @@ type Deps struct {
 	Stdout       io.Writer
 	Stderr       io.Writer
 	LoadConfig   func(string) ([]sshconfig.Host, error)
-	Connect      func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool) error
+	Connect      func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error
 	RunTUI       func(ui.Options) error
 	OpenStore    func() (MetaStore, error)
 	RecordingDir string
-	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, io.Writer) error
-	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, io.Writer) error
-	RunCommand   func(sshconfig.Host, []sshconfig.Host, string) (string, error)
-	Diagnose     func(sshconfig.Host, []sshconfig.Host) error
+	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, bool, io.Writer) error
+	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, bool, io.Writer) error
+	RunCommand   func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
+	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
+	UseAgent     bool
 }
 
 // MetaStore is the metadata surface used by the CLI and TUI.
@@ -77,7 +78,9 @@ func NewDeps() Deps {
 
 // Run executes the CLI and returns an exit code.
 func Run(args []string, deps Deps) int {
+	args, useAgent := extractAgentFlag(args)
 	deps = normalizeDeps(deps)
+	deps.UseAgent = useAgent
 	if len(args) == 0 {
 		return runTUI(args, deps)
 	}
@@ -118,6 +121,27 @@ func Run(args []string, deps Deps) int {
 		// Bare arguments are an initial filter for the TUI, matching nccm.
 		return runTUI(args, deps)
 	}
+}
+
+func extractAgentFlag(args []string) ([]string, bool) {
+	useAgent := envBool("TTYDECK_SSH_AGENT")
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		switch arg {
+		case "-agent", "--agent":
+			useAgent = true
+		case "-no-agent", "--no-agent":
+			useAgent = false
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	return filtered, useAgent
+}
+
+func envBool(name string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func normalizeDeps(deps Deps) Deps {
@@ -202,7 +226,7 @@ func runTUI(args []string, deps Deps) int {
 			return metaStore.SetNotes(host.Alias, note)
 		},
 		Connect: func(host sshconfig.Host, record bool) tea.Cmd {
-			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir), Host: host}, func(err error) tea.Msg {
+			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir, deps.UseAgent), Host: host}, func(err error) tea.Msg {
 				if err == nil {
 					_ = metaStore.RecordConnect(host.Alias, time.Now())
 				}
@@ -301,7 +325,7 @@ func runConnect(args []string, deps Deps) int {
 	if *asJSON {
 		stdout, stderr = io.Discard, io.Discard
 	}
-	if err := deps.Connect(host, hosts, deps.Stdin, stdout, stderr, *record); err != nil {
+	if err := deps.Connect(host, hosts, deps.Stdin, stdout, stderr, *record, deps.UseAgent); err != nil {
 		if *asJSON {
 			writeDiagnostic(deps, host.Alias, err, true)
 			return 1
@@ -535,7 +559,7 @@ func runRemoteCommand(args []string, deps Deps) int {
 		return 1
 	}
 	command := strings.Join(fs.Args()[1:], " ")
-	output, err := deps.RunCommand(host, hosts, command)
+	output, err := deps.RunCommand(host, hosts, command, deps.UseAgent)
 	if output != "" {
 		fmt.Fprint(deps.Stdout, output)
 		if !strings.HasSuffix(output, "\n") {
@@ -697,7 +721,7 @@ func runSnippetRun(args []string, deps Deps) int {
 			continue
 		}
 		fmt.Fprintf(deps.Stdout, "== %s ==\n", alias)
-		output, err := deps.RunCommand(host, hosts, command)
+		output, err := deps.RunCommand(host, hosts, command, deps.UseAgent)
 		if output != "" {
 			fmt.Fprint(deps.Stdout, output)
 			if !strings.HasSuffix(output, "\n") {
@@ -759,7 +783,7 @@ func runDiagnose(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
 		return 1
 	}
-	if err := deps.Diagnose(host, hosts); err != nil {
+	if err := deps.Diagnose(host, hosts, deps.UseAgent); err != nil {
 		writeDiagnostic(deps, host.Alias, err, *asJSON)
 		return 1
 	}
@@ -773,8 +797,8 @@ func runDiagnose(args []string, deps Deps) int {
 	return 0
 }
 
-func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host) error {
-	connector := sshConnectorWithHosts(hosts)
+func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
+	connector := sshConnectorWithHosts(hosts, useAgent)
 	client, err := connector.Dial(context.Background(), host)
 	if err != nil {
 		return err
@@ -782,8 +806,8 @@ func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host) error {
 	return client.Close()
 }
 
-func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command string) (string, error) {
-	connector := sshConnectorWithHosts(hosts)
+func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command string, useAgent bool) (string, error) {
+	connector := sshConnectorWithHosts(hosts, useAgent)
 	output, err := connector.RunCommand(context.Background(), host, command)
 	return string(output), err
 }
@@ -828,7 +852,7 @@ func runZmodemPut(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
 		return 1
 	}
-	if err := deps.ZmodemPut(host, hosts, fs.Args()[1:], *overwrite, deps.Stdout); err != nil {
+	if err := deps.ZmodemPut(host, hosts, fs.Args()[1:], *overwrite, deps.UseAgent, deps.Stdout); err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: zmodem put: %v\n", err)
 		return 1
 	}
@@ -865,15 +889,15 @@ func runZmodemGet(args []string, deps Deps) int {
 	if destination == "" {
 		destination = defaultDownloadDir(host.Alias)
 	}
-	if err := deps.ZmodemGet(host, hosts, fs.Args()[1:], destination, *maxSize, *overwrite, deps.Stdout); err != nil {
+	if err := deps.ZmodemGet(host, hosts, fs.Args()[1:], destination, *maxSize, *overwrite, deps.UseAgent, deps.Stdout); err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: zmodem get: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite bool, out io.Writer) error {
-	connector := sshConnectorWithHosts(hosts)
+func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite bool, useAgent bool, out io.Writer) error {
+	connector := sshConnectorWithHosts(hosts, useAgent)
 	command := "rz"
 	if overwrite {
 		command = "rz -y"
@@ -884,8 +908,8 @@ func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []strin
 	})
 }
 
-func defaultZmodemGet(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite bool, out io.Writer) error {
-	connector := sshConnectorWithHosts(hosts)
+func defaultZmodemGet(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite bool, useAgent bool, out io.Writer) error {
+	connector := sshConnectorWithHosts(hosts, useAgent)
 	quoted := make([]string, len(remoteFiles))
 	for i, file := range remoteFiles {
 		quoted[i] = sshconn.ShellQuote(file)
@@ -912,23 +936,24 @@ func defaultDownloadDir(alias string) string {
 	return filepath.Join(home, "Downloads", "ttydeck", name)
 }
 
-func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool) error {
-	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir())
+func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool, useAgent bool) error {
+	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir(), useAgent)
 	return runner.Run(context.Background(), host, stdin, stdout, stderr)
 }
 
-func sshRunnerForConfig(path string, record bool, recordingDir string) *sshconn.Runner {
+func sshRunnerForConfig(path string, record bool, recordingDir string, useAgent bool) *sshconn.Runner {
 	hosts, _ := sshconfig.Load(path)
-	return sshRunnerWithHosts(hosts, record, recordingDir)
+	return sshRunnerWithHosts(hosts, record, recordingDir, useAgent)
 }
 
-func sshConnectorWithHosts(hosts []sshconfig.Host) *sshconn.Connector {
+func sshConnectorWithHosts(hosts []sshconfig.Host, useAgent bool) *sshconn.Connector {
 	byAlias := make(map[string]sshconfig.Host, len(hosts))
 	for _, host := range hosts {
 		byAlias[host.Alias] = host
 	}
 	return sshconn.New(sshconn.Options{
-		Password: sshconn.TerminalPasswordProvider{In: os.Stdin, Out: os.Stderr},
+		Password:     sshconn.TerminalPasswordProvider{In: os.Stdin, Out: os.Stderr},
+		DisableAgent: !useAgent,
 		ResolveHost: func(alias string) (sshconfig.Host, bool) {
 			host, ok := byAlias[alias]
 			return host, ok
@@ -936,8 +961,8 @@ func sshConnectorWithHosts(hosts []sshconfig.Host) *sshconn.Connector {
 	})
 }
 
-func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string) *sshconn.Runner {
-	connector := sshConnectorWithHosts(hosts)
+func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string, useAgent bool) *sshconn.Runner {
+	connector := sshConnectorWithHosts(hosts, useAgent)
 	runner := sshconn.NewRunner(connector, nil)
 	if record {
 		runner.RecordingFactory = func(host sshconfig.Host, width, height int) (io.WriteCloser, error) {
@@ -1031,6 +1056,8 @@ Flags for ttydeck:
   -config path   path to ssh config (default ~/.ssh/config)
   -all           show Git/Auth hosts too
   -record        record interactive sessions
+  -agent         use ssh-agent (default: off)
+  -no-agent      disable ssh-agent
 
 Flags for list:
   -config path   path to ssh config

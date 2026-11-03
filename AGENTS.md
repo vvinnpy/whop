@@ -158,6 +158,7 @@ Rules:
 - Passwords, key passphrases, tokens, and private keys are never stored in plaintext.
 - Default secret store: an age-encrypted vault protected by a master password (Argon2id + AES-256-GCM).
 - OS keyring is an optional enhancement, never a hard requirement.
+- ssh-agent integration is optional and disabled by default. It must never be a required dependency.
 - The macOS `/usr/bin/security` path may be used only as an optional integration, never as a requirement.
 - Never pass secrets through command-line arguments or shell interpolation.
 - Minimize secret lifetime in memory; do not log secrets or full environment dumps.
