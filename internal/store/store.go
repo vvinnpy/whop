@@ -1,0 +1,307 @@
+// Package store persists ttydeck metadata in SQLite.
+package store
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// Meta is user-owned metadata for one SSH alias.
+type Meta struct {
+	Favorite        bool
+	Notes           string
+	LastConnectedAt time.Time
+	ConnectCount    int
+	Tags            []string
+}
+
+// Store is a SQLite-backed metadata store.
+type Store struct {
+	db *sql.DB
+}
+
+// Open opens or creates the metadata database.
+func Open(path string) (*Store, error) {
+	if path == "" {
+		return nil, errors.New("store: empty database path")
+	}
+	if path != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, fmt.Errorf("store: create data directory: %w", err)
+		}
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	s := &Store{db: db}
+	if err := s.init(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) init() error {
+	statements := []string{
+		`PRAGMA journal_mode = WAL`,
+		`PRAGMA busy_timeout = 5000`,
+		`CREATE TABLE IF NOT EXISTS host_meta (
+			alias TEXT PRIMARY KEY,
+			favorite INTEGER NOT NULL DEFAULT 0,
+			notes TEXT NOT NULL DEFAULT '',
+			last_connected_at TEXT,
+			connect_count INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS host_tags (
+			alias TEXT NOT NULL,
+			tag TEXT NOT NULL,
+			PRIMARY KEY (alias, tag)
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.Exec(statement); err != nil {
+			return fmt.Errorf("store: init: %w", err)
+		}
+	}
+	return nil
+}
+
+// Close closes the database.
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+// Get returns metadata for alias. A missing row returns zero metadata.
+func (s *Store) Get(alias string) (Meta, error) {
+	if strings.TrimSpace(alias) == "" {
+		return Meta{}, errors.New("store: empty alias")
+	}
+	var (
+		favorite int
+		notes    string
+		last     sql.NullString
+		count    int
+	)
+	err := s.db.QueryRow(
+		`SELECT favorite, notes, last_connected_at, connect_count FROM host_meta WHERE alias = ?`,
+		alias,
+	).Scan(&favorite, &notes, &last, &count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Meta{}, nil
+	}
+	if err != nil {
+		return Meta{}, fmt.Errorf("store: get %s: %w", alias, err)
+	}
+	meta := Meta{
+		Favorite:     favorite != 0,
+		Notes:        notes,
+		ConnectCount: count,
+	}
+	if last.Valid {
+		if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
+			meta.LastConnectedAt = parsed
+		}
+	}
+	tags, err := s.tags(alias)
+	if err != nil {
+		return Meta{}, err
+	}
+	meta.Tags = tags
+	return meta, nil
+}
+
+// All returns all metadata keyed by alias.
+func (s *Store) All() (map[string]Meta, error) {
+	rows, err := s.db.Query(`SELECT alias, favorite, notes, last_connected_at, connect_count FROM host_meta`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list metadata: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]Meta)
+	for rows.Next() {
+		var (
+			alias    string
+			favorite int
+			notes    string
+			last     sql.NullString
+			count    int
+		)
+		if err := rows.Scan(&alias, &favorite, &notes, &last, &count); err != nil {
+			return nil, fmt.Errorf("store: scan metadata: %w", err)
+		}
+		meta := Meta{
+			Favorite:     favorite != 0,
+			Notes:        notes,
+			ConnectCount: count,
+		}
+		if last.Valid {
+			if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
+				meta.LastConnectedAt = parsed
+			}
+		}
+		result[alias] = meta
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate metadata: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("store: close metadata rows: %w", err)
+	}
+	for alias := range result {
+		tags, err := s.tags(alias)
+		if err != nil {
+			return nil, err
+		}
+		meta := result[alias]
+		meta.Tags = tags
+		result[alias] = meta
+	}
+	return result, nil
+}
+
+func (s *Store) tags(alias string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT tag FROM host_tags WHERE alias = ? ORDER BY tag`, alias)
+	if err != nil {
+		return nil, fmt.Errorf("store: list tags for %s: %w", alias, err)
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, fmt.Errorf("store: scan tag: %w", err)
+		}
+		tags = append(tags, tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate tags: %w", err)
+	}
+	return tags, nil
+}
+
+// SetFavorite updates the favorite flag.
+func (s *Store) SetFavorite(alias string, favorite bool) error {
+	if strings.TrimSpace(alias) == "" {
+		return errors.New("store: empty alias")
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO host_meta(alias, favorite) VALUES(?, ?)
+		 ON CONFLICT(alias) DO UPDATE SET favorite = excluded.favorite`,
+		alias, boolInt(favorite),
+	)
+	if err != nil {
+		return fmt.Errorf("store: set favorite %s: %w", alias, err)
+	}
+	return nil
+}
+
+// SetNotes updates notes.
+func (s *Store) SetNotes(alias, notes string) error {
+	if strings.TrimSpace(alias) == "" {
+		return errors.New("store: empty alias")
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO host_meta(alias, notes) VALUES(?, ?)
+		 ON CONFLICT(alias) DO UPDATE SET notes = excluded.notes`,
+		alias, notes,
+	)
+	if err != nil {
+		return fmt.Errorf("store: set notes %s: %w", alias, err)
+	}
+	return nil
+}
+
+// SetTags replaces all tags for alias.
+func (s *Store) SetTags(alias string, tags []string) error {
+	if strings.TrimSpace(alias) == "" {
+		return errors.New("store: empty alias")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: begin tags %s: %w", alias, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO host_meta(alias) VALUES(?)`, alias); err != nil {
+		return fmt.Errorf("store: ensure metadata %s: %w", alias, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM host_tags WHERE alias = ?`, alias); err != nil {
+		return fmt.Errorf("store: clear tags %s: %w", alias, err)
+	}
+	seen := make(map[string]bool)
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		if _, err := tx.Exec(`INSERT INTO host_tags(alias, tag) VALUES(?, ?)`, alias, tag); err != nil {
+			return fmt.Errorf("store: insert tag %s: %w", tag, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit tags %s: %w", alias, err)
+	}
+	return nil
+}
+
+// RecordConnect increments the connection count and updates the last-used time.
+func (s *Store) RecordConnect(alias string, at time.Time) error {
+	if strings.TrimSpace(alias) == "" {
+		return errors.New("store: empty alias")
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO host_meta(alias, last_connected_at, connect_count) VALUES(?, ?, 1)
+		 ON CONFLICT(alias) DO UPDATE SET
+			last_connected_at = excluded.last_connected_at,
+			connect_count = host_meta.connect_count + 1`,
+		alias, at.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("store: record connect %s: %w", alias, err)
+	}
+	return nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+// SortTags sorts and deduplicates tags in place.
+func SortTags(tags []string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return out
+}
