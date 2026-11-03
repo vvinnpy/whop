@@ -49,6 +49,8 @@ type testDeps struct {
 	zmGetDest      string
 	zmGetMax       int64
 	zmGetOverwrite bool
+	ranHosts       []string
+	ranCommands    []string
 }
 
 func newTestDeps() *testDeps {
@@ -87,6 +89,11 @@ func newTestDeps() *testDeps {
 			td.zmPutFiles = append([]string(nil), files...)
 			td.zmPutOverwrite = overwrite
 			return nil
+		},
+		RunCommand: func(host sshconfig.Host, _ []sshconfig.Host, command string) (string, error) {
+			td.ranHosts = append(td.ranHosts, host.Alias)
+			td.ranCommands = append(td.ranCommands, command)
+			return "ran " + command + " on " + host.Alias + "\n", nil
 		},
 		ZmodemGet: func(host sshconfig.Host, _ []sshconfig.Host, files []string, dest string, maxSize int64, overwrite bool, _ io.Writer) error {
 			td.zmGetHost = host.Alias
@@ -433,5 +440,72 @@ func TestZmodemUnknownHost(t *testing.T) {
 	}
 	if !strings.Contains(td.stderr.String(), "not found") {
 		t.Fatalf("stderr = %q", td.stderr.String())
+	}
+}
+
+func TestRemoteRunCommand(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"run", "prod-db", "echo", "hello"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	if len(td.ranHosts) != 1 || td.ranHosts[0] != "prod-db" {
+		t.Fatalf("ran hosts = %#v", td.ranHosts)
+	}
+	if len(td.ranCommands) != 1 || td.ranCommands[0] != "echo hello" {
+		t.Fatalf("ran commands = %#v", td.ranCommands)
+	}
+	if !strings.Contains(td.stdout.String(), "ran echo hello on prod-db") {
+		t.Fatalf("stdout = %q", td.stdout.String())
+	}
+}
+
+func TestSnippetLifecycle(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"snippet", "set", "disk", "df", "-h"}, td.deps); code != 0 {
+		t.Fatalf("set exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"snippet", "list"}, td.deps); code != 0 {
+		t.Fatalf("list exit = %d: %s", code, td.stderr.String())
+	}
+	if !strings.Contains(td.stdout.String(), "disk\tdf -h") {
+		t.Fatalf("list output = %q", td.stdout.String())
+	}
+
+	td.stdout.Reset()
+	if code := Run([]string{"snippet", "run", "disk", "prod-db", "prod-cache"}, td.deps); code != 0 {
+		t.Fatalf("run exit = %d: %s", code, td.stderr.String())
+	}
+	if len(td.ranHosts) != 2 || td.ranHosts[0] != "prod-db" || td.ranHosts[1] != "prod-cache" {
+		t.Fatalf("ran hosts = %#v", td.ranHosts)
+	}
+	if len(td.ranCommands) != 2 || td.ranCommands[0] != "df -h" {
+		t.Fatalf("ran commands = %#v", td.ranCommands)
+	}
+	if !strings.Contains(td.stdout.String(), "== prod-db ==") || !strings.Contains(td.stdout.String(), "== prod-cache ==") {
+		t.Fatalf("run output = %q", td.stdout.String())
+	}
+
+	if code := Run([]string{"snippet", "delete", "disk"}, td.deps); code != 0 {
+		t.Fatalf("delete exit = %d: %s", code, td.stderr.String())
+	}
+}
+
+func TestSnippetUnknown(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"snippet", "run", "missing", "prod-db"}, td.deps); code != 1 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if !strings.Contains(td.stderr.String(), "not found") {
+		t.Fatalf("stderr = %q", td.stderr.String())
+	}
+}
+
+func TestSnippetUsage(t *testing.T) {
+	for _, args := range [][]string{{"snippet"}, {"snippet", "wat"}, {"snippet", "set"}, {"snippet", "run"}} {
+		td := newTestDeps()
+		if code := Run(args, td.deps); code != 2 {
+			t.Fatalf("%v exit = %d", args, code)
+		}
 	}
 }

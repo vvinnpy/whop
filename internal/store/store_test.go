@@ -116,3 +116,47 @@ func TestSortTags(t *testing.T) {
 		t.Fatalf("unexpected tags: %#v", got)
 	}
 }
+
+func TestSnippets(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SetSnippet("disk", "df -h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSnippet("uptime", "uptime"); err != nil {
+		t.Fatal(err)
+	}
+	snippets, err := db.Snippets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snippets) != 2 || snippets["disk"] != "df -h" || snippets["uptime"] != "uptime" {
+		t.Fatalf("unexpected snippets: %#v", snippets)
+	}
+
+	if err := db.SetSnippet("disk", "df -ih"); err != nil {
+		t.Fatal(err)
+	}
+	snippets, _ = db.Snippets()
+	if snippets["disk"] != "df -ih" {
+		t.Fatalf("snippet not updated: %#v", snippets)
+	}
+
+	if err := db.DeleteSnippet("disk"); err != nil {
+		t.Fatal(err)
+	}
+	snippets, _ = db.Snippets()
+	if _, ok := snippets["disk"]; ok {
+		t.Fatalf("snippet not deleted: %#v", snippets)
+	}
+	if err := db.SetSnippet("", "x"); err == nil {
+		t.Fatal("expected empty name error")
+	}
+	if err := db.SetSnippet("x", ""); err == nil {
+		t.Fatal("expected empty command error")
+	}
+}

@@ -70,6 +70,11 @@ func (s *Store) init() error {
 			tag TEXT NOT NULL,
 			PRIMARY KEY (alias, tag)
 		)`,
+		`CREATE TABLE IF NOT EXISTS snippets (
+			name TEXT PRIMARY KEY,
+			command TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -279,6 +284,60 @@ func (s *Store) RecordConnect(alias string, at time.Time) error {
 	)
 	if err != nil {
 		return fmt.Errorf("store: record connect %s: %w", alias, err)
+	}
+	return nil
+}
+
+// SetSnippet creates or updates a named command snippet.
+func (s *Store) SetSnippet(name, command string) error {
+	name = strings.TrimSpace(name)
+	command = strings.TrimSpace(command)
+	if name == "" {
+		return errors.New("store: empty snippet name")
+	}
+	if command == "" {
+		return errors.New("store: empty snippet command")
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO snippets(name, command, updated_at) VALUES(?, ?, ?)
+		 ON CONFLICT(name) DO UPDATE SET command = excluded.command, updated_at = excluded.updated_at`,
+		name, command, time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("store: set snippet %s: %w", name, err)
+	}
+	return nil
+}
+
+// Snippets returns all snippets keyed by name.
+func (s *Store) Snippets() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT name, command FROM snippets ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list snippets: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]string)
+	for rows.Next() {
+		var name, command string
+		if err := rows.Scan(&name, &command); err != nil {
+			return nil, fmt.Errorf("store: scan snippet: %w", err)
+		}
+		result[name] = command
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate snippets: %w", err)
+	}
+	return result, nil
+}
+
+// DeleteSnippet removes a snippet.
+func (s *Store) DeleteSnippet(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("store: empty snippet name")
+	}
+	if _, err := s.db.Exec(`DELETE FROM snippets WHERE name = ?`, name); err != nil {
+		return fmt.Errorf("store: delete snippet %s: %w", name, err)
 	}
 	return nil
 }

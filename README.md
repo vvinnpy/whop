@@ -87,6 +87,12 @@ ttydeck search "error"
 # ZMODEM upload/download (remote needs lrzsz: rz/sz)
 ttydeck zmodem put prod-db ./backup.tar
 ttydeck zmodem get prod-db /var/log/syslog
+
+# Automation
+ttydeck run prod-db uptime
+ttydeck snippet set disk "df -h"
+ttydeck snippet run disk prod-db prod-cache
+ttydeck snippet list
 ```
 
 ### Keys

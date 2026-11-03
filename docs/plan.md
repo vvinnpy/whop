@@ -42,11 +42,13 @@ connector/session abstractions rather than bolted onto the UI.
 
 ### M3 — automation
 
-- snippets with parameters
-- macros
-- expect rules with timeouts and one-shot semantics
-- runbook engine
-- audit log
+- [x] named command snippets
+- [x] direct remote command execution and batch snippet execution
+- [ ] snippet parameters
+- [ ] macros
+- [ ] expect rules with timeouts and one-shot semantics
+- [ ] runbook engine
+- [ ] audit log
 
 ### M4 — ZMODEM (`rz` / `sz`)
 

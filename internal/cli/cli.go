@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ type Deps struct {
 	RecordingDir string
 	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, io.Writer) error
 	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, io.Writer) error
+	RunCommand   func(sshconfig.Host, []sshconfig.Host, string) (string, error)
 }
 
 // MetaStore is the metadata surface used by the CLI and TUI.
@@ -47,6 +49,9 @@ type MetaStore interface {
 	SetNotes(string, string) error
 	SetTags(string, []string) error
 	RecordConnect(string, time.Time) error
+	SetSnippet(string, string) error
+	Snippets() (map[string]string, error)
+	DeleteSnippet(string) error
 	Close() error
 }
 
@@ -63,6 +68,7 @@ func NewDeps() Deps {
 		RecordingDir: defaultRecordingDir(),
 		ZmodemPut:    defaultZmodemPut,
 		ZmodemGet:    defaultZmodemGet,
+		RunCommand:   defaultRunCommand,
 	}
 }
 
@@ -90,6 +96,10 @@ func Run(args []string, deps Deps) int {
 		return runSearch(args[1:], deps)
 	case "zmodem":
 		return runZmodem(args[1:], deps)
+	case "run":
+		return runRemoteCommand(args[1:], deps)
+	case "snippet":
+		return runSnippet(args[1:], deps)
 	case "version", "--version", "-v":
 		fmt.Fprintf(deps.Stdout, "ttydeck %s\n", Version)
 		return 0
@@ -135,6 +145,9 @@ func normalizeDeps(deps Deps) Deps {
 	}
 	if deps.ZmodemGet == nil {
 		deps.ZmodemGet = defaultZmodemGet
+	}
+	if deps.RunCommand == nil {
+		deps.RunCommand = defaultRunCommand
 	}
 	return deps
 }
@@ -467,6 +480,216 @@ func runSearch(args []string, deps Deps) int {
 	return 0
 }
 
+func runRemoteCommand(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck run", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 2 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck run [flags] <alias> <command...>")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	host, ok := sshconfig.Find(hosts, fs.Arg(0))
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		return 1
+	}
+	command := strings.Join(fs.Args()[1:], " ")
+	output, err := deps.RunCommand(host, hosts, command)
+	if output != "" {
+		fmt.Fprint(deps.Stdout, output)
+		if !strings.HasSuffix(output, "\n") {
+			fmt.Fprintln(deps.Stdout)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runSnippet(args []string, deps Deps) int {
+	if len(args) == 0 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet <set|list|delete|run> ...")
+		return 2
+	}
+	switch args[0] {
+	case "set":
+		return runSnippetSet(args[1:], deps)
+	case "list", "ls":
+		return runSnippetList(args[1:], deps)
+	case "delete", "rm":
+		return runSnippetDelete(args[1:], deps)
+	case "run":
+		return runSnippetRun(args[1:], deps)
+	default:
+		fmt.Fprintf(deps.Stderr, "ttydeck: unknown snippet command %q\n", args[0])
+		return 2
+	}
+}
+
+func runSnippetSet(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck snippet set", deps)
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 2 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet set <name> <command...>")
+		return 2
+	}
+	name := fs.Arg(0)
+	command := strings.Join(fs.Args()[1:], " ")
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	if err := metaStore.SetSnippet(name, command); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(deps.Stdout, "snippet %s saved\n", name)
+	return 0
+}
+
+func runSnippetList(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck snippet list", deps)
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	snippets, err := metaStore.Snippets()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	names := make([]string, 0, len(snippets))
+	for name := range snippets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(deps.Stdout, "%s\t%s\n", name, snippets[name])
+	}
+	return 0
+}
+
+func runSnippetDelete(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck snippet delete", deps)
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet delete <name>")
+		return 2
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	if err := metaStore.DeleteSnippet(fs.Arg(0)); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(deps.Stdout, "snippet %s deleted\n", fs.Arg(0))
+	return 0
+}
+
+func runSnippetRun(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck snippet run", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 2 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet run [flags] <name> <alias...>")
+		return 2
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	snippets, err := metaStore.Snippets()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	name := fs.Arg(0)
+	command, ok := snippets[name]
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: snippet %q not found\n", name)
+		return 1
+	}
+	hosts, err := loadHosts(deps, metaStore, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	failed := false
+	for _, alias := range fs.Args()[1:] {
+		host, ok := sshconfig.Find(hosts, alias)
+		if !ok {
+			fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+			failed = true
+			continue
+		}
+		fmt.Fprintf(deps.Stdout, "== %s ==\n", alias)
+		output, err := deps.RunCommand(host, hosts, command)
+		if output != "" {
+			fmt.Fprint(deps.Stdout, output)
+			if !strings.HasSuffix(output, "\n") {
+				fmt.Fprintln(deps.Stdout)
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %s: %v\n", alias, err)
+			failed = true
+		}
+	}
+	if failed {
+		return 1
+	}
+	return 0
+}
+
+func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command string) (string, error) {
+	connector := sshConnectorWithHosts(hosts)
+	output, err := connector.RunCommand(context.Background(), host, command)
+	return string(output), err
+}
+
 func runZmodem(args []string, deps Deps) int {
 	if len(args) == 0 {
 		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem <put|get> [flags] <alias> <path...>")
@@ -701,6 +924,8 @@ Usage:
   ttydeck search [flags] <query>
   ttydeck zmodem put [flags] <alias> <file...>
   ttydeck zmodem get [flags] <alias> <remote-file...>
+  ttydeck run [flags] <alias> <command...>
+  ttydeck snippet <set|list|delete|run> ...
   ttydeck version                   print version
 
 Flags for ttydeck:
