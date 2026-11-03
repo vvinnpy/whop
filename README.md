@@ -119,8 +119,11 @@ from the default server list. Use `-all` to inspect them.
 
 ## Status
 
-Bootstrapping. No usable release yet.
+Early V0.1 development: the SSH-first TUI, safe config editing, metadata,
+session recording/replay/search, ZMODEM transfer, snippets, and release
+packaging are functional. See [docs/plan.md](docs/plan.md) for remaining
+hardening and future connectors.
 
 ## License
 
-TBD.
+MIT. See [LICENSE](LICENSE).

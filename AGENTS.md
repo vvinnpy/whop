@@ -19,9 +19,10 @@ The first supported protocol is SSH; the architecture must allow Serial, Telnet,
 - public-key, password, and keyboard-interactive auth
 - local/remote/dynamic port forwarding
 - SFTP dual-pane file transfer
-- asciicast v2 session recording and built-in playback
-- snippets, macros, and expect rules
-- local SQLite metadata and encrypted vault
+- asciicast v2 session recording, playback, and transcript search
+- ZMODEM `rz`/`sz` upload and download over SSH
+- named snippets and batch remote command execution
+- local SQLite metadata (favorites, tags, notes, recents)
 - headless CLI with JSON output
 - Linux, macOS, Windows
 

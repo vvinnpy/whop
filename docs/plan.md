@@ -96,6 +96,30 @@ Deferred to the next milestone:
 - [ ] ProxyJump
 - [ ] safe config writes and metadata
 
+## V1 status
+
+The SSH-first V0.1 scope is functional:
+
+- responsive nccm-style TUI
+- SSH key/password/keyboard-interactive/agent auth
+- single-hop ProxyJump
+- safe single-Host config editing
+- favorites, tags, notes, recents
+- asciicast recording, replay, transcript search
+- ZMODEM `rz`/`sz` over SSH
+- snippets and batch command execution
+- pure-Go/CGO-free cross-platform builds
+- CI, race tests, goreleaser, and release workflow
+
+Post-V0.1 work:
+
+- multi-hop ProxyJump and Include-file editing
+- diff preview before config save
+- macros, expect rules, runbooks, audit log
+- automatic ZMODEM detection and Serial/Telnet transports
+- SQLite FTS5 transcript index and recording redaction
+- distro packaging, signing/notarization, and auto-update
+
 ## M0 architecture
 
 ```text
