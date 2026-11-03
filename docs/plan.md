@@ -69,10 +69,11 @@ connector/session abstractions rather than bolted onto the UI.
 
 ### M6 — distribution
 
-- goreleaser for Linux/macOS/Windows amd64/arm64
-- AUR, deb/rpm, Homebrew, winget/scoop
-- checksums and signing
-- auto-update with signature verification
+- [x] goreleaser for Linux/macOS/Windows amd64/arm64
+- [x] release workflow and checksums
+- [ ] AUR, deb/rpm, Homebrew, winget/scoop
+- [ ] signing/notarization
+- [ ] auto-update with signature verification
 
 ## M0 status
 

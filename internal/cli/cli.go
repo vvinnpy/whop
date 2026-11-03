@@ -25,7 +25,7 @@ import (
 )
 
 // Version is the development version string.
-const Version = "0.1.0-dev"
+var Version = "0.1.0-dev"
 
 // Deps contains injectable process dependencies for tests.
 type Deps struct {
