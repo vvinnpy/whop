@@ -20,6 +20,7 @@ import (
 	"ttydeck/internal/sshconfig"
 	"ttydeck/internal/store"
 	"ttydeck/internal/ui"
+	"ttydeck/internal/zmodem"
 )
 
 // Version is the development version string.
@@ -35,6 +36,8 @@ type Deps struct {
 	RunTUI       func(ui.Options) error
 	OpenStore    func() (MetaStore, error)
 	RecordingDir string
+	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, io.Writer) error
+	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, io.Writer) error
 }
 
 // MetaStore is the metadata surface used by the CLI and TUI.
@@ -58,6 +61,8 @@ func NewDeps() Deps {
 		RunTUI:       defaultRunTUI,
 		OpenStore:    defaultOpenStore,
 		RecordingDir: defaultRecordingDir(),
+		ZmodemPut:    defaultZmodemPut,
+		ZmodemGet:    defaultZmodemGet,
 	}
 }
 
@@ -83,6 +88,8 @@ func Run(args []string, deps Deps) int {
 		return runReplay(args[1:], deps)
 	case "search":
 		return runSearch(args[1:], deps)
+	case "zmodem":
+		return runZmodem(args[1:], deps)
 	case "version", "--version", "-v":
 		fmt.Fprintf(deps.Stdout, "ttydeck %s\n", Version)
 		return 0
@@ -122,6 +129,12 @@ func normalizeDeps(deps Deps) Deps {
 	}
 	if deps.RecordingDir == "" {
 		deps.RecordingDir = defaultRecordingDir()
+	}
+	if deps.ZmodemPut == nil {
+		deps.ZmodemPut = defaultZmodemPut
+	}
+	if deps.ZmodemGet == nil {
+		deps.ZmodemGet = defaultZmodemGet
 	}
 	return deps
 }
@@ -454,6 +467,130 @@ func runSearch(args []string, deps Deps) int {
 	return 0
 }
 
+func runZmodem(args []string, deps Deps) int {
+	if len(args) == 0 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem <put|get> [flags] <alias> <path...>")
+		return 2
+	}
+	switch args[0] {
+	case "put", "upload":
+		return runZmodemPut(args[1:], deps)
+	case "get", "download":
+		return runZmodemGet(args[1:], deps)
+	default:
+		fmt.Fprintf(deps.Stderr, "ttydeck: unknown zmodem command %q\n", args[0])
+		return 2
+	}
+}
+
+func runZmodemPut(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck zmodem put", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	overwrite := fs.Bool("overwrite", false, "overwrite remote files")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 2 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem put [flags] <alias> <file...>")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	host, ok := sshconfig.Find(hosts, fs.Arg(0))
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		return 1
+	}
+	if err := deps.ZmodemPut(host, hosts, fs.Args()[1:], *overwrite, deps.Stdout); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: zmodem put: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runZmodemGet(args []string, deps Deps) int {
+	fs := newFlagSet("ttydeck zmodem get", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	dest := fs.String("dest", "", "local destination directory")
+	overwrite := fs.Bool("overwrite", false, "overwrite local files")
+	maxSize := fs.Int64("max-size", 0, "maximum accepted file size (bytes, 0 = unlimited)")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 2 {
+		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem get [flags] <alias> <remote-file...>")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	host, ok := sshconfig.Find(hosts, fs.Arg(0))
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		return 1
+	}
+	destination := *dest
+	if destination == "" {
+		destination = defaultDownloadDir(host.Alias)
+	}
+	if err := deps.ZmodemGet(host, hosts, fs.Args()[1:], destination, *maxSize, *overwrite, deps.Stdout); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: zmodem get: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite bool, out io.Writer) error {
+	connector := sshConnectorWithHosts(hosts)
+	command := "rz"
+	if overwrite {
+		command = "rz -y"
+	}
+	ctx := context.Background()
+	return connector.RunZmodem(ctx, host, command, func(stream io.ReadWriter) error {
+		return zmodem.Send(ctx, stream, files, zmodem.ProgressPrinter(out))
+	})
+}
+
+func defaultZmodemGet(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite bool, out io.Writer) error {
+	connector := sshConnectorWithHosts(hosts)
+	quoted := make([]string, len(remoteFiles))
+	for i, file := range remoteFiles {
+		quoted[i] = sshconn.ShellQuote(file)
+	}
+	command := "sz -b " + strings.Join(quoted, " ")
+	ctx := context.Background()
+	return connector.RunZmodem(ctx, host, command, func(stream io.ReadWriter) error {
+		_, err := zmodem.Receive(ctx, stream, dest, maxSize, overwrite, zmodem.ProgressPrinter(out))
+		return err
+	})
+}
+
+func defaultDownloadDir(alias string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	name := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' {
+			return '_'
+		}
+		return r
+	}, alias)
+	return filepath.Join(home, "Downloads", "ttydeck", name)
+}
+
 func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool) error {
 	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir())
 	return runner.Run(context.Background(), host, stdin, stdout, stderr)
@@ -464,18 +601,22 @@ func sshRunnerForConfig(path string, record bool, recordingDir string) *sshconn.
 	return sshRunnerWithHosts(hosts, record, recordingDir)
 }
 
-func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string) *sshconn.Runner {
+func sshConnectorWithHosts(hosts []sshconfig.Host) *sshconn.Connector {
 	byAlias := make(map[string]sshconfig.Host, len(hosts))
 	for _, host := range hosts {
 		byAlias[host.Alias] = host
 	}
-	connector := sshconn.New(sshconn.Options{
+	return sshconn.New(sshconn.Options{
 		Password: sshconn.TerminalPasswordProvider{In: os.Stdin, Out: os.Stderr},
 		ResolveHost: func(alias string) (sshconfig.Host, bool) {
 			host, ok := byAlias[alias]
 			return host, ok
 		},
 	})
+}
+
+func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string) *sshconn.Runner {
+	connector := sshConnectorWithHosts(hosts)
 	runner := sshconn.NewRunner(connector, nil)
 	if record {
 		runner.RecordingFactory = func(host sshconfig.Host, width, height int) (io.WriteCloser, error) {
@@ -558,6 +699,8 @@ Usage:
   ttydeck tag [flags] <alias> [tag...]
   ttydeck replay [flags] <file.cast>
   ttydeck search [flags] <query>
+  ttydeck zmodem put [flags] <alias> <file...>
+  ttydeck zmodem get [flags] <alias> <remote-file...>
   ttydeck version                   print version
 
 Flags for ttydeck:

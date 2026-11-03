@@ -83,6 +83,10 @@ ttydeck -record
 ttydeck connect -record prod-db
 ttydeck replay ~/.config/ttydeck/recordings/prod-db-*.cast
 ttydeck search "error"
+
+# ZMODEM upload/download (remote needs lrzsz: rz/sz)
+ttydeck zmodem put prod-db ./backup.tar
+ttydeck zmodem get prod-db /var/log/syslog
 ```
 
 ### Keys

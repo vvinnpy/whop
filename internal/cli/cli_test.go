@@ -30,17 +30,25 @@ type persistentTestStore struct {
 func (s persistentTestStore) Close() error { return nil }
 
 type testDeps struct {
-	deps      Deps
-	stdout    *bytes.Buffer
-	stderr    *bytes.Buffer
-	connected string
-	tuiOpts   ui.Options
-	tuiRan    bool
-	tuiHosts  []sshconfig.Host
-	tuiErr    error
-	loadPath  string
-	metaStore *store.Store
-	recorded  bool
+	deps           Deps
+	stdout         *bytes.Buffer
+	stderr         *bytes.Buffer
+	connected      string
+	tuiOpts        ui.Options
+	tuiRan         bool
+	tuiHosts       []sshconfig.Host
+	tuiErr         error
+	loadPath       string
+	metaStore      *store.Store
+	recorded       bool
+	zmPutHost      string
+	zmPutFiles     []string
+	zmPutOverwrite bool
+	zmGetHost      string
+	zmGetFiles     []string
+	zmGetDest      string
+	zmGetMax       int64
+	zmGetOverwrite bool
 }
 
 func newTestDeps() *testDeps {
@@ -74,6 +82,20 @@ func newTestDeps() *testDeps {
 			return persistentTestStore{td.metaStore}, nil
 		},
 		RecordingDir: filepath.Join(os.TempDir(), "ttydeck-test-recordings"),
+		ZmodemPut: func(host sshconfig.Host, _ []sshconfig.Host, files []string, overwrite bool, _ io.Writer) error {
+			td.zmPutHost = host.Alias
+			td.zmPutFiles = append([]string(nil), files...)
+			td.zmPutOverwrite = overwrite
+			return nil
+		},
+		ZmodemGet: func(host sshconfig.Host, _ []sshconfig.Host, files []string, dest string, maxSize int64, overwrite bool, _ io.Writer) error {
+			td.zmGetHost = host.Alias
+			td.zmGetFiles = append([]string(nil), files...)
+			td.zmGetDest = dest
+			td.zmGetMax = maxSize
+			td.zmGetOverwrite = overwrite
+			return nil
+		},
 	}
 	return td
 }
@@ -366,5 +388,50 @@ func TestSearchCommand(t *testing.T) {
 	}
 	if !strings.Contains(td.stdout.String(), path+":2: prod database") {
 		t.Fatalf("search output = %q", td.stdout.String())
+	}
+}
+
+func TestZmodemPutCommand(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"zmodem", "put", "-overwrite", "prod-db", "a.txt", "b.txt"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	if td.zmPutHost != "prod-db" || !td.zmPutOverwrite {
+		t.Fatalf("unexpected put capture: %+v", td)
+	}
+	if len(td.zmPutFiles) != 2 || td.zmPutFiles[0] != "a.txt" || td.zmPutFiles[1] != "b.txt" {
+		t.Fatalf("put files = %#v", td.zmPutFiles)
+	}
+}
+
+func TestZmodemGetCommand(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"zmodem", "get", "-dest", "/tmp/dest", "-max-size", "1024", "-overwrite", "prod-db", "/remote/a", "/remote/b"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	if td.zmGetHost != "prod-db" || td.zmGetDest != "/tmp/dest" || td.zmGetMax != 1024 || !td.zmGetOverwrite {
+		t.Fatalf("unexpected get capture: %+v", td)
+	}
+	if len(td.zmGetFiles) != 2 || td.zmGetFiles[0] != "/remote/a" || td.zmGetFiles[1] != "/remote/b" {
+		t.Fatalf("get files = %#v", td.zmGetFiles)
+	}
+}
+
+func TestZmodemUsage(t *testing.T) {
+	for _, args := range [][]string{{"zmodem"}, {"zmodem", "wat"}, {"zmodem", "put"}, {"zmodem", "get"}} {
+		td := newTestDeps()
+		if code := Run(args, td.deps); code != 2 {
+			t.Fatalf("%v exit = %d, stderr=%s", args, code, td.stderr.String())
+		}
+	}
+}
+
+func TestZmodemUnknownHost(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"zmodem", "put", "missing", "a.txt"}, td.deps); code != 1 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if !strings.Contains(td.stderr.String(), "not found") {
+		t.Fatalf("stderr = %q", td.stderr.String())
 	}
 }

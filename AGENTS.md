@@ -97,10 +97,6 @@ For a significant dependency or architectural choice, add an ADR under `docs/adr
 - `github.com/charmbracelet/x/exp/teatest` — Bubble Tea event-loop tests; test-only.
 - `github.com/creack/pty` — PTY-backed terminal prompt tests; test-only.
 
-### Under evaluation
-
-- `github.com/xx25/go-zmodem` — pure-Go ZMODEM implementation for M4; pin/vendor and add integration tests before adoption.
-
 ### Rejected dependencies
 
 - `github.com/atotto/clipboard` — shells out to `xclip` / `xsel` / `pbcopy`.

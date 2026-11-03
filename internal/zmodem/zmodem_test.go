@@ -1,0 +1,211 @@
+package zmodem
+
+import (
+	"context"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type chanReader struct {
+	ch  chan []byte
+	buf []byte
+}
+
+func (cr *chanReader) Read(p []byte) (int, error) {
+	if len(cr.buf) > 0 {
+		n := copy(p, cr.buf)
+		cr.buf = cr.buf[n:]
+		return n, nil
+	}
+	data, ok := <-cr.ch
+	if !ok {
+		return 0, io.EOF
+	}
+	n := copy(p, data)
+	if n < len(data) {
+		cr.buf = data[n:]
+	}
+	return n, nil
+}
+
+type chanWriter struct {
+	ch chan []byte
+}
+
+func (cw *chanWriter) Write(p []byte) (int, error) {
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	cw.ch <- buf
+	return len(p), nil
+}
+
+func (cw *chanWriter) Close() error {
+	close(cw.ch)
+	return nil
+}
+
+func bufferedPipe(size int) (*chanReader, *chanWriter) {
+	ch := make(chan []byte, size)
+	return &chanReader{ch: ch}, &chanWriter{ch: ch}
+}
+
+type pipeReadWriter struct {
+	io.Reader
+	io.Writer
+}
+
+func newBufferedTransports() (sender, receiver io.ReadWriter, senderClose, receiverClose func()) {
+	r1, w1 := bufferedPipe(256)
+	r2, w2 := bufferedPipe(256)
+	sender = &pipeReadWriter{Reader: r2, Writer: w1}
+	receiver = &pipeReadWriter{Reader: r1, Writer: w2}
+	return sender, receiver, func() { _ = w1.Close() }, func() { _ = w2.Close() }
+}
+func TestSendReceiveLoopback(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.txt")
+	content := "hello zmodem\nsecond line\n"
+	if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "dest")
+
+	senderConn, receiverConn, senderClose, receiverClose := newBufferedTransports()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var (
+		wg         sync.WaitGroup
+		sendErr    error
+		receiveErr error
+		received   []string
+		progress   []Progress
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		sendErr = Send(ctx, senderConn, []string{source}, func(event Progress) {
+			progress = append(progress, event)
+		})
+		senderClose()
+	}()
+	go func() {
+		defer wg.Done()
+		received, receiveErr = Receive(ctx, receiverConn, dest, 0, false, nil)
+		receiverClose()
+	}()
+	wg.Wait()
+
+	if sendErr != nil {
+		t.Fatalf("send: %v", sendErr)
+	}
+	if receiveErr != nil {
+		t.Fatalf("receive: %v", receiveErr)
+	}
+	if len(received) != 1 {
+		t.Fatalf("received = %#v", received)
+	}
+	got, err := os.ReadFile(received[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("content = %q", got)
+	}
+	if len(progress) == 0 || !progress[len(progress)-1].Done {
+		t.Fatalf("progress = %#v", progress)
+	}
+}
+
+func TestReceiveSkipsExistingWithoutOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(source, []byte("new content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "dest")
+	if err := os.MkdirAll(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(dest, "source.txt")
+	if err := os.WriteFile(existing, []byte("old content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	senderConn, receiverConn, senderClose, receiverClose := newBufferedTransports()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	var sendErr, receiveErr error
+	var received []string
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		sendErr = Send(ctx, senderConn, []string{source}, nil)
+		senderClose()
+	}()
+	go func() {
+		defer wg.Done()
+		received, receiveErr = Receive(ctx, receiverConn, dest, 0, false, nil)
+		receiverClose()
+	}()
+	wg.Wait()
+	if sendErr != nil || receiveErr != nil {
+		t.Fatalf("send=%v receive=%v", sendErr, receiveErr)
+	}
+	if len(received) != 0 {
+		t.Fatalf("expected skipped file, got %#v", received)
+	}
+	got, err := os.ReadFile(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old content" {
+		t.Fatalf("existing file overwritten: %q", got)
+	}
+}
+
+func TestSafeJoinSanitizesTraversal(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"../evil", "../../etc/passwd", "..\\evil"} {
+		path, err := safeJoin(dir, name)
+		if err != nil {
+			t.Fatalf("safeJoin(%q): %v", name, err)
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Fatalf("unsafe path for %q: %q", name, path)
+		}
+	}
+	path, err := safeJoin(dir, "normal.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(path) != dir || filepath.Base(path) != "normal.txt" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestWaitForHeader(t *testing.T) {
+	if !WaitForHeader([]byte("prefix **\x18B00")) {
+		t.Fatal("expected header")
+	}
+	if WaitForHeader([]byte("no header")) {
+		t.Fatal("unexpected header")
+	}
+}
+
+func TestSendRequiresFiles(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	if err := Send(context.Background(), c1, nil, nil); err == nil || !strings.Contains(err.Error(), "no files") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

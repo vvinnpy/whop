@@ -50,12 +50,13 @@ connector/session abstractions rather than bolted onto the UI.
 
 ### M4 — ZMODEM (`rz` / `sz`)
 
-- pure-Go ZMODEM engine, pinned/vendored
-- remote `rz` -> local upload, remote `sz` -> local download
-- manual trigger first, automatic detection later
-- SSH and serial transports
-- Telnet binary-mode (IAC escaping) support after dedicated testing
-- path traversal, overwrite, size, CRC, and cancellation safety
+- [x] pure-Go ZMODEM engine (`github.com/xx25/go-zmodem`)
+- [x] remote `rz` -> local upload, remote `sz` -> local download over SSH
+- [x] manual CLI `zmodem put` / `zmodem get`
+- [x] path traversal, overwrite, size, CRC, and cancellation safety
+- [ ] automatic ZMODEM header detection
+- [ ] Serial transport integration
+- [ ] Telnet binary-mode (IAC escaping) support
 
 ### M5 — additional connectors
 
