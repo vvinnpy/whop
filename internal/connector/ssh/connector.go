@@ -24,7 +24,8 @@ import (
 var (
 	// ErrNoAuth means no usable key or agent was found.
 	ErrNoAuth = errors.New("no SSH authentication method available")
-	// ErrProxyJump is returned for unsupported ProxyJump configurations.
+	// ErrProxyJump is retained for compatibility with older callers. ProxyJump
+	// chains are supported; new code should inspect StageError instead.
 	ErrProxyJump = errors.New("ProxyJump configuration is not supported")
 	// ErrInteractiveUnavailable means the remote endpoint refused a PTY and
 	// does not provide an interactive shell.
@@ -77,7 +78,8 @@ func New(opts Options) *Connector {
 
 // Dial establishes an SSH client connection.
 func (c *Connector) Dial(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
-	if host.ProxyJump != "" && !strings.EqualFold(host.ProxyJump, "none") {
+	jump := strings.TrimSpace(host.ProxyJump)
+	if jump != "" && !strings.EqualFold(jump, "none") {
 		return c.dialViaJump(ctx, host)
 	}
 	return c.dialDirect(ctx, host)
@@ -106,38 +108,102 @@ func (c *Connector) dialDirect(ctx context.Context, host sshconfig.Host) (*ssh.C
 }
 
 func (c *Connector) dialViaJump(ctx context.Context, host sshconfig.Host) (*ssh.Client, error) {
-	specs := strings.Split(host.ProxyJump, ",")
-	if len(specs) != 1 {
-		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("%w: multi-hop ProxyJump %q", ErrProxyJump, host.ProxyJump)}
-	}
-
-	alias, user, port := parseJumpSpec(specs[0])
-	if alias == "" {
-		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("ProxyJump %q has no host", host.ProxyJump)}
-	}
-	if strings.EqualFold(alias, host.Alias) {
-		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("ProxyJump %q points to itself", host.ProxyJump)}
-	}
-
-	jumpHost, err := c.resolveJumpHost(alias, user, port)
+	hops, err := c.resolveJumpTargets(host)
 	if err != nil {
 		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: err}
 	}
-	jumpClient, err := c.Dial(ctx, jumpHost)
+	if len(hops) == 1 {
+		return c.dialSingleJump(ctx, host, hops[0])
+	}
+	return c.dialMultiJump(ctx, host, hops)
+}
+
+type jumpTarget struct {
+	host sshconfig.Host
+}
+
+func (c *Connector) dialSingleJump(ctx context.Context, host sshconfig.Host, jump jumpTarget) (*ssh.Client, error) {
+	jumpClient, err := c.Dial(ctx, jump.host)
 	if err != nil {
-		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("dial jump host %s: %w", jumpHost.Alias, err)}
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("dial jump host %s: %w", jump.host.Alias, err)}
 	}
 
-	targetConn, err := jumpClient.Dial("tcp", host.Address())
+	client, err := c.dialTargetThrough(ctx, host, jumpClient, jump.host.Alias)
 	if err != nil {
 		_ = jumpClient.Close()
-		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("open %s via %s: %w", host.Address(), jumpHost.Alias, err)}
+		return nil, err
+	}
+	closeJumpsWhenDone(client, []*ssh.Client{jumpClient})
+	return client, nil
+}
+
+func (c *Connector) dialMultiJump(ctx context.Context, host sshconfig.Host, hops []jumpTarget) (*ssh.Client, error) {
+	jumps := make([]*ssh.Client, 0, len(hops))
+	closeJumps := func() { closeJumpClients(jumps) }
+
+	// ProxyJump lists the hop closest to the target first. The local process
+	// therefore connects to the last hop, which then connects toward the target.
+	for i := len(hops) - 1; i >= 0; i-- {
+		var via *ssh.Client
+		if len(jumps) > 0 {
+			via = jumps[len(jumps)-1]
+		}
+		client, err := c.dialJumpHop(ctx, hops[i].host, via)
+		if err != nil {
+			closeJumps()
+			return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("dial jump host %s: %w", hops[i].host.Alias, err)}
+		}
+		jumps = append(jumps, client)
+	}
+
+	client, err := c.dialTargetThrough(ctx, host, jumps[len(jumps)-1], hops[0].host.Alias)
+	if err != nil {
+		closeJumps()
+		return nil, err
+	}
+	closeJumpsWhenDone(client, jumps)
+	return client, nil
+}
+
+func (c *Connector) dialJumpHop(ctx context.Context, host sshconfig.Host, via *ssh.Client) (*ssh.Client, error) {
+	cfg, cleanup, err := c.newClientConfig(host)
+	if err != nil {
+		return nil, fmt.Errorf("prepare authentication for %s: %w", host.Alias, err)
+	}
+	defer cleanup()
+
+	address := host.Address()
+	var netConn net.Conn
+	if via == nil {
+		dialer := net.Dialer{Timeout: c.opts.Timeout}
+		netConn, err = dialer.DialContext(ctx, "tcp", address)
+		if err != nil {
+			return nil, fmt.Errorf("dial %s: %w", address, err)
+		}
+	} else {
+		netConn, err = via.Dial("tcp", address)
+		if err != nil {
+			return nil, fmt.Errorf("open %s via %s: %w", address, via.RemoteAddr(), err)
+		}
+	}
+
+	conn, chans, reqs, err := ssh.NewClientConn(netConn, address, cfg)
+	if err != nil {
+		_ = netConn.Close()
+		return nil, fmt.Errorf("ssh handshake %s: %w", address, err)
+	}
+	return ssh.NewClient(conn, chans, reqs), nil
+}
+
+func (c *Connector) dialTargetThrough(ctx context.Context, host sshconfig.Host, jumpClient *ssh.Client, jumpName string) (*ssh.Client, error) {
+	targetConn, err := jumpClient.Dial("tcp", host.Address())
+	if err != nil {
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("open %s via %s: %w", host.Address(), jumpName, err)}
 	}
 
 	cfg, cleanup, err := c.newClientConfig(host)
 	if err != nil {
 		_ = targetConn.Close()
-		_ = jumpClient.Close()
 		return nil, &StageError{Stage: "auth", Host: host.Alias, Err: err}
 	}
 	defer cleanup()
@@ -145,15 +211,75 @@ func (c *Connector) dialViaJump(ctx context.Context, host sshconfig.Host) (*ssh.
 	conn, chans, reqs, err := ssh.NewClientConn(targetConn, host.Address(), cfg)
 	if err != nil {
 		_ = targetConn.Close()
-		_ = jumpClient.Close()
-		return nil, &StageError{Stage: "handshake", Host: host.Alias, Err: fmt.Errorf("ssh handshake %s via %s: %w", host.Address(), jumpHost.Alias, err)}
+		return nil, &StageError{Stage: "handshake", Host: host.Alias, Err: fmt.Errorf("ssh handshake %s via %s: %w", host.Address(), jumpName, err)}
 	}
-	client := ssh.NewClient(conn, chans, reqs)
+	return ssh.NewClient(conn, chans, reqs), nil
+}
+
+func closeJumpsWhenDone(client *ssh.Client, jumps []*ssh.Client) {
 	go func() {
 		_ = client.Wait()
-		_ = jumpClient.Close()
+		closeJumpClients(jumps)
 	}()
-	return client, nil
+}
+
+func closeJumpClients(jumps []*ssh.Client) {
+	for i := len(jumps) - 1; i >= 0; i-- {
+		_ = jumps[i].Close()
+	}
+}
+
+func (c *Connector) resolveJumpTargets(host sshconfig.Host) ([]jumpTarget, error) {
+	specs := strings.Split(host.ProxyJump, ",")
+	targets := make([]jumpTarget, 0, len(specs))
+	seen := make(map[string]struct{}, len(specs))
+
+	targetNames := map[string]struct{}{}
+	if alias := strings.TrimSpace(host.Alias); alias != "" {
+		targetNames[strings.ToLower(alias)] = struct{}{}
+	}
+	if hostName := strings.TrimSpace(host.HostName); hostName != "" {
+		targetNames[strings.ToLower(hostName)] = struct{}{}
+	}
+
+	for index, raw := range specs {
+		spec := strings.TrimSpace(raw)
+		if spec == "" {
+			return nil, fmt.Errorf("ProxyJump %q has an empty hop at position %d", host.ProxyJump, index+1)
+		}
+		alias, user, port := parseJumpSpec(spec)
+		if alias == "" {
+			return nil, fmt.Errorf("ProxyJump %q has no host at position %d", host.ProxyJump, index+1)
+		}
+		key := strings.ToLower(alias)
+		if _, ok := targetNames[key]; ok {
+			return nil, fmt.Errorf("ProxyJump %q points to itself via hop %q", host.ProxyJump, alias)
+		}
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("ProxyJump %q repeats hop %q", host.ProxyJump, alias)
+		}
+
+		resolved, err := c.resolveJumpHost(alias, user, port)
+		if err != nil {
+			return nil, err
+		}
+		resolvedAlias := strings.ToLower(strings.TrimSpace(resolved.Alias))
+		if resolvedAlias != "" && resolvedAlias != key {
+			if _, ok := targetNames[resolvedAlias]; ok {
+				return nil, fmt.Errorf("ProxyJump %q points to itself via hop %q", host.ProxyJump, resolved.Alias)
+			}
+			if _, ok := seen[resolvedAlias]; ok {
+				return nil, fmt.Errorf("ProxyJump %q repeats hop %q", host.ProxyJump, resolved.Alias)
+			}
+		}
+
+		seen[key] = struct{}{}
+		if resolvedAlias != "" {
+			seen[resolvedAlias] = struct{}{}
+		}
+		targets = append(targets, jumpTarget{host: resolved})
+	}
+	return targets, nil
 }
 
 func (c *Connector) newClientConfig(host sshconfig.Host) (*ssh.ClientConfig, func(), error) {

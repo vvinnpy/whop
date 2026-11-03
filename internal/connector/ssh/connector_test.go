@@ -6,12 +6,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +28,9 @@ type testSSHServer struct {
 	listener net.Listener
 	server   *gliderssh.Server
 	hostKey  cryptossh.Signer
+
+	mu        sync.Mutex
+	forwarded []string
 }
 
 func newTestSSHServer(t *testing.T, allowed cryptossh.PublicKey) *testSSHServer {
@@ -63,6 +68,7 @@ func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, passwor
 		t.Fatal(err)
 	}
 
+	ts := &testSSHServer{}
 	server := &gliderssh.Server{
 		Handler: func(session gliderssh.Session) {
 			command := session.Command()
@@ -95,14 +101,21 @@ func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, passwor
 		"session":      gliderssh.DefaultChannelHandlers["session"],
 		"direct-tcpip": gliderssh.DirectTCPIPHandler,
 	}
-	server.LocalPortForwardingCallback = func(gliderssh.Context, string, uint32) bool { return true }
+	server.LocalPortForwardingCallback = func(_ gliderssh.Context, destination string, port uint32) bool {
+		ts.mu.Lock()
+		ts.forwarded = append(ts.forwarded, fmt.Sprintf("%s:%d", destination, port))
+		ts.mu.Unlock()
+		return true
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ts := &testSSHServer{listener: listener, server: server, hostKey: hostSigner}
+	ts.listener = listener
+	ts.server = server
+	ts.hostKey = hostSigner
 	go func() {
 		_ = server.Serve(listener)
 	}()
@@ -112,6 +125,16 @@ func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, passwor
 
 func (s *testSSHServer) port() int {
 	return s.listener.Addr().(*net.TCPAddr).Port
+}
+
+func (s *testSSHServer) address() string {
+	return s.listener.Addr().String()
+}
+
+func (s *testSSHServer) forwardedDestinations() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.forwarded...)
 }
 
 func writeClientKey(t *testing.T) (string, cryptossh.PublicKey) {
@@ -203,20 +226,6 @@ func TestNoAuthMethods(t *testing.T) {
 	}
 }
 
-func TestMultiHopProxyJumpNotImplemented(t *testing.T) {
-	connector := newTestConnector()
-	host := sshconfig.Host{
-		Alias:     "test",
-		HostName:  "127.0.0.1",
-		Port:      22,
-		ProxyJump: "bastion,inner",
-	}
-	_, err := connector.Dial(context.Background(), host)
-	if err == nil || !strings.Contains(err.Error(), ErrProxyJump.Error()) {
-		t.Fatalf("expected ErrProxyJump, got %v", err)
-	}
-}
-
 func TestProxyJump(t *testing.T) {
 	keyPath, public := writeClientKey(t)
 	target := newTestSSHServer(t, public)
@@ -258,6 +267,115 @@ func TestProxyJump(t *testing.T) {
 	if !strings.Contains(string(output), "ran: echo via-jump") {
 		t.Fatalf("unexpected output: %q", output)
 	}
+}
+
+func TestMultiHopProxyJump(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	target := newTestSSHServer(t, public)
+	inner := newTestSSHServer(t, public)
+	outer := newTestSSHServer(t, public)
+
+	configPath := filepath.Join(t.TempDir(), "config")
+	config := fmt.Sprintf("Host inner\n  HostName 127.0.0.1\n  Port %d\n  User tester\n  IdentityFile %s\n", inner.port(), keyPath)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outerHost := sshconfig.Host{
+		Alias:         "outer",
+		HostName:      "127.0.0.1",
+		Port:          outer.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+	targetHost := sshconfig.Host{
+		Alias:         "target",
+		HostName:      "127.0.0.1",
+		Port:          target.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+		ProxyJump:     "inner,outer",
+	}
+
+	connector := New(Options{
+		HostKeyCallback: cryptossh.InsecureIgnoreHostKey(),
+		DisableAgent:    true,
+		Timeout:         5 * time.Second,
+		Username:        "tester",
+		ConfigPath:      configPath,
+		ResolveHost: func(alias string) (sshconfig.Host, bool) {
+			if alias == "outer" {
+				return outerHost, true
+			}
+			return sshconfig.Host{}, false
+		},
+	})
+
+	output, err := connector.RunCommand(context.Background(), targetHost, "echo via-two-jumps")
+	if err != nil {
+		t.Fatalf("multi-hop command: %v", err)
+	}
+	if !strings.Contains(string(output), "ran: echo via-two-jumps") {
+		t.Fatalf("unexpected output: %q", output)
+	}
+	if !containsString(outer.forwardedDestinations(), inner.address()) {
+		t.Fatalf("outer jump forwarded %v, want %s", outer.forwardedDestinations(), inner.address())
+	}
+	if !containsString(inner.forwardedDestinations(), target.address()) {
+		t.Fatalf("inner jump forwarded %v, want %s", inner.forwardedDestinations(), target.address())
+	}
+	if containsString(outer.forwardedDestinations(), target.address()) {
+		t.Fatalf("outer jump bypassed inner jump: %v", outer.forwardedDestinations())
+	}
+}
+
+func TestProxyJumpRejectsInvalidChains(t *testing.T) {
+	tests := []struct {
+		name      string
+		proxyJump string
+		want      string
+	}{
+		{name: "target self loop", proxyJump: "target,outer", want: "itself"},
+		{name: "duplicate hop", proxyJump: "outer,outer", want: "repeats"},
+		{name: "empty middle", proxyJump: "outer,,inner", want: "empty hop"},
+		{name: "empty first", proxyJump: ",outer", want: "empty hop"},
+		{name: "empty last", proxyJump: "outer,", want: "empty hop"},
+		{name: "only separator", proxyJump: ",", want: "empty hop"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			connector := newTestConnector()
+			host := sshconfig.Host{
+				Alias:     "target",
+				HostName:  "127.0.0.1",
+				Port:      22,
+				ProxyJump: tt.proxyJump,
+			}
+			_, err := connector.Dial(context.Background(), host)
+			if err == nil {
+				t.Fatal("expected ProxyJump validation error")
+			}
+			var stageErr *StageError
+			if !errors.As(err, &stageErr) || stageErr.Stage != "jump" {
+				t.Fatalf("expected stage jump, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not contain %q", err, tt.want)
+			}
+			if errors.Is(err, ErrProxyJump) {
+				t.Fatalf("multi-hop validation returned ErrProxyJump: %v", err)
+			}
+		})
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEncryptedKeyRequiresPassphraseProvider(t *testing.T) {
