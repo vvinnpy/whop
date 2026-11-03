@@ -80,7 +80,6 @@ For a significant dependency or architectural choice, add an ADR under `docs/adr
 - `github.com/charmbracelet/x/vt`
 - `github.com/charmbracelet/bubbletea`
 - `github.com/charmbracelet/lipgloss`
-- `github.com/charmbracelet/bubbles`
 - `github.com/charmbracelet/x/ansi`
 - `github.com/gofrs/flock`
 - `github.com/natefinch/atomic`

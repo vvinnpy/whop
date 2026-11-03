@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"ttydeck/internal/core"
@@ -71,12 +70,12 @@ type Model struct {
 	err    error
 
 	editing    bool
-	editFields []textinput.Model
+	editFields []textField
 	editFocus  int
 	editTarget sshconfig.Host
 
 	notesMode   bool
-	notesInput  textinput.Model
+	notesInput  textField
 	notesTarget sshconfig.Host
 }
 
@@ -287,7 +286,7 @@ func (m *Model) startEdit() {
 	if width < 20 {
 		width = 20
 	}
-	fields := []textinput.Model{
+	fields := []textField{
 		newTextField("HostName", host.HostName, width),
 		newTextField("User", host.User, width),
 		newTextField("Port", strconv.Itoa(host.Port), width),
@@ -301,15 +300,6 @@ func (m *Model) startEdit() {
 	m.editing = true
 	m.err = nil
 	m.status = "editing " + host.Alias
-}
-
-func newTextField(label, value string, width int) textinput.Model {
-	field := textinput.New()
-	field.Prompt = label + ": "
-	field.SetValue(value)
-	field.CharLimit = 512
-	field.Width = width
-	return field
 }
 
 func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -327,8 +317,7 @@ func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "ctrl+s":
 		return m.saveEdit()
 	}
-	field, cmd := m.editFields[m.editFocus].Update(msg)
-	m.editFields[m.editFocus] = field
+	cmd := m.editFields[m.editFocus].Update(msg)
 	return m, cmd
 }
 
@@ -425,8 +414,7 @@ func (m *Model) updateNotes(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "notes saved"
 		return m, m.reload
 	}
-	field, cmd := m.notesInput.Update(msg)
-	m.notesInput = field
+	cmd := m.notesInput.Update(msg)
 	return m, cmd
 }
 
