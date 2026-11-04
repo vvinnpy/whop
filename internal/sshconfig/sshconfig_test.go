@@ -180,3 +180,61 @@ Host new-host
 		t.Fatalf("default identity not inherited: %#v", host.IdentityFiles)
 	}
 }
+
+func TestAccessModeOverridesInferredKind(t *testing.T) {
+	login := Host{Alias: "git-login", Kind: KindGitAuth, AccessMode: AccessLogin}
+	service := Host{Alias: "db-service", Kind: KindServer, AccessMode: AccessService}
+	autoGit := Host{Alias: "github.com", Kind: KindGitAuth, AccessMode: AccessAuto}
+	autoServer := Host{Alias: "prod", Kind: KindServer, AccessMode: AccessAuto}
+
+	if !login.IsLoginable() || login.EffectiveAccess() != AccessLogin {
+		t.Fatalf("manual login override not applied: %+v", login)
+	}
+	if service.IsLoginable() || service.EffectiveAccess() != AccessService {
+		t.Fatalf("manual service override not applied: %+v", service)
+	}
+	if autoGit.IsLoginable() || autoGit.EffectiveAccess() != AccessService {
+		t.Fatalf("auto git host should be service-only: %+v", autoGit)
+	}
+	if !autoServer.IsLoginable() || autoServer.EffectiveAccess() != AccessLogin {
+		t.Fatalf("auto server should be loginable: %+v", autoServer)
+	}
+
+	servers := Servers([]Host{login, service, autoGit, autoServer})
+	if len(servers) != 2 || servers[0].Alias != "git-login" || servers[1].Alias != "prod" {
+		t.Fatalf("unexpected effective servers: %#v", servers)
+	}
+}
+
+func TestParseAccessMode(t *testing.T) {
+	tests := map[string]AccessMode{
+		"auto":      AccessAuto,
+		"automatic": AccessAuto,
+		"login":     AccessLogin,
+		"yes":       AccessLogin,
+		"service":   AccessService,
+		"no":        AccessService,
+	}
+	for input, want := range tests {
+		got, ok := ParseAccessMode(input)
+		if !ok || got != want {
+			t.Fatalf("ParseAccessMode(%q) = %q, %v; want %q, true", input, got, ok, want)
+		}
+	}
+	if _, ok := ParseAccessMode("maybe"); ok {
+		t.Fatal("expected invalid access mode to fail")
+	}
+}
+
+func TestAccessModeFromOverride(t *testing.T) {
+	if got := AccessModeFromOverride(nil); got != AccessAuto {
+		t.Fatalf("nil override = %q", got)
+	}
+	yes, no := true, false
+	if got := AccessModeFromOverride(&yes); got != AccessLogin {
+		t.Fatalf("true override = %q", got)
+	}
+	if got := AccessModeFromOverride(&no); got != AccessService {
+		t.Fatalf("false override = %q", got)
+	}
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,10 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := db.SetTags("prod-db", []string{"prod", "db", "prod"}); err != nil {
 		t.Fatal(err)
 	}
+	service := false
+	if err := db.SetLoginOverride("prod-db", &service); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	if err := db.RecordConnect("prod-db", at); err != nil {
 		t.Fatal(err)
@@ -47,6 +52,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if !meta.Favorite || meta.Notes != "primary database" || meta.ConnectCount != 2 {
 		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+	if meta.LoginOverride == nil || *meta.LoginOverride {
+		t.Fatalf("login override not stored: %+v", meta)
 	}
 	if len(meta.Tags) != 2 || meta.Tags[0] != "db" || meta.Tags[1] != "prod" {
 		t.Fatalf("unexpected tags: %#v", meta.Tags)
@@ -86,6 +94,72 @@ func TestStoreRoundTrip(t *testing.T) {
 	if !meta.Favorite || meta.ConnectCount != 2 || meta.Notes != "primary database" {
 		t.Fatalf("metadata did not persist: %+v", meta)
 	}
+	if meta.LoginOverride == nil || *meta.LoginOverride {
+		t.Fatalf("login override did not persist: %+v", meta)
+	}
+}
+
+func TestSetLoginOverrideAutoClearsValue(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	service := false
+	if err := db.SetLoginOverride("prod", &service); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetLoginOverride("prod", nil); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := db.Get("prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.LoginOverride != nil {
+		t.Fatalf("auto override should be nil: %+v", meta)
+	}
+}
+
+func TestOpenMigratesLegacyHostMeta(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE host_meta (
+		alias TEXT PRIMARY KEY,
+		favorite INTEGER NOT NULL DEFAULT 0,
+		notes TEXT NOT NULL DEFAULT '',
+		last_connected_at TEXT,
+		connect_count INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO host_meta(alias, favorite, notes) VALUES('prod', 1, 'legacy')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	meta, err := db.Get("prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Favorite || meta.Notes != "legacy" || meta.LoginOverride != nil {
+		t.Fatalf("legacy metadata not preserved: %+v", meta)
+	}
+	login := true
+	if err := db.SetLoginOverride("prod", &login); err != nil {
+		t.Fatalf("migrated store rejected login override: %v", err)
+	}
 }
 
 func TestStoreValidation(t *testing.T) {
@@ -99,6 +173,9 @@ func TestStoreValidation(t *testing.T) {
 		t.Fatal("expected empty alias error")
 	}
 	if err := db.SetFavorite("", true); err == nil {
+		t.Fatal("expected empty alias error")
+	}
+	if err := db.SetLoginOverride("", nil); err == nil {
 		t.Fatal("expected empty alias error")
 	}
 	if err := db.SetNotes("", "note"); err == nil {

@@ -23,6 +23,16 @@ const (
 	KindGitAuth Kind = "git-auth"
 )
 
+// AccessMode is the user's explicit override for interactive login capability.
+// The zero value is treated as AccessAuto for compatibility with config-only hosts.
+type AccessMode string
+
+const (
+	AccessAuto    AccessMode = "auto"
+	AccessLogin   AccessMode = "login"
+	AccessService AccessMode = "service"
+)
+
 // Host is a single concrete SSH alias suitable for a connection list.
 type Host struct {
 	Alias         string
@@ -32,6 +42,7 @@ type Host struct {
 	IdentityFiles []string
 	ProxyJump     string
 	Kind          Kind
+	AccessMode    AccessMode `json:"access_mode,omitempty"`
 	Tags          []string
 	Source        string
 
@@ -44,7 +55,49 @@ type Host struct {
 
 // IsServer reports whether the host should appear in the default server list.
 func (h Host) IsServer() bool {
-	return h.Kind == KindServer
+	return h.IsLoginable()
+}
+
+// IsLoginable reports whether the effective access mode allows interactive login.
+func (h Host) IsLoginable() bool {
+	return h.EffectiveAccess() == AccessLogin
+}
+
+// EffectiveAccess resolves the user override, falling back to inferred Kind.
+func (h Host) EffectiveAccess() AccessMode {
+	switch h.AccessMode {
+	case AccessLogin, AccessService:
+		return h.AccessMode
+	}
+	if h.Kind == KindGitAuth {
+		return AccessService
+	}
+	return AccessLogin
+}
+
+// AccessModeFromOverride converts a stored nullable override to an access mode.
+func AccessModeFromOverride(override *bool) AccessMode {
+	if override == nil {
+		return AccessAuto
+	}
+	if *override {
+		return AccessLogin
+	}
+	return AccessService
+}
+
+// ParseAccessMode parses a user-facing access mode value.
+func ParseAccessMode(value string) (AccessMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "auto", "automatic":
+		return AccessAuto, true
+	case "login", "yes", "on", "true", "1":
+		return AccessLogin, true
+	case "service", "no", "off", "false", "0":
+		return AccessService, true
+	default:
+		return "", false
+	}
 }
 
 // Address returns host:port for direct dialing.
@@ -174,6 +227,7 @@ func resolveHost(cfg *ssh_config.Config, alias string, block *ssh_config.Host, s
 		IdentityFiles: identityFiles,
 		ProxyJump:     proxyJump,
 		Kind:          classify(alias, hostName, user),
+		AccessMode:    AccessAuto,
 		Tags:          parseTags(block),
 		Source:        source,
 	}, nil

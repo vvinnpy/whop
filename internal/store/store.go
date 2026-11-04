@@ -21,6 +21,7 @@ type Meta struct {
 	LastConnectedAt time.Time
 	ConnectCount    int
 	Tags            []string
+	LoginOverride   *bool
 }
 
 // Store is a SQLite-backed metadata store.
@@ -63,7 +64,8 @@ func (s *Store) init() error {
 			favorite INTEGER NOT NULL DEFAULT 0,
 			notes TEXT NOT NULL DEFAULT '',
 			last_connected_at TEXT,
-			connect_count INTEGER NOT NULL DEFAULT 0
+			connect_count INTEGER NOT NULL DEFAULT 0,
+			login_override INTEGER
 		)`,
 		`CREATE TABLE IF NOT EXISTS host_tags (
 			alias TEXT NOT NULL,
@@ -94,6 +96,45 @@ func (s *Store) init() error {
 			return fmt.Errorf("store: init: %w", err)
 		}
 	}
+	if err := s.ensureHostMetaLoginOverride(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureHostMetaLoginOverride() error {
+	rows, err := s.db.Query(`PRAGMA table_info(host_meta)`)
+	if err != nil {
+		return fmt.Errorf("store: inspect host_meta: %w", err)
+	}
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			columnTyp string
+			notNull   int
+			defaultV  sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &columnTyp, &notNull, &defaultV, &pk); err != nil {
+			return fmt.Errorf("store: inspect host_meta column: %w", err)
+		}
+		if name == "login_override" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: inspect host_meta: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE host_meta ADD COLUMN login_override INTEGER`); err != nil {
+		return fmt.Errorf("store: add login_override: %w", err)
+	}
 	return nil
 }
 
@@ -111,15 +152,16 @@ func (s *Store) Get(alias string) (Meta, error) {
 		return Meta{}, errors.New("store: empty alias")
 	}
 	var (
-		favorite int
-		notes    string
-		last     sql.NullString
-		count    int
+		favorite      int
+		notes         string
+		last          sql.NullString
+		count         int
+		loginOverride sql.NullInt64
 	)
 	err := s.db.QueryRow(
-		`SELECT favorite, notes, last_connected_at, connect_count FROM host_meta WHERE alias = ?`,
+		`SELECT favorite, notes, last_connected_at, connect_count, login_override FROM host_meta WHERE alias = ?`,
 		alias,
-	).Scan(&favorite, &notes, &last, &count)
+	).Scan(&favorite, &notes, &last, &count, &loginOverride)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Meta{}, nil
 	}
@@ -130,6 +172,10 @@ func (s *Store) Get(alias string) (Meta, error) {
 		Favorite:     favorite != 0,
 		Notes:        notes,
 		ConnectCount: count,
+	}
+	if loginOverride.Valid {
+		value := loginOverride.Int64 != 0
+		meta.LoginOverride = &value
 	}
 	if last.Valid {
 		if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
@@ -146,7 +192,7 @@ func (s *Store) Get(alias string) (Meta, error) {
 
 // All returns all metadata keyed by alias.
 func (s *Store) All() (map[string]Meta, error) {
-	rows, err := s.db.Query(`SELECT alias, favorite, notes, last_connected_at, connect_count FROM host_meta`)
+	rows, err := s.db.Query(`SELECT alias, favorite, notes, last_connected_at, connect_count, login_override FROM host_meta`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list metadata: %w", err)
 	}
@@ -155,19 +201,24 @@ func (s *Store) All() (map[string]Meta, error) {
 	result := make(map[string]Meta)
 	for rows.Next() {
 		var (
-			alias    string
-			favorite int
-			notes    string
-			last     sql.NullString
-			count    int
+			alias         string
+			favorite      int
+			notes         string
+			last          sql.NullString
+			count         int
+			loginOverride sql.NullInt64
 		)
-		if err := rows.Scan(&alias, &favorite, &notes, &last, &count); err != nil {
+		if err := rows.Scan(&alias, &favorite, &notes, &last, &count, &loginOverride); err != nil {
 			return nil, fmt.Errorf("store: scan metadata: %w", err)
 		}
 		meta := Meta{
 			Favorite:     favorite != 0,
 			Notes:        notes,
 			ConnectCount: count,
+		}
+		if loginOverride.Valid {
+			value := loginOverride.Int64 != 0
+			meta.LoginOverride = &value
 		}
 		if last.Valid {
 			if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
@@ -226,6 +277,26 @@ func (s *Store) SetFavorite(alias string, favorite bool) error {
 	)
 	if err != nil {
 		return fmt.Errorf("store: set favorite %s: %w", alias, err)
+	}
+	return nil
+}
+
+// SetLoginOverride stores the user's login/service override. Nil restores auto mode.
+func (s *Store) SetLoginOverride(alias string, override *bool) error {
+	if strings.TrimSpace(alias) == "" {
+		return errors.New("store: empty alias")
+	}
+	var value any
+	if override != nil {
+		value = boolInt(*override)
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO host_meta(alias, login_override) VALUES(?, ?)
+		 ON CONFLICT(alias) DO UPDATE SET login_override = excluded.login_override`,
+		alias, value,
+	)
+	if err != nil {
+		return fmt.Errorf("store: set login override %s: %w", alias, err)
 	}
 	return nil
 }

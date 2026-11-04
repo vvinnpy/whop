@@ -14,6 +14,7 @@ func TestApplyMetadata(t *testing.T) {
 		{Alias: "staging"},
 	}
 	at := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	service := false
 	metas := map[string]store.Meta{
 		"prod-db": {
 			Favorite:        true,
@@ -21,12 +22,16 @@ func TestApplyMetadata(t *testing.T) {
 			Tags:            []string{"db", "config-tag"},
 			LastConnectedAt: at,
 			ConnectCount:    3,
+			LoginOverride:   &service,
 		},
 	}
 
 	got := ApplyMetadata(hosts, metas)
 	if !got[0].Favorite || got[0].Notes != "primary" || got[0].ConnectCount != 3 || !got[0].LastConnectedAt.Equal(at) {
 		t.Fatalf("metadata not applied: %+v", got[0])
+	}
+	if got[0].AccessMode != sshconfig.AccessService || got[0].IsLoginable() {
+		t.Fatalf("access override not applied: %+v", got[0])
 	}
 	if len(got[0].Tags) != 2 || got[0].Tags[0] != "config-tag" || got[0].Tags[1] != "db" {
 		t.Fatalf("tags not merged: %#v", got[0].Tags)
