@@ -133,7 +133,8 @@ whop audit clear
 ### Macros
 
 Macros are portable JSON documents stored in SQLite. They are validated before
-they are saved. A macro contains ordered `send`, `wait`, and `sleep` steps:
+they are saved. A macro is one JSON object (not JSONL); its `steps` array contains
+ordered `send`, `wait`, and `sleep` operations:
 
 ```json
 {
@@ -168,6 +169,9 @@ the macro finishes, its output remains on screen; press Enter to return to the
 host list.
 Macro lifecycle, expect matches, timeouts, retries, and failures are persisted in
 the local audit log without command text or terminal output.
+
+See [docs/macros.md](docs/macros.md) for the full field reference, execution
+semantics, JSON escaping rules, and annotated examples.
 
 ### nccm migration
 

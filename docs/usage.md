@@ -528,6 +528,8 @@ whop run prod-db "systemctl status nginx"
 
 ## 10. Macro 与 expect 自动化
 
+> 完整字段表、执行语义、JSON 转义和更多示例见 [Macro 语法与示例](macros.md)。
+
 Macro 适合处理“等待一个提示符，再发送内容”的交互流程，例如：
 
 - 登录旧式设备；
@@ -599,7 +601,7 @@ WHOP_DEPLOY_PASSWORD='...' whop macro run login prod-db
 
 - `wait` 使用 Go 正则；
 - 正则不能匹配空字符串；
-- 每个 `wait` 的超时优先级高于整体 `--timeout`；
+- 单步 `wait` 超时和整体 `--timeout` 同时生效，整体超时是硬上限；
 - 宏通过交互式 shell 执行，不代表完全替代普通 `whop run`；
 - TUI 执行宏结束后会保留输出，按 Enter 才返回服务器列表；
 - 设备 prompt 变化时优先修 pattern，而不是无限增加 sleep。
