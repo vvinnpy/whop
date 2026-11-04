@@ -70,7 +70,7 @@ func TestNarrowFooterKeepsHelpAndQuitVisible(t *testing.T) {
 	m.width = 40
 	m.height = 20
 	view := plainView(m)
-	if !strings.Contains(view, "? help") || !strings.Contains(view, "q quit") {
+	if !strings.Contains(view, "?: help") || !strings.Contains(view, "q: quit") {
 		t.Fatalf("narrow footer hid essential keys:\n%s", view)
 	}
 }
@@ -115,13 +115,13 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 
 	sendKey(m, runeKey("n"))
-	if got := strings.Count(plainView(m), "ctrl+s save"); got != 1 {
+	if got := strings.Count(plainView(m), "ctrl+s: save"); got != 1 {
 		t.Fatalf("notes screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 
 	sendKey(m, runeKey("e"))
-	if got := strings.Count(plainView(m), "tab/enter next"); got != 1 {
+	if got := strings.Count(plainView(m), "tab/enter: next"); got != 1 {
 		t.Fatalf("edit screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -129,7 +129,7 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	m.diffMode = true
 	m.diffTarget = testHosts()[0]
 	m.diffLines = []string{"@@ -1 +1 @@", "-old", "+new"}
-	if got := strings.Count(plainView(m), "enter/y apply"); got != 1 {
+	if got := strings.Count(plainView(m), "enter/y: apply"); got != 1 {
 		t.Fatalf("diff screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	m.diffMode = false
@@ -137,7 +137,7 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	m.macroMode = true
 	m.macroTarget = testHosts()[0]
 	m.macroNames = []string{"health"}
-	if got := strings.Count(plainView(m), "enter run"); got != 1 {
+	if got := strings.Count(plainView(m), "enter: run"); got != 1 {
 		t.Fatalf("macro screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 }
@@ -150,7 +150,7 @@ func TestHelpDoesNotShowStaleListStatus(t *testing.T) {
 	if strings.Contains(view, "edit cancelled") {
 		t.Fatalf("help screen showed stale status:\n%s", view)
 	}
-	if !strings.Contains(view, "? / esc close help") {
+	if !strings.Contains(view, "?/esc: close help") {
 		t.Fatalf("help footer is not contextual:\n%s", view)
 	}
 }
@@ -220,7 +220,7 @@ func TestFooterStaysUsableAtSixtyColumns(t *testing.T) {
 	m.width = 60
 	m.height = 20
 	view := plainView(m)
-	for _, want := range []string{"enter connect", "/ search", "? help", "q quit"} {
+	for _, want := range []string{"enter: connect", "/: search", "?: help", "q: quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("60-column footer missing %q:\n%s", want, view)
 		}

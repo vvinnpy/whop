@@ -29,7 +29,7 @@
  │ proxy     none                                          │
  └─────────────────────────────────────────────────────────┘
 
- enter connect   / search   j/k move   e edit   ? help   q quit
+ enter: connect   /: search   j/k: move   ?: help   q: quit
 ```
 
 The detail panel is hidden below 96 columns. The list remains the primary surface.

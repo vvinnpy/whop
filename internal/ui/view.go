@@ -18,6 +18,7 @@ var (
 	styleAdded    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#006B2E", Dark: "#5FD787"})
 	styleRemoved  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9B0000", Dark: "#FF6B6B"})
 	styleHunk     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"}).Bold(true)
+	styleKey      = styleAccent.Bold(true)
 )
 
 // View implements tea.Model.
@@ -343,52 +344,101 @@ func (m *Model) viewHelp(width int) string {
 }
 
 func (m *Model) viewFooter(width int) string {
-	var hint string
+	var hints []footerHint
 	if m.editing {
-		hint = " tab next  enter save  esc cancel"
 		if m.editFocus < len(m.editFields)-1 {
-			hint = " tab/enter next  ctrl+s save  esc cancel"
+			hints = []footerHint{
+				{key: "tab/enter", action: "next"},
+				{key: "ctrl+s", action: "save"},
+				{key: "esc", action: "cancel"},
+			}
+		} else {
+			hints = []footerHint{
+				{key: "enter/ctrl+s", action: "save"},
+				{key: "esc", action: "cancel"},
+			}
 		}
 	} else if m.notesMode {
-		hint = " ctrl+s save  esc cancel"
+		hints = []footerHint{{key: "ctrl+s", action: "save"}, {key: "esc", action: "cancel"}}
 	} else if m.diffMode {
-		hint = " enter/y apply  n/esc back  j/k scroll  ctrl+d/u page"
-		if width < 72 {
-			hint = " enter apply  n/esc back  j/k scroll"
+		hints = []footerHint{
+			{key: "enter/y", action: "apply"},
+			{key: "n/esc", action: "back"},
+			{key: "j/k", action: "scroll"},
+			{key: "ctrl+d/u", action: "page"},
 		}
 	} else if m.macroMode {
-		hint = " enter run  j/k ctrl+p/n move  esc cancel"
-		if width < 72 {
-			hint = " enter run  esc cancel"
+		hints = []footerHint{
+			{key: "enter", action: "run"},
+			{key: "j/k", action: "move"},
+			{key: "esc", action: "cancel"},
 		}
 	} else if m.help {
-		hint = " ? / esc close help"
+		hints = []footerHint{{key: "?/esc", action: "close help"}}
 	} else if m.filterFocused {
-		hint = " type to search  enter connect  tab/esc apply  ctrl+u clear"
-		if width < 72 {
-			hint = " type to search  enter connect  tab/esc apply"
+		hints = []footerHint{
+			{key: "type", action: "search"},
+			{key: "enter", action: "connect"},
+			{key: "tab/esc", action: "apply"},
+			{key: "ctrl+u", action: "clear"},
 		}
 	} else if m.filter != "" {
-		hint = " enter connect  / edit search  j/k ctrl+p/n  e edit  esc clear"
-		if width < 72 {
-			hint = " enter connect  / edit search  esc clear"
+		hints = []footerHint{
+			{key: "enter", action: "connect"},
+			{key: "/", action: "edit search"},
+			{key: "j/k", action: "move"},
+			{key: "esc", action: "clear"},
+			{key: "?", action: "help"},
+			{key: "q", action: "quit"},
 		}
 	} else {
-		hint = " enter connect  / search  j/k ctrl+p/n  N new  f fav  e edit  m macro  ? help  q quit"
-		switch {
-		case width < 52:
-			hint = " enter connect  / search\n ? help  q quit"
-		case width < 72:
-			hint = " enter connect  / search  ? help  q quit"
-		case width < 96:
-			hint = " enter connect  / search  j/k move  e edit  ? help  q quit"
+		hints = []footerHint{
+			{key: "enter", action: "connect"},
+			{key: "/", action: "search"},
+			{key: "j/k", action: "move"},
+			{key: "?", action: "help"},
+			{key: "q", action: "quit"},
 		}
 	}
-	rendered := make([]string, 0, 2)
-	for _, line := range strings.Split(hint, "\n") {
-		rendered = append(rendered, styleDim.Render(ansi.Truncate(line, width, "~")))
+	return renderFooterHints(width, hints)
+}
+
+type footerHint struct {
+	key    string
+	action string
+}
+
+func renderFooterHints(width int, hints []footerHint) string {
+	if width < 1 {
+		width = 1
 	}
-	return strings.Join(rendered, "\n")
+	const separator = "  "
+	lines := make([]string, 0, 2)
+	line := ""
+	lineWidth := 0
+	for _, hint := range hints {
+		item := styleKey.Render(hint.key) + styleDim.Render(": "+hint.action)
+		itemWidth := ansi.StringWidth(item)
+		switch {
+		case line == "":
+			line = " " + item
+			lineWidth = 1 + itemWidth
+		case lineWidth+len(separator)+itemWidth <= width:
+			line += separator + item
+			lineWidth += len(separator) + itemWidth
+		default:
+			lines = append(lines, line)
+			line = " " + item
+			lineWidth = 1 + itemWidth
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "~")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) viewStatus(width int) string {
