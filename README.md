@@ -98,6 +98,11 @@ ttydeck search --json "error"
 ttydeck zmodem put prod-db ./backup.tar
 ttydeck zmodem get prod-db /var/log/syslog
 
+# Migrate an existing nccm YAML configuration
+ttydeck import nccm --json              # dry-run: preview additions and warnings
+ttydeck import nccm --only 10.215.211.232 --apply
+ttydeck import nccm --apply             # import everything that is safe
+
 # Automation
 ttydeck run prod-db uptime
 ttydeck snippet set disk "df -h"
@@ -147,6 +152,15 @@ In the TUI, press `m` on a selected host to choose and run a stored macro.
 Macro lifecycle, expect matches, timeouts, retries, and failures are persisted in
 the local audit log without command text or terminal output.
 
+### nccm migration
+
+`ttydeck import nccm` auto-detects the normal nccm config locations and is
+dry-run by default. It imports connection fields, keepalive, identity files,
+comments, `-z ssh-rsa` compatibility, and safe custom arguments. Existing aliases
+and identical endpoints are skipped. nccm password arguments are never copied:
+password-mode hosts are imported for interactive login with a warning. Use
+`--only name1,name2` to migrate selected connections and `--apply` to write.
+
 Host edits show a unified diff before writing. Press `enter` or `y` to apply,
 `n`/`esc` to return to the form. The preview carries a content hash so a file
 changed by another process is rejected instead of silently applying a stale diff.
@@ -194,8 +208,8 @@ This reports the failing stage (`dial`, `handshake`, `auth`, `host_key`,
 Early V0.1 development: the SSH-first TUI, safe config editing, metadata,
 session recording/replay/search, SQLite FTS5 transcript search, default
 plain-text transcript redaction, snippets, expect-style macros, persisted
-automation audit logs, safe diff-previewed config edits, ZMODEM transfer, and
-release packaging are functional. See [docs/plan.md](docs/plan.md) for
+automation audit logs, safe diff-previewed config edits, nccm migration,
+ZMODEM transfer, and release packaging are functional. See [docs/plan.md](docs/plan.md) for
 remaining hardening and future connectors.
 
 Recordings are asciicast v2 files plus a redacted `.txt` transcript. The cast is

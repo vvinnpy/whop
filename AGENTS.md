@@ -85,6 +85,7 @@ For a significant dependency or architectural choice, add an ADR under `docs/adr
 - `github.com/gofrs/flock`
 - `github.com/natefinch/atomic`
 - `modernc.org/sqlite`
+- `go.yaml.in/yaml/v3` — optional nccm YAML import; pure Go
 - `filippo.io/age`
 - `golang.org/x/crypto/argon2`
 - `github.com/go-git/go-git/v5`

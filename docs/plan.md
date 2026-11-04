@@ -30,6 +30,7 @@ connector/session abstractions rather than bolted onto the UI.
 - SQLite metadata store
 - password/keyboard-interactive prompts
 - ProxyJump support
+- dry-run-first nccm YAML migration with password-safe import
 
 ### M2 — sessions and recording
 

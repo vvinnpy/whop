@@ -127,6 +127,8 @@ func Run(args []string, deps Deps) int {
 		return runMacro(args[1:], deps)
 	case "audit":
 		return runAudit(args[1:], deps)
+	case "import":
+		return runImport(args[1:], deps)
 	case "diagnose":
 		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
@@ -1162,6 +1164,7 @@ Usage:
   ttydeck macro <set|list|show|delete|run> ...
   ttydeck audit [flags]             show persisted automation audit events
   ttydeck audit clear [flags]       clear the audit log
+  ttydeck import nccm [flags]       preview or apply nccm.yml migration
   ttydeck diagnose [flags] <alias>
   ttydeck version                   print version
 
@@ -1202,5 +1205,12 @@ Flags for macro run:
 
 Flags for audit:
   -limit 100      maximum events to show (max 1000)
+  -json           emit JSON
+
+Flags for import nccm:
+  -file path      nccm.yml path (default: auto-detect)
+  -config path    destination ssh config
+  -only names     comma-separated nccm connection names
+  -apply          write changes (default: dry-run)
   -json           emit JSON`)
 }

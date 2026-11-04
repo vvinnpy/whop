@@ -14,6 +14,7 @@ require (
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/natefinch/atomic v1.0.1
 	github.com/xx25/go-zmodem v0.0.0-20260928123519-057a34b28431
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.61.1
