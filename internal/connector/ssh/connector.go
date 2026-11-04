@@ -545,7 +545,7 @@ func NewRunner(connector *Connector, size func() (int, int)) *Runner {
 }
 
 // Run opens an interactive shell and blocks until it exits.
-func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) error {
+func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) (returnErr error) {
 	client, err := r.Connector.Dial(ctx, host)
 	if err != nil {
 		return err
@@ -594,7 +594,17 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		stdoutWriter = io.MultiWriter(stdoutWriter, recorder)
 	}
 
-	session.Stdin = stdin
+	rawStdin, restoreTerminal, err := prepareTerminalInput(stdin)
+	if err != nil {
+		return &StageError{Stage: "terminal", Host: host.Alias, Err: fmt.Errorf("enable local raw mode: %w", err)}
+	}
+	defer func() {
+		if err := restoreTerminal(); err != nil && returnErr == nil {
+			returnErr = &StageError{Stage: "terminal", Host: host.Alias, Err: fmt.Errorf("restore local terminal: %w", err)}
+		}
+	}()
+
+	session.Stdin = rawStdin
 	session.Stdout = stdoutWriter
 	session.Stderr = stderr
 	if err := session.Shell(); err != nil {
