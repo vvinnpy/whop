@@ -572,3 +572,22 @@ func TestEditNoDiffAppliesImmediately(t *testing.T) {
 		t.Fatalf("diffMode=%v applied=%+v", m.diffMode, applied)
 	}
 }
+
+func TestInitialStatusSurvivesHostLoad(t *testing.T) {
+	m := New(Options{
+		ConfigPath:    "~/.ssh/config",
+		InitialStatus: "session ended",
+		Load: func() ([]sshconfig.Host, error) {
+			return testHosts(), nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	if m.status != "session ended" {
+		t.Fatalf("status = %q", m.status)
+	}
+	if !strings.Contains(plainView(m), "session ended") {
+		t.Fatalf("status not rendered:\n%s", plainView(m))
+	}
+}

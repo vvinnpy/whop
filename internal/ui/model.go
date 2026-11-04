@@ -28,6 +28,7 @@ type MacroRunner func(sshconfig.Host, string) tea.Cmd
 type Options struct {
 	ConfigPath     string
 	InitialFilter  string
+	InitialStatus  string
 	ShowAll        bool
 	Record         bool
 	Load           HostLoader
@@ -77,6 +78,7 @@ type Model struct {
 
 	filter        string
 	filterFocused bool
+	initialStatus string
 	showAll       bool
 	record        bool
 	help          bool
@@ -124,6 +126,7 @@ func New(opts Options) *Model {
 		setTags:        opts.SetTags,
 		saveNotes:      opts.SaveNotes,
 		filter:         opts.InitialFilter,
+		initialStatus:  opts.InitialStatus,
 		showAll:        opts.ShowAll,
 		record:         opts.Record,
 		width:          100,
@@ -156,7 +159,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.allHosts = msg.hosts
 		m.applyFilter()
-		m.status = fmt.Sprintf("%d servers / %d total", len(sshconfig.Servers(m.allHosts)), len(m.allHosts))
+		if m.initialStatus != "" {
+			m.status = m.initialStatus
+			m.initialStatus = ""
+		} else {
+			m.status = fmt.Sprintf("%d servers / %d total", len(sshconfig.Servers(m.allHosts)), len(m.allHosts))
+		}
 		return m, nil
 
 	case ConnectFinishedMsg:

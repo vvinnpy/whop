@@ -54,6 +54,7 @@ type testDeps struct {
 	ranHosts       []string
 	ranCommands    []string
 	useAgent       bool
+	relaunched     bool
 }
 
 func newTestDeps() *testDeps {
@@ -99,6 +100,10 @@ func newTestDeps() *testDeps {
 			td.ranHosts = append(td.ranHosts, host.Alias)
 			td.ranCommands = append(td.ranCommands, command)
 			return "ran " + command + " on " + host.Alias + "\n", nil
+		},
+		Relaunch: func() error {
+			td.relaunched = true
+			return nil
 		},
 		ZmodemGet: func(host sshconfig.Host, _ []sshconfig.Host, files []string, dest string, maxSize int64, overwrite bool, useAgent bool, _ io.Writer) error {
 			td.zmGetHost = host.Alias

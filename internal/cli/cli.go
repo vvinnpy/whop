@@ -45,6 +45,7 @@ type Deps struct {
 	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, automation.EventFunc, bool) error
 	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
 	Password     sshconn.PasswordProvider
+	Relaunch     func() error
 	LookupEnv    func(string) (string, bool)
 	UseAgent     bool
 }
@@ -102,6 +103,7 @@ func NewDeps() Deps {
 			return defaultDiagnose(host, hosts, useAgent, password)
 		},
 		Password:  password,
+		Relaunch:  relaunchProcess,
 		LookupEnv: os.LookupEnv,
 	}
 }
@@ -242,6 +244,9 @@ func normalizeDeps(deps Deps) Deps {
 	if deps.LookupEnv == nil {
 		deps.LookupEnv = os.LookupEnv
 	}
+	if deps.Relaunch == nil {
+		deps.Relaunch = relaunchProcess
+	}
 	return deps
 }
 
@@ -266,77 +271,129 @@ func runTUI(args []string, deps Deps) int {
 	}
 	defer metaStore.Close()
 
-	err = deps.RunTUI(ui.Options{
-		ConfigPath:    configPathValue,
-		InitialFilter: initialFilter,
-		ShowAll:       *showAll,
-		Record:        *record,
-		Load: func() ([]sshconfig.Host, error) {
-			return loadHosts(deps, metaStore, configPathValue)
-		},
-		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
-			return metaStore.SetFavorite(host.Alias, favorite)
-		},
-		PreviewEdit: func(host sshconfig.Host, edit sshconfig.Edit) (sshconfig.Preview, error) {
-			return sshconfig.PreviewHostChange(configPathValue, host.Alias, edit)
-		},
-		EditHost: func(host sshconfig.Host, edit sshconfig.Edit) error {
-			return sshconfig.EditHost(configPathValue, host.Alias, edit)
-		},
-		SetTags: func(host sshconfig.Host, tags []string) error {
-			return metaStore.SetTags(host.Alias, tags)
-		},
-		SaveNotes: func(host sshconfig.Host, note string) error {
-			return metaStore.SetNotes(host.Alias, note)
-		},
-		Connect: func(host sshconfig.Host, record bool) tea.Cmd {
-			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir, deps.UseAgent, deps.Password), Host: host}, func(err error) tea.Msg {
-				if err == nil {
-					_ = metaStore.RecordConnect(host.Alias, time.Now())
-				}
-				return ui.ConnectFinishedMsg{Err: err}
-			})
-		},
-		LoadMacros: func() ([]string, error) {
-			return loadMacroNames(metaStore)
-		},
-		RunMacro: func(host sshconfig.Host, name string) tea.Cmd {
-			macro, err := loadStoredMacro(metaStore, name, deps.LookupEnv)
-			if err != nil {
-				return func() tea.Msg {
-					return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
-				}
+	tuiNotice := os.Getenv("TTYDECK_TUI_NOTICE")
+	_ = os.Unsetenv("TTYDECK_TUI_NOTICE")
+	for {
+		var pendingConnect *connectRequest
+		var pendingMacro *macroRequest
+		options := ui.Options{
+			ConfigPath:    configPathValue,
+			InitialFilter: initialFilter,
+			InitialStatus: tuiNotice,
+			ShowAll:       *showAll,
+			Record:        *record,
+			Load: func() ([]sshconfig.Host, error) {
+				return loadHosts(deps, metaStore, configPathValue)
+			},
+			ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
+				return metaStore.SetFavorite(host.Alias, favorite)
+			},
+			PreviewEdit: func(host sshconfig.Host, edit sshconfig.Edit) (sshconfig.Preview, error) {
+				return sshconfig.PreviewHostChange(configPathValue, host.Alias, edit)
+			},
+			EditHost: func(host sshconfig.Host, edit sshconfig.Edit) error {
+				return sshconfig.EditHost(configPathValue, host.Alias, edit)
+			},
+			SetTags: func(host sshconfig.Host, tags []string) error {
+				return metaStore.SetTags(host.Alias, tags)
+			},
+			SaveNotes: func(host sshconfig.Host, note string) error {
+				return metaStore.SetNotes(host.Alias, note)
+			},
+			Connect: func(host sshconfig.Host, record bool) tea.Cmd {
+				pendingConnect = &connectRequest{host: host, record: record}
+				return tea.Quit
+			},
+			LoadMacros: func() ([]string, error) {
+				return loadMacroNames(metaStore)
+			},
+			RunMacro: func(host sshconfig.Host, name string) tea.Cmd {
+				pendingMacro = &macroRequest{host: host, name: name}
+				return tea.Quit
+			},
+		}
+		if err := deps.RunTUI(options); err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
+
+		switch {
+		case pendingConnect != nil:
+			request := *pendingConnect
+			pendingConnect = nil
+			// The TUI has already restored the terminal. Running SSH outside the
+			// Bubble Tea input loop avoids the first-key-lost race after tea.Exec.
+			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
+			if loadErr != nil {
+				tuiNotice = fmt.Sprintf("connection to %s failed: %v", request.host.Alias, loadErr)
+				return relaunchTUI(deps, tuiNotice)
 			}
-			hosts, err := sshconfig.Load(configPathValue)
+			err := deps.Connect(request.host, hosts, deps.Stdin, deps.Stdout, deps.Stderr, request.record, deps.UseAgent)
 			if err != nil {
-				return func() tea.Msg {
-					return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
-				}
+				tuiNotice = fmt.Sprintf("connection to %s failed: %v", request.host.Alias, err)
+			} else {
+				_ = metaStore.RecordConnect(request.host.Alias, time.Now())
+				tuiNotice = "session ended"
 			}
-			connector := sshConnectorWithHosts(hosts, deps.UseAgent, deps.Password)
-			collector := newAuditCollector(metaStore)
-			macroAuditStarted(collector, host.Alias, name)
-			return tea.Exec(&sshconn.MacroCommand{
-				Connector: connector,
-				Host:      host,
-				Macro:     macro,
-				OnEvent:   collector.automationEvent(host.Alias, name),
-			}, func(err error) tea.Msg {
-				if err != nil {
-					macroAuditFailed(collector, host.Alias, name, err)
-				} else {
-					_ = metaStore.RecordConnect(host.Alias, time.Now())
-				}
-				_ = macroAuditFlush(collector, deps.Stderr)
-				return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
-			})
-		},
-	})
-	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return relaunchTUI(deps, tuiNotice)
+
+		case pendingMacro != nil:
+			request := *pendingMacro
+			pendingMacro = nil
+			tuiNotice = runTUIMacro(deps, metaStore, configPathValue, request.host, request.name)
+			return relaunchTUI(deps, tuiNotice)
+
+		default:
+			return 0
+		}
+	}
+}
+
+func relaunchTUI(deps Deps, notice string) int {
+	if notice != "" {
+		_ = os.Setenv("TTYDECK_TUI_NOTICE", notice)
+	}
+	if err := deps.Relaunch(); err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: restart TUI: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+type connectRequest struct {
+	host   sshconfig.Host
+	record bool
+}
+
+type macroRequest struct {
+	host sshconfig.Host
+	name string
+}
+
+func runTUIMacro(deps Deps, metaStore MetaStore, configPath string, host sshconfig.Host, name string) string {
+	macro, err := loadStoredMacro(metaStore, name, deps.LookupEnv)
+	if err != nil {
+		return fmt.Sprintf("macro %s failed: %v", name, err)
+	}
+	hosts, err := loadHosts(deps, metaStore, configPath)
+	if err != nil {
+		return fmt.Sprintf("macro %s failed: %v", name, err)
+	}
+	collector := newAuditCollector(metaStore)
+	macroAuditStarted(collector, host.Alias, name)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	err = deps.RunMacro(ctx, host, hosts, macro, deps.Stdout, deps.Stderr, collector.automationEvent(host.Alias, name), deps.UseAgent)
+	if err != nil {
+		macroAuditFailed(collector, host.Alias, name, err)
+	} else {
+		_ = metaStore.RecordConnect(host.Alias, time.Now())
+	}
+	_ = macroAuditFlush(collector, deps.Stderr)
+	if err != nil {
+		return fmt.Sprintf("macro %s failed on %s: %v", name, host.Alias, err)
+	}
+	return fmt.Sprintf("macro %s completed on %s", name, host.Alias)
 }
 
 func runList(args []string, deps Deps) int {
