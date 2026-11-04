@@ -120,3 +120,48 @@ func TestVaultWrongMasterPassword(t *testing.T) {
 		t.Fatalf("stderr = %q", td.stderr.String())
 	}
 }
+
+func TestVaultAutoUnlock(t *testing.T) {
+	dir := t.TempDir()
+	vaultPath := filepath.Join(dir, "secrets.vault")
+	keyPath := filepath.Join(dir, "secrets.key")
+	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
+	t.Setenv("TTYDECK_VAULT_KEY_FILE", keyPath)
+	t.Setenv("TTYDECK_VAULT_PASSWORD", "")
+	t.Setenv("TTYDECK_HOST_PASSWORD", "auto-host-secret")
+
+	td := newTestDeps()
+	if code := Run([]string{"vault", "init", "--auto-unlock"}, td.deps); code != 0 {
+		t.Fatalf("init exit = %d: %s", code, td.stderr.String())
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode = %o", info.Mode().Perm())
+	}
+	if code := Run([]string{"vault", "set", "prod-db"}, td.deps); code != 0 {
+		t.Fatalf("set exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"vault", "status", "-json"}, td.deps); code != 0 {
+		t.Fatalf("status exit = %d: %s", code, td.stderr.String())
+	}
+	var status vaultStatus
+	if err := json.Unmarshal(td.stdout.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Exists || !status.AutoUnlock {
+		t.Fatalf("status = %+v", status)
+	}
+
+	provider := defaultPasswordProvider()
+	got, err := provider.Password(sshconfig.Host{Alias: "prod-db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "auto-host-secret" {
+		t.Fatalf("password = %q", got)
+	}
+}

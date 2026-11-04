@@ -48,5 +48,8 @@ Negative:
 - Losing the master password makes the vault unrecoverable.
 - Users must unlock the vault once per process unless automation supplies the
   master password through the environment.
+- The optional `vault init --auto-unlock` mode stores a random 0600 key file and
+  removes the per-process prompt. This is convenient but weaker than the default
+  master-password mode against malware running as the same logged-in user.
 - The vault protects data at rest; it does not defend against malware running as
   the same logged-in user while the process is unlocked.

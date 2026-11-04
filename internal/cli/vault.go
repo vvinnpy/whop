@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -25,9 +28,9 @@ const (
 )
 
 type vaultStatus struct {
-	Path    string `json:"path"`
-	Exists  bool   `json:"exists"`
-	Entries int    `json:"entries,omitempty"`
+	Path       string `json:"path"`
+	Exists     bool   `json:"exists"`
+	AutoUnlock bool   `json:"auto_unlock"`
 }
 
 func runVault(args []string, deps Deps) int {
@@ -54,6 +57,7 @@ func runVault(args []string, deps Deps) int {
 
 func runVaultInit(args []string, deps Deps) int {
 	fs := newFlagSet("ttydeck vault init", deps)
+	autoUnlock := fs.Bool("auto-unlock", false, "generate a 0600 local key file for non-interactive unlock")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -76,18 +80,39 @@ func runVaultInit(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
-	master, err := readVaultMasterPassword(deps, true)
-	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
-		return 1
+	var master string
+	var keyPath string
+	if *autoUnlock {
+		keyPath, err = vaultKeyPath()
+		if err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
+		master, err = generateVaultKey(keyPath)
+		if err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
+	} else {
+		master, err = readVaultMasterPassword(deps, true)
+		if err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
 	}
 	vault, err := secrets.Create(path, master)
 	if err != nil {
+		if keyPath != "" {
+			_ = os.Remove(keyPath)
+		}
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
 	_ = vault.Close()
 	fmt.Fprintf(deps.Stdout, "vault created: %s\n", path)
+	if keyPath != "" {
+		fmt.Fprintf(deps.Stdout, "auto-unlock key: %s\n", keyPath)
+	}
 	return 0
 }
 
@@ -230,7 +255,9 @@ func runVaultStatus(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
-	status := vaultStatus{Path: path}
+	keyPath, _ := vaultKeyPath()
+	_, keyErr := os.Stat(keyPath)
+	status := vaultStatus{Path: path, AutoUnlock: keyErr == nil}
 	info, err := os.Stat(path)
 	if err == nil && info.Mode().IsRegular() {
 		status.Exists = true
@@ -248,7 +275,7 @@ func runVaultStatus(args []string, deps Deps) int {
 		return 0
 	}
 	if status.Exists {
-		fmt.Fprintf(deps.Stdout, "vault exists: %s\n", status.Path)
+		fmt.Fprintf(deps.Stdout, "vault exists: %s (auto-unlock=%v)\n", status.Path, status.AutoUnlock)
 	} else {
 		fmt.Fprintf(deps.Stdout, "vault not initialized: %s\n", status.Path)
 	}
@@ -260,6 +287,75 @@ func vaultPath() (string, error) {
 		return value, nil
 	}
 	return secrets.DefaultPath()
+}
+
+func vaultKeyPath() (string, error) {
+	if value := strings.TrimSpace(os.Getenv("TTYDECK_VAULT_KEY_FILE")); value != "" {
+		return value, nil
+	}
+	path, err := vaultPath()
+	if err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return path + ".key", nil
+	}
+	return strings.TrimSuffix(path, ext) + ".key", nil
+}
+
+func generateVaultKey(path string) (string, error) {
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("auto-unlock key already exists: %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	key := base64.StdEncoding.EncodeToString(raw)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.WriteString(file, key+"\n"); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return key, nil
+}
+
+func readVaultKeyFile() (string, bool, error) {
+	path, err := vaultKeyPath()
+	if err != nil {
+		return "", false, err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return "", false, fmt.Errorf("empty auto-unlock key file: %s", path)
+	}
+	return key, true, nil
 }
 
 func openExistingVault(deps Deps) (*secrets.Vault, error) {
@@ -294,6 +390,11 @@ func openOrCreateVault(path, master string) (*secrets.Vault, error) {
 func readVaultMasterPassword(deps Deps, confirm bool) (string, error) {
 	if value := os.Getenv(vaultMasterPasswordEnv); value != "" {
 		return value, nil
+	}
+	if key, ok, err := readVaultKeyFile(); err != nil {
+		return "", err
+	} else if ok {
+		return key, nil
 	}
 	first, err := readSecretLine(deps, "vault master password: ")
 	if err != nil {

@@ -99,7 +99,8 @@ ttydeck zmodem put prod-db ./backup.tar
 ttydeck zmodem get prod-db /var/log/syslog
 
 # Encrypted host-password vault
-ttydeck vault init
+ttydeck vault init                 # master password mode
+ttydeck vault init --auto-unlock   # optional zero-prompt mode, 0600 key file
 ttydeck vault set 232
 ttydeck vault list
 ttydeck vault status
@@ -179,6 +180,12 @@ TTYDECK_VAULT_PASSWORD='...' TTYDECK_HOST_PASSWORD='...' ttydeck vault set 232
 Environment variables are intended for automation. Interactive use prompts with
 hidden input. The master password is never persisted; losing it makes the vault
 unrecoverable.
+
+`vault init --auto-unlock` is an explicit convenience mode for users who do not
+want to unlock the vault on every CLI process. It generates a random 0600 local
+key file next to the vault and uses it automatically. The vault ciphertext is
+still encrypted, but the key file lowers protection against malware running as
+the same logged-in user. The stronger master-password mode remains the default.
 
 Host edits show a unified diff before writing. Press `enter` or `y` to apply,
 `n`/`esc` to return to the form. The preview carries a content hash so a file

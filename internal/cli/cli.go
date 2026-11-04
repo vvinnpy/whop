@@ -1253,5 +1253,6 @@ Flags for import nccm:
 Vault environment:
   TTYDECK_VAULT_PATH       override vault file path
   TTYDECK_VAULT_PASSWORD   master password for automation
+  TTYDECK_VAULT_KEY_FILE   override auto-unlock key file
   TTYDECK_HOST_PASSWORD    host password for 'vault set' automation`)
 }
