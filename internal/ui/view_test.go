@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"whop/internal/sshconfig"
 )
 
@@ -47,5 +49,106 @@ func TestViewListShowsTags(t *testing.T) {
 	joined = strings.Join(lines, "\n")
 	if !strings.Contains(joined, "TAGS") || !strings.Contains(joined, "prod,db") {
 		t.Fatalf("tags missing at medium width:\n%s", joined)
+	}
+}
+
+func TestSearchPlaceholderExplainsSlashShortcut(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	view := plainView(m)
+	if !strings.Contains(view, "press / to search") {
+		t.Fatalf("search placeholder should explain the shortcut:\n%s", view)
+	}
+	if strings.Contains(view, "type to filter") {
+		t.Fatalf("search placeholder still claims direct typing works:\n%s", view)
+	}
+}
+
+func TestNarrowFooterKeepsHelpAndQuitVisible(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.width = 40
+	m.height = 20
+	view := plainView(m)
+	if !strings.Contains(view, "? help") || !strings.Contains(view, "q quit") {
+		t.Fatalf("narrow footer hid essential keys:\n%s", view)
+	}
+}
+
+func TestEmptyListStatesExplainNextAction(t *testing.T) {
+	t.Run("no hosts", func(t *testing.T) {
+		m, _ := newTestModel(t, nil)
+		view := plainView(m)
+		if !strings.Contains(view, "no hosts in") || !strings.Contains(view, "N create a connection") {
+			t.Fatalf("empty config lacks next action:\n%s", view)
+		}
+	})
+
+	t.Run("no matches", func(t *testing.T) {
+		m, _ := newTestModel(t, testHosts())
+		sendKey(m, runeKey("/"))
+		sendKey(m, runeKey("zzz"))
+		view := plainView(m)
+		if !strings.Contains(view, `no results for "zzz"`) || !strings.Contains(view, "ctrl+u clear search") {
+			t.Fatalf("no-match state lacks next action:\n%s", view)
+		}
+
+		sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
+		view = plainView(m)
+		if !strings.Contains(view, "esc clear search") {
+			t.Fatalf("active no-match state should explain esc:\n%s", view)
+		}
+	})
+
+	t.Run("servers hidden", func(t *testing.T) {
+		m, _ := newTestModel(t, []sshconfig.Host{{
+			Alias: "github.com", HostName: "github.com", Kind: sshconfig.KindGitAuth,
+		}})
+		view := plainView(m)
+		if !strings.Contains(view, "no servers found") || !strings.Contains(view, "a show all hosts") {
+			t.Fatalf("hidden-server state lacks next action:\n%s", view)
+		}
+	})
+}
+
+func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+
+	sendKey(m, runeKey("n"))
+	if got := strings.Count(plainView(m), "ctrl+s save"); got != 1 {
+		t.Fatalf("notes screen repeats action hint %d times:\n%s", got, plainView(m))
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	sendKey(m, runeKey("e"))
+	if got := strings.Count(plainView(m), "tab next"); got != 1 {
+		t.Fatalf("edit screen repeats action hint %d times:\n%s", got, plainView(m))
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	m.diffMode = true
+	m.diffTarget = testHosts()[0]
+	m.diffLines = []string{"@@ -1 +1 @@", "-old", "+new"}
+	if got := strings.Count(plainView(m), "enter/y apply"); got != 1 {
+		t.Fatalf("diff screen repeats action hint %d times:\n%s", got, plainView(m))
+	}
+	m.diffMode = false
+
+	m.macroMode = true
+	m.macroTarget = testHosts()[0]
+	m.macroNames = []string{"health"}
+	if got := strings.Count(plainView(m), "enter run"); got != 1 {
+		t.Fatalf("macro screen repeats action hint %d times:\n%s", got, plainView(m))
+	}
+}
+
+func TestHelpDoesNotShowStaleListStatus(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.status = "edit cancelled"
+	sendKey(m, runeKey("?"))
+	view := plainView(m)
+	if strings.Contains(view, "edit cancelled") {
+		t.Fatalf("help screen showed stale status:\n%s", view)
+	}
+	if !strings.Contains(view, "? / esc close help") {
+		t.Fatalf("help footer is not contextual:\n%s", view)
 	}
 }

@@ -2,7 +2,7 @@
 
 ## Principles
 
-1. **Type and go.** Like nccm, typing filters immediately and `enter` connects.
+1. **Search and go.** Press `/`, type to filter, and `enter` connects.
 2. **One screen.** The common path — find host, inspect, connect — fits on one screen.
 3. **Keyboard first.** Every action is reachable without a mouse.
 4. **Quiet chrome.** No heavy borders, no decorative panels, no wasted vertical space.
@@ -43,7 +43,7 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 | `/` | focus filter |
 | any printable character | filter immediately (when filter focused) |
 | `tab` / `esc` | apply filter and return to list action mode |
-| `esc` in list mode | clear active filter; if empty, quit |
+| `esc` in list mode | clear active filter |
 | `backspace` | delete last filter character |
 | `ctrl+u` in filter mode | clear filter and stay in filter mode |
 | `j` / `down` / `ctrl+n` | next host |
@@ -57,12 +57,12 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 
 ## nccm compatibility
 
-- Typing filters without opening a dialog.
+- Press `/` to focus the filter; typing then filters without opening a dialog.
 - `enter` connects immediately.
 - `tab` or `esc` applies the filter and returns to list action mode, so `e`,
   `n`, `m`, `f`, and `N` can operate on the filtered result without typing into
   the filter.
-- In list action mode, `esc` clears the active filter; a second `esc` quits.
+- In list action mode, `esc` clears the active filter. Use `q` to quit.
 - Initial CLI arguments act as an initial filter:
   `whop prod` opens with `prod` already applied.
 - If the initial filter matches exactly one host, the user can press `enter`

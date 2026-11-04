@@ -45,7 +45,7 @@ func (m *Model) View() string {
 		return strings.Join([]string{header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
 	}
 	if m.help {
-		return strings.Join([]string{header, filter, m.viewHelp(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+		return strings.Join([]string{header, filter, m.viewHelp(width), m.viewFooter(width)}, "\n")
 	}
 
 	list := m.viewList(width, height)
@@ -91,7 +91,7 @@ func (m *Model) viewFilter(width int) string {
 		label = styleAccent.Render(" [FILTER ACTIVE] / filter: ")
 		value = m.filter
 	} else {
-		value = styleDim.Render("(type to filter)")
+		value = styleDim.Render("(press / to search)")
 	}
 	return ansi.Truncate(label+value, width, "~")
 }
@@ -121,7 +121,7 @@ func (m *Model) viewList(width, height int) []string {
 		available = 3
 	}
 	if len(m.filtered) == 0 {
-		lines = append(lines, styleDim.Render("  no hosts match"))
+		lines = append(lines, m.emptyListLines(listWidth)...)
 		return lines
 	}
 
@@ -156,6 +156,29 @@ func (m *Model) viewList(width, height int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+func (m *Model) emptyListLines(width int) []string {
+	var message, hint string
+	switch {
+	case len(m.allHosts) == 0:
+		message = "no hosts in " + valueOrDash(m.configPath)
+		hint = "N create a connection"
+	case m.filter != "":
+		message = fmt.Sprintf("no results for %q", m.filter)
+		if m.filterFocused {
+			hint = "ctrl+u clear search"
+		} else {
+			hint = "esc clear search"
+		}
+	default:
+		message = "no servers found"
+		hint = "a show all hosts"
+	}
+	return []string{
+		styleDim.Render(ansi.Truncate("  "+message, width, "~")),
+		styleDim.Render(ansi.Truncate("  "+hint, width, "~")),
+	}
 }
 
 func (m *Model) viewDetail(width int) string {
@@ -235,7 +258,7 @@ func (m *Model) viewDiff(width, height int) string {
 	if len(m.diffLines) == 0 {
 		lines = append(lines, styleDim.Render("  no changes"))
 	}
-	lines = append(lines, "", styleDim.Render(" enter/y apply  n/esc edit  j/k scroll  ctrl+d/u page"))
+	lines = append(lines, "")
 	return strings.Join(lines, "\n")
 }
 
@@ -252,7 +275,7 @@ func (m *Model) viewEdit(width int) string {
 		}
 		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
 	}
-	lines = append(lines, "", styleDim.Render(" IdentityFile blank inherits Host * / OpenSSH defaults"), styleDim.Render(" password blank keeps current; saved in encrypted vault"), styleDim.Render(" tab next  enter save  esc cancel"))
+	lines = append(lines, "", styleDim.Render(" IdentityFile blank inherits Host * / OpenSSH defaults"), styleDim.Render(" password blank keeps current; saved in encrypted vault"))
 	return strings.Join(lines, "\n")
 }
 
@@ -261,8 +284,6 @@ func (m *Model) viewNotes(width int) string {
 		styleAccent.Render(" NOTES " + m.notesTarget.Alias),
 		"",
 		ansi.Truncate("  "+m.notesInput.View(), width, "~"),
-		"",
-		styleDim.Render(" ctrl+s save  esc cancel"),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -284,7 +305,6 @@ func (m *Model) viewMacros(width int) string {
 			lines = append(lines, line)
 		}
 	}
-	lines = append(lines, "", styleDim.Render(" enter run  j/k move  esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -319,21 +339,48 @@ func (m *Model) viewHelp(width int) string {
 func (m *Model) viewFooter(width int) string {
 	var hint string
 	if m.editing {
-		hint = " tab next  enter save  esc cancel  identity blank=default  password blank=keep"
+		hint = " tab next  enter save  esc cancel"
+		if width >= 100 {
+			hint += "  identity blank=default  password blank=keep"
+		}
 	} else if m.notesMode {
 		hint = " ctrl+s save  esc cancel"
 	} else if m.diffMode {
-		hint = " enter/y apply  n/esc edit  j/k scroll  ctrl+d/u page"
+		hint = " enter/y apply  n/esc back  j/k scroll  ctrl+d/u page"
+		if width < 72 {
+			hint = " enter apply  n/esc back  j/k scroll"
+		}
 	} else if m.macroMode {
 		hint = " enter run  j/k ctrl+p/n move  esc cancel"
+		if width < 72 {
+			hint = " enter run  esc cancel"
+		}
+	} else if m.help {
+		hint = " ? / esc close help"
 	} else if m.filterFocused {
 		hint = " type filter  enter connect  tab/esc apply  ctrl+u clear"
+		if width < 72 {
+			hint = " type filter  enter connect  tab/esc apply"
+		}
 	} else if m.filter != "" {
 		hint = " enter connect  / edit filter  j/k ctrl+p/n  e edit  esc clear"
+		if width < 72 {
+			hint = " enter connect  / edit search  esc clear"
+		}
 	} else {
 		hint = " enter connect  / filter  j/k ctrl+p/n  N new  f fav  e edit  m macro  ? help  q quit"
+		switch {
+		case width < 52:
+			hint = " enter connect  / search\n ? help  q quit"
+		case width < 96:
+			hint = " enter connect  / search  j/k move  e edit  ? help  q quit"
+		}
 	}
-	return styleDim.Render(ansi.Truncate(hint, width, "~"))
+	rendered := make([]string, 0, 2)
+	for _, line := range strings.Split(hint, "\n") {
+		rendered = append(rendered, styleDim.Render(ansi.Truncate(line, width, "~")))
+	}
+	return strings.Join(rendered, "\n")
 }
 
 func (m *Model) viewStatus(width int) string {

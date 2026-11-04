@@ -140,7 +140,7 @@ internal/platform/    OS-specific PTY/path helpers (introduced as needed)
 ## M0 acceptance criteria
 
 - `whop` opens a responsive host list from the user's SSH config
-- typing filters immediately; `/` explicitly focuses the filter
+- `/` explicitly focuses the filter; typing filters immediately while it is focused
 - `enter` connects to the selected host using key or ssh-agent auth
 - Git/Auth hosts and wildcard/Match entries are not shown as servers
 - `whop list --json` returns machine-readable hosts
