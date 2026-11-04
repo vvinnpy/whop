@@ -2,6 +2,7 @@ package sshconfig
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,8 +35,9 @@ type Edit struct {
 // EditHost edits one Host block in place while preserving unrelated text.
 //
 // It uses an advisory lock, a pre-write conflict check, a timestamped backup,
-// a temporary file, and an atomic replace. Include files are not edited yet:
-// the alias must be present in path itself.
+// a temporary file, and an atomic replace. If the alias is defined in an
+// Include file, EditHost edits that file in place and leaves the root config
+// untouched.
 func EditHost(path, alias string, edit Edit) error {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
@@ -45,16 +47,27 @@ func EditHost(path, alias string, edit Edit) error {
 		return fmt.Errorf("sshconfig: invalid port %d", *edit.Port)
 	}
 
-	target := path
+	root := path
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		target = resolved
+		root = resolved
 	}
 
-	lock := flock.New(target + ".lock")
+	// All edits rooted at the same config tree share one lock, even when the
+	// concrete Host lives in an Include file.
+	lock := flock.New(root + ".lock")
 	if err := lock.Lock(); err != nil {
-		return fmt.Errorf("sshconfig: lock %s: %w", target, err)
+		return fmt.Errorf("sshconfig: lock %s: %w", root, err)
 	}
 	defer func() { _ = lock.Unlock() }()
+
+	source, _, _, err := findHostSource(root, alias, 0, map[string]bool{})
+	if err != nil {
+		return err
+	}
+	target := source
+	if resolved, err := filepath.EvalSymlinks(source); err == nil {
+		target = resolved
+	}
 
 	original, err := os.ReadFile(target)
 	if err != nil {
@@ -174,6 +187,65 @@ func findHostBlock(lines []string, alias string) (start, end int, err error) {
 		return start, end, nil
 	}
 	return 0, 0, fmt.Errorf("%w: %s", ErrHostNotFound, alias)
+}
+
+func findHostSource(path, alias string, depth int, stack map[string]bool) (source string, start, end int, err error) {
+	if depth > 5 {
+		return "", 0, 0, fmt.Errorf("sshconfig: Include depth exceeded at %s", path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("sshconfig: resolve %s: %w", path, err)
+	}
+	if stack[abs] {
+		return "", 0, 0, fmt.Errorf("sshconfig: recursive Include at %s", path)
+	}
+	stack[abs] = true
+	defer delete(stack, abs)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("sshconfig: read %s: %w", path, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if isIncludeLine(line) {
+			patterns, err := includePatterns(line)
+			if err != nil {
+				return "", 0, 0, fmt.Errorf("sshconfig: %s: %w", path, err)
+			}
+			for _, pattern := range patterns {
+				matches, err := expandIncludePattern(pattern, filepath.Dir(path))
+				if err != nil {
+					return "", 0, 0, fmt.Errorf("sshconfig: %s: %w", path, err)
+				}
+				for _, match := range matches {
+					found, foundStart, foundEnd, err := findHostSource(match, alias, depth+1, stack)
+					if err == nil {
+						return found, foundStart, foundEnd, nil
+					}
+					if !errors.Is(err, ErrHostNotFound) {
+						return "", 0, 0, err
+					}
+				}
+			}
+			continue
+		}
+		if !isHostLine(line) {
+			continue
+		}
+		for _, pattern := range hostPatterns(line) {
+			if !strings.EqualFold(cleanPattern(pattern), alias) {
+				continue
+			}
+			start, end, err := findHostBlock(lines, alias)
+			if err != nil {
+				return "", 0, 0, err
+			}
+			return path, start, end, nil
+		}
+	}
+	return "", 0, 0, fmt.Errorf("%w: %s", ErrHostNotFound, alias)
 }
 
 func isHostLine(line string) bool {
