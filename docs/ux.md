@@ -52,6 +52,9 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 | `r` | reload config |
 | `a` | toggle login hosts/all entries |
 | `L` | set login access |
+| `N` | create a host |
+| `c` | copy selected host into the create form |
+| `e` | edit selected host |
 | `?` | help overlay |
 | `q` / `ctrl+c` | quit |
 

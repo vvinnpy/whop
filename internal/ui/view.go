@@ -278,8 +278,15 @@ func (m *Model) viewEdit(width int) string {
 	title := " EDIT " + m.editTarget.Alias
 	if m.creating {
 		title = " NEW HOST"
+		if m.copying {
+			title = " COPY / " + m.copySource
+		}
 	}
-	lines := []string{styleAccent.Render(title), ""}
+	lines := []string{styleAccent.Render(title)}
+	if m.copying {
+		lines = append(lines, ansi.Truncate(styleDim.Render(" Prefilled fields select on focus; type to replace. Password and history are not copied."), width, "~"))
+	}
+	lines = append(lines, "")
 	for index, field := range m.editFields {
 		prefix := "  "
 		if index == m.editFocus {
@@ -378,6 +385,7 @@ func (m *Model) viewHelp(width int) string {
 		"  L             set login access",
 		"  f             toggle favorite (*)",
 		"  N             new connection",
+		"  c             copy selected host",
 		"  e             edit connection",
 		"  n             edit notes",
 		styleAccent.Render(" SESSIONS"),

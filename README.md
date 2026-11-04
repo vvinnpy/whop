@@ -204,6 +204,13 @@ apply, `n`/`esc` to return to the form. The preview carries a content hash so a
 file changed by another process is rejected instead of silently applying a stale
 diff.
 
+Select a host and press `c` to duplicate it. The create form is prefilled with
+its connection fields (including the resolved `IdentityFile` when there is
+exactly one) and tags, while `Name` gets a unique suggestion such as
+`prod-db-copy`. Prefilled fields are selected on focus, so typing replaces the
+old value; change `Name` and `HostName`, then save and review the same diff.
+Passwords, favorites, notes, and connection history are intentionally not copied.
+
 The same form edits existing hosts when you press `e`. Renaming `Name` changes
 the `Host` alias and migrates favorites, notes, tags, and any stored vault password
 to the new alias.
@@ -256,6 +263,7 @@ to quit.
 | `L` | set login access |
 | `f` | toggle favorite |
 | `N` | create a host and review the diff |
+| `c` | copy the selected host and review the diff |
 | `e` | edit host name, identity, tags, password, and review the diff |
 | `n` | edit notes |
 | `m` | run an automation macro |

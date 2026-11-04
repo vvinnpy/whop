@@ -313,6 +313,8 @@ func TestHelpOverlay(t *testing.T) {
 	}
 	if view := plainView(m); !strings.Contains(view, "KEYBOARD") || !strings.Contains(view, "NAVIGATION") || !strings.Contains(view, "up/down") {
 		t.Fatalf("help content missing navigation keys:\n%s", view)
+	} else if !strings.Contains(view, "copy selected host") {
+		t.Fatalf("help content missing copy action:\n%s", view)
 	}
 	sendKey(m, runeKey("?"))
 	if m.help {
@@ -935,6 +937,111 @@ func TestCreateHostFlow(t *testing.T) {
 	}
 	if m.editing || m.creating {
 		t.Fatal("create form should close")
+	}
+}
+
+func TestCopyHostFlow(t *testing.T) {
+	hosts := append(testHosts(), sshconfig.Host{
+		Alias:    "prod-db-copy",
+		HostName: "10.0.0.99",
+		Port:     22,
+	})
+	var previewed sshconfig.HostImport
+	var added sshconfig.HostImport
+	var tagged []string
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		PreviewAdd: func(imp sshconfig.HostImport) (sshconfig.Preview, error) {
+			previewed = imp
+			return sshconfig.Preview{Diff: "--- config\n+++ config\n@@ -0,0 +1,2 @@\n+Host " + imp.Alias + "\n+  HostName " + imp.HostName + "\n", Hash: "preview-hash"}, nil
+		},
+		AddHost: func(imp sshconfig.HostImport, expectedHash string) error {
+			added = imp
+			if expectedHash != "preview-hash" {
+				t.Fatalf("expected hash = %q", expectedHash)
+			}
+			return nil
+		},
+		SetTags: func(_ sshconfig.Host, tags []string) error {
+			tagged = append([]string(nil), tags...)
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("c"))
+	if !m.creating || !m.copying || !m.editing {
+		t.Fatalf("copy form should be active: creating=%v copying=%v editing=%v", m.creating, m.copying, m.editing)
+	}
+	if got := m.editFields[editFieldAlias].Value(); got != "prod-db-copy-2" {
+		t.Fatalf("copy alias = %q", got)
+	}
+	if got := m.editFields[editFieldHostName].Value(); got != "10.0.0.11" {
+		t.Fatalf("copy hostname = %q", got)
+	}
+	if got := m.editFields[editFieldUser].Value(); got != "deploy" {
+		t.Fatalf("copy user = %q", got)
+	}
+	if got := m.editFields[editFieldPort].Value(); got != "22" {
+		t.Fatalf("copy port = %q", got)
+	}
+	if got := m.editFields[editFieldIdentityFile].Value(); got != "~/.ssh/id_ed25519" {
+		t.Fatalf("copy identity = %q", got)
+	}
+	if got := m.editFields[editFieldTags].Value(); got != "prod,db" {
+		t.Fatalf("copy tags = %q", got)
+	}
+	if got := m.editFields[editFieldPassword].Value(); got != "" {
+		t.Fatalf("copy must not carry a password: %q", got)
+	}
+	if view := plainView(m); !strings.Contains(view, "COPY / prod-db") || strings.Contains(view, "NEW HOST") {
+		t.Fatalf("copy title missing:\n%s", view)
+	}
+
+	sendKey(m, runeKey("lab-02"))
+	if got := m.editFields[editFieldAlias].Value(); got != "lab-02" {
+		t.Fatalf("selected alias was not replaced: %q", got)
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
+	sendKey(m, runeKey("10.0.0.50"))
+	if got := m.editFields[editFieldHostName].Value(); got != "10.0.0.50" {
+		t.Fatalf("selected hostname was not replaced: %q", got)
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if !m.diffMode || previewed.Alias != "lab-02" || previewed.HostName != "10.0.0.50" {
+		t.Fatalf("diffMode=%v preview=%+v", m.diffMode, previewed)
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if added.Alias != "lab-02" || added.HostName != "10.0.0.50" || added.User != "deploy" || added.Port != 22 || added.IdentityFile != "~/.ssh/id_ed25519" {
+		t.Fatalf("added = %+v", added)
+	}
+	if strings.Join(tagged, ",") != "prod,db" {
+		t.Fatalf("tags = %#v", tagged)
+	}
+	if m.copying || m.creating || m.editing || m.status != "host copied" {
+		t.Fatalf("copy state not cleared: copying=%v creating=%v editing=%v status=%q", m.copying, m.creating, m.editing, m.status)
+	}
+}
+
+func TestCopyHostWarnsForMultipleIdentityFiles(t *testing.T) {
+	hosts := []sshconfig.Host{{
+		Alias:         "dual-key",
+		HostName:      "10.0.0.20",
+		Port:          22,
+		IdentityFiles: []string{"~/.ssh/id_one", "~/.ssh/id_two"},
+		Kind:          sshconfig.KindServer,
+	}}
+	m, _ := newTestModel(t, hosts)
+	sendKey(m, runeKey("c"))
+	if got := m.editFields[editFieldIdentityFile].Value(); got != "" {
+		t.Fatalf("ambiguous identities should not be copied, got %q", got)
+	}
+	if !strings.Contains(m.status, "multiple identity files need manual review") {
+		t.Fatalf("warning missing: %q", m.status)
 	}
 }
 

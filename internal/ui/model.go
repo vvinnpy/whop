@@ -114,6 +114,9 @@ type Model struct {
 
 	editing              bool
 	creating             bool
+	copying              bool
+	copySource           string
+	selectOnFocus        bool
 	editFields           []textField
 	editFocus            int
 	editTarget           sshconfig.Host
@@ -331,6 +334,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleSelectedFavorite()
 	case "N":
 		m.startCreate()
+	case "c":
+		m.startCopy()
 	case "e":
 		m.startEdit()
 	case "n":
@@ -544,6 +549,9 @@ func (m *Model) startEdit() {
 	m.editProxyJumpInitial = host.ProxyJump
 	m.editIdentityInitial = identity
 	m.creating = false
+	m.copying = false
+	m.copySource = ""
+	m.selectOnFocus = false
 	m.pendingAdd = nil
 	m.pendingAddHash = ""
 	m.editing = true
@@ -552,24 +560,69 @@ func (m *Model) startEdit() {
 }
 
 func (m *Model) startCreate() {
+	m.startCreateFrom(sshconfig.Host{}, false)
+}
+
+// startCopy opens the create form prefilled from the selected host. Connection
+// fields and tags are copied; passwords and connection history are not.
+func (m *Model) startCopy() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	m.startCreateFrom(host, true)
+}
+
+func (m *Model) startCreateFrom(source sshconfig.Host, copying bool) {
 	width := m.width - 20
 	if width < 20 {
 		width = 20
 	}
+	alias := ""
+	hostName := ""
+	user := ""
+	port := "22"
+	proxyJump := ""
+	identityFile := ""
+	tags := ""
+	status := ""
+	identityNote := ""
+	if copying {
+		alias = m.nextCopyAlias(source.Alias)
+		hostName = source.HostName
+		user = source.User
+		if source.Port > 0 {
+			port = strconv.Itoa(source.Port)
+		}
+		proxyJump = source.ProxyJump
+		if len(source.IdentityFiles) == 1 {
+			identityFile = source.IdentityFiles[0]
+		} else if len(source.IdentityFiles) > 1 {
+			identityNote = "multiple identity files need manual review"
+		}
+		tags = strings.Join(source.Tags, ",")
+		status = "copying " + source.Alias + "; edit Name and HostName"
+		if identityNote != "" {
+			status += " · " + identityNote
+		}
+	}
 	fields := []textField{
-		newTextField("Name", "", width),
-		newTextField("HostName", "", width),
-		newTextField("User", "", width),
-		newTextField("Port", "22", width),
-		newTextField("ProxyJump", "", width),
-		newTextField("IdentityFile", "", width),
-		newTextField("Tags", "", width),
+		newTextField("Name", alias, width),
+		newTextField("HostName", hostName, width),
+		newTextField("User", user, width),
+		newTextField("Port", port, width),
+		newTextField("ProxyJump", proxyJump, width),
+		newTextField("IdentityFile", identityFile, width),
+		newTextField("Tags", tags, width),
 		newSecretField("Password", width),
 		newSecretField("Confirm password", width),
 	}
 	m.editFields = fields
 	m.editFocus = editFieldAlias
 	m.editFields[m.editFocus].Focus()
+	if copying {
+		m.editFields[m.editFocus].SelectAll()
+	}
 	m.editTarget = sshconfig.Host{}
 	m.editAliasInitial = ""
 	m.editHostNameInitial = ""
@@ -578,11 +631,36 @@ func (m *Model) startCreate() {
 	m.editProxyJumpInitial = ""
 	m.editIdentityInitial = ""
 	m.creating = true
+	m.copying = copying
+	m.copySource = source.Alias
+	m.selectOnFocus = copying
 	m.pendingAdd = nil
 	m.pendingAddHash = ""
 	m.editing = true
 	m.err = nil
-	m.status = ""
+	m.status = status
+}
+
+func (m *Model) nextCopyAlias(alias string) string {
+	candidate := alias + "-copy"
+	if !m.aliasExists(candidate) {
+		return candidate
+	}
+	for index := 2; ; index++ {
+		candidate = fmt.Sprintf("%s-copy-%d", alias, index)
+		if !m.aliasExists(candidate) {
+			return candidate
+		}
+	}
+}
+
+func (m *Model) aliasExists(alias string) bool {
+	for _, host := range m.allHosts {
+		if strings.EqualFold(host.Alias, alias) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -591,6 +669,9 @@ func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearEditPassword()
 		m.editing = false
 		m.creating = false
+		m.copying = false
+		m.copySource = ""
+		m.selectOnFocus = false
 		m.pendingAdd = nil
 		m.pendingAddHash = ""
 		m.status = "edit cancelled"
@@ -626,6 +707,9 @@ func (m *Model) focusEditFieldIndex(index int) {
 	m.editFields[m.editFocus].Blur()
 	m.editFocus = index
 	m.editFields[m.editFocus].Focus()
+	if m.selectOnFocus {
+		m.editFields[m.editFocus].SelectAll()
+	}
 }
 
 func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
@@ -819,6 +903,9 @@ func (m *Model) finishEdit(err error) (tea.Model, tea.Cmd) {
 	m.pendingAddHash = ""
 	m.editing = false
 	m.creating = false
+	m.copying = false
+	m.copySource = ""
+	m.selectOnFocus = false
 	m.diffMode = false
 	m.err = err
 	if err != nil {
@@ -830,15 +917,21 @@ func (m *Model) finishEdit(err error) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) finishCreate(err error) (tea.Model, tea.Cmd) {
+	wasCopy := m.copying
 	m.clearEditPassword()
 	m.pendingAdd = nil
 	m.pendingAddHash = ""
 	m.editing = false
 	m.creating = false
+	m.copying = false
+	m.copySource = ""
+	m.selectOnFocus = false
 	m.diffMode = false
 	m.err = err
 	if err != nil {
 		m.status = "host created with errors"
+	} else if wasCopy {
+		m.status = "host copied"
 	} else {
 		m.status = "host created"
 	}

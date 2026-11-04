@@ -58,3 +58,21 @@ func TestSecretFieldNeverRendersValue(t *testing.T) {
 		t.Fatalf("mask missing: %q", view)
 	}
 }
+
+func TestTextFieldSelectAllReplacesValue(t *testing.T) {
+	field := newTextField("Host", "prod-db-copy", 40)
+	field.Focus()
+	field.SelectAll()
+	field.Update(key("lab"))
+	if field.Value() != "lab" {
+		t.Fatalf("selected value was not replaced: %q", field.Value())
+	}
+
+	field.SetValue("prod-db")
+	field.SelectAll()
+	field.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	field.Update(key("-x"))
+	if field.Value() != "prod-d-xb" {
+		t.Fatalf("moving the cursor should clear selection: %q", field.Value())
+	}
+}
