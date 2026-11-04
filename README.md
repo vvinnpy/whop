@@ -233,8 +233,8 @@ based. Three prefixes exist:
 A plain term (no prefix) matches alias, hostname, user, port, kind, tags, and
 notes. Examples: `tag:prod db`, `user:admin 10.1.`.
 
-While the filter input is focused, printable characters are always filter text.
-Press `tab` or `esc` to apply the filter and return to list action mode. The
+While the search input is focused, printable characters are always search text.
+Press `tab` or `esc` to apply the search and return to list action mode. The
 query and filtered results remain active, so `e`, `n`, `m`, `f`, and `N` work on
 the selected host. In list action mode, `esc` clears the active filter; use `q`
 to quit.
@@ -244,7 +244,7 @@ to quit.
 | Key | Action |
 |---|---|
 | `enter` | connect |
-| `/` | focus filter |
+| `/` | focus search |
 | `j` / `k` | move |
 | `ctrl+n` / `ctrl+p` | move down / up |
 | `g` / `G` | first / last |
@@ -258,7 +258,7 @@ to quit.
 | `m` | run an automation macro |
 | `R` | toggle session recording |
 | `?` | help |
-| `tab` / `esc` | apply filter and return to list actions |
+| `tab` / `esc` | apply search and return to list actions |
 | `q` | quit |
 
 The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides

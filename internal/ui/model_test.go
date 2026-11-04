@@ -89,7 +89,7 @@ func TestInitialViewShowsServers(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	view := plainView(m)
 
-	for _, want := range []string{"whop", "3/4 hosts", "prod-db", "10.0.0.11", "deploy", "[servers]"} {
+	for _, want := range []string{"whop", "3/4 hosts", "prod-db", "10.0.0.11", "deploy", "servers"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -112,7 +112,7 @@ func TestFilterFocusAndType(t *testing.T) {
 	if len(m.filtered) != 1 || m.filtered[0].Alias != "prod-db" {
 		t.Fatalf("unexpected filtered: %#v", m.filtered)
 	}
-	if view := plainView(m); !strings.Contains(view, "[FILTER EDIT]") || !strings.Contains(view, "prod-db") {
+	if view := plainView(m); !strings.Contains(view, "/ search:") || !strings.Contains(view, "prod-db") {
 		t.Fatalf("filtered view missing edit state or host:\n%s", view)
 	}
 }
@@ -132,7 +132,7 @@ func TestFilterBackspaceAndEscapeAppliesFilter(t *testing.T) {
 	if len(m.filtered) != 2 {
 		t.Fatalf("expected filtered servers after esc, got %d", len(m.filtered))
 	}
-	if view := plainView(m); !strings.Contains(view, "[FILTER ACTIVE]") {
+	if view := plainView(m); !strings.Contains(view, "/ search:") {
 		t.Fatalf("active filter indicator missing:\n%s", view)
 	}
 	sendKey(m, runeKey("e"))
@@ -243,7 +243,7 @@ func TestHelpOverlay(t *testing.T) {
 	if !m.help {
 		t.Fatal("help should be open")
 	}
-	if view := plainView(m); !strings.Contains(view, "KEYBOARD") || !strings.Contains(view, "ctrl+p/n") {
+	if view := plainView(m); !strings.Contains(view, "KEYBOARD") || !strings.Contains(view, "NAVIGATION") || !strings.Contains(view, "up/down") {
 		t.Fatalf("help content missing navigation keys:\n%s", view)
 	}
 	sendKey(m, runeKey("?"))

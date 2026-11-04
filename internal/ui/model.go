@@ -986,16 +986,9 @@ func (m *Model) removeLastFilterRune() {
 	m.applyFilter()
 }
 
-func (m *Model) filterSummary() string {
-	if m.filter == "" {
-		return "(press / to search)"
-	}
-	return m.filter
-}
-
 func (m *Model) modeLabel() string {
 	if m.showAll {
-		return "all"
+		return "all hosts"
 	}
 	return "servers"
 }

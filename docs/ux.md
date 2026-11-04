@@ -13,9 +13,9 @@
 ## Main screen
 
 ```text
- whop  12 hosts  ~/.ssh/config                         all | servers
+ whop  12 hosts  ~/.ssh/config                                  servers
 
- / filter: prod█
+ / search: prod█
 
  NAME             HOST                 USER      PORT   TAGS
  > prod-db        10.10.0.11           deploy    22     prod db
@@ -29,7 +29,7 @@
  │ proxy     none                                          │
  └─────────────────────────────────────────────────────────┘
 
- enter connect   / filter   j/k move   g/G top/bottom   r reload   ? help   q quit
+ enter connect   / search   j/k move   e edit   ? help   q quit
 ```
 
 The detail panel is hidden below 96 columns. The list remains the primary surface.
@@ -39,12 +39,12 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 | Key | Action |
 |---|---|
 | `enter` | connect to selected host |
-| `/` | focus filter |
-| any printable character | filter immediately (when filter focused) |
-| `tab` / `esc` | apply filter and return to list action mode |
-| `esc` in list mode | clear active filter |
-| `backspace` | delete last filter character |
-| `ctrl+u` in filter mode | clear filter and stay in filter mode |
+| `/` | focus search |
+| any printable character | search immediately (when search is focused) |
+| `tab` / `esc` | apply search and return to list action mode |
+| `esc` in list mode | clear active search |
+| `backspace` | delete last search character |
+| `ctrl+u` in search mode | clear search and stay in search mode |
 | `j` / `down` / `ctrl+n` | next host |
 | `k` / `up` / `ctrl+p` | previous host |
 | `g` / `G` | first / last host |
@@ -56,7 +56,7 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 
 ## nccm compatibility
 
-- Press `/` to focus the filter; typing then filters without opening a dialog.
+- Press `/` to focus search; typing then filters without opening a dialog.
 - `enter` connects immediately.
 - `tab` or `esc` applies the filter and returns to list action mode, so `e`,
   `n`, `m`, `f`, and `N` can operate on the filtered result without typing into

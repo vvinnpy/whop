@@ -30,7 +30,7 @@ func TestTeatestInitialRenderAndFilter(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	tm.Type("prod")
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
-		return bytes.Contains(output, []byte("filter: prod"))
+		return bytes.Contains(output, []byte("search: prod"))
 	}, teatest.WithDuration(3*time.Second))
 
 	tm.Quit()

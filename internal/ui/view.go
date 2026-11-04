@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -75,12 +76,15 @@ func joinView(sections ...string) string {
 
 func (m *Model) viewHeader(width int) string {
 	count := fmt.Sprintf("%d/%d hosts", len(m.filtered), len(m.allHosts))
-	left := styleTitle.Render(" whop ") + styleDim.Render(" "+count+"  "+m.configPath)
+	left := styleTitle.Render(" whop ") + styleDim.Render(" "+count)
+	if path := displayConfigPath(m.configPath); path != "" && width >= 72 {
+		left += styleDim.Render("  " + path)
+	}
 	modeText := m.modeLabel()
 	if m.record {
-		modeText += " rec"
+		modeText += " · recording"
 	}
-	mode := styleAccent.Render("[" + modeText + "]")
+	mode := styleAccent.Render(modeText)
 	if ansi.StringWidth(left)+ansi.StringWidth(mode)+1 > width {
 		left = ansi.Truncate(left, max(1, width-ansi.StringWidth(mode)-1), "~")
 	}
@@ -92,13 +96,11 @@ func (m *Model) viewHeader(width int) string {
 }
 
 func (m *Model) viewFilter(width int) string {
-	label := styleAccent.Render(" / filter: ")
-	value := m.filterSummary()
+	label := styleAccent.Render(" / search: ")
+	value := m.filter
 	if m.filterFocused {
-		label = styleAccent.Render(" [FILTER EDIT] / filter: ")
 		value = m.filter + "█"
 	} else if m.filter != "" {
-		label = styleAccent.Render(" [FILTER ACTIVE] / filter: ")
 		value = m.filter
 	} else {
 		value = styleDim.Render("(press / to search)")
@@ -312,23 +314,27 @@ func (m *Model) viewHelp(width int) string {
 	lines := []string{
 		styleAccent.Render(" KEYBOARD"),
 		"",
-		"  enter       connect to selected host",
-		"  /           focus filter",
-		"  tab / esc   apply filter and return to list",
-		"  j / k       move down / up",
-		"  ctrl+p/n    move up / down",
-		"  g / G       first / last",
-		"  ctrl+d/u    page down / up",
-		"  r           reload config",
-		"  a           toggle servers / all",
-		"  f           toggle favorite",
-		"  N           create a new host",
-		"  e           edit host name, identity, and password",
-		"  n           edit notes",
-		"  m           run an automation macro",
-		"  R           toggle session recording",
-		"  esc         clear the active search",
-		"  ?           close help",
+		styleAccent.Render(" NAVIGATION"),
+		"  enter         connect to selected host",
+		"  /             search hosts",
+		"  tab / esc     apply search",
+		"  esc           clear search",
+		"  up/down, j/k  move",
+		"  g / G         first / last",
+		"  ctrl+d/u      page down / up",
+		"  q             quit",
+		styleAccent.Render(" HOSTS"),
+		"  a             servers / all hosts",
+		"  f             toggle favorite (*)",
+		"  N             new connection",
+		"  e             edit connection",
+		"  n             edit notes",
+		styleAccent.Render(" SESSIONS"),
+		"  m             run macro",
+		"  R             recording on/off",
+		"  r             reload config",
+		"",
+		"  ?             close help",
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], width, "~")
@@ -358,20 +364,22 @@ func (m *Model) viewFooter(width int) string {
 	} else if m.help {
 		hint = " ? / esc close help"
 	} else if m.filterFocused {
-		hint = " type filter  enter connect  tab/esc apply  ctrl+u clear"
+		hint = " type to search  enter connect  tab/esc apply  ctrl+u clear"
 		if width < 72 {
-			hint = " type filter  enter connect  tab/esc apply"
+			hint = " type to search  enter connect  tab/esc apply"
 		}
 	} else if m.filter != "" {
-		hint = " enter connect  / edit filter  j/k ctrl+p/n  e edit  esc clear"
+		hint = " enter connect  / edit search  j/k ctrl+p/n  e edit  esc clear"
 		if width < 72 {
 			hint = " enter connect  / edit search  esc clear"
 		}
 	} else {
-		hint = " enter connect  / filter  j/k ctrl+p/n  N new  f fav  e edit  m macro  ? help  q quit"
+		hint = " enter connect  / search  j/k ctrl+p/n  N new  f fav  e edit  m macro  ? help  q quit"
 		switch {
 		case width < 52:
 			hint = " enter connect  / search\n ? help  q quit"
+		case width < 72:
+			hint = " enter connect  / search  ? help  q quit"
 		case width < 96:
 			hint = " enter connect  / search  j/k move  e edit  ? help  q quit"
 		}
@@ -477,6 +485,23 @@ func fit(value string, width int) string {
 
 func padTo(value string, width int) string {
 	return fit(value, width)
+}
+
+func displayConfigPath(path string) string {
+	if path == "" || path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || path == home {
+		if path == home {
+			return "~"
+		}
+		return path
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 func max(a, b int) int {

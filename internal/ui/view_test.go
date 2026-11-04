@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -193,5 +195,67 @@ func TestEditPasswordHintDependsOnMode(t *testing.T) {
 	sendKey(m, runeKey("N"))
 	if view := plainView(m); !strings.Contains(view, "Password optional; if set, saved in the encrypted vault") {
 		t.Fatalf("create password hint is misleading:\n%s", view)
+	}
+}
+
+func TestCompactModeLabelsReplaceBracketedBadges(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	view := plainView(m)
+	for _, unwanted := range []string{"[servers]", "[FILTER EDIT]", "[FILTER ACTIVE]"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("view still contains noisy badge %q:\n%s", unwanted, view)
+		}
+	}
+
+	sendKey(m, runeKey("/"))
+	sendKey(m, runeKey("prod"))
+	view = plainView(m)
+	if !strings.Contains(view, "/ search: prod") || strings.Contains(view, "[FILTER EDIT]") {
+		t.Fatalf("search state is not compact and clear:\n%s", view)
+	}
+}
+
+func TestFooterStaysUsableAtSixtyColumns(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.width = 60
+	m.height = 20
+	view := plainView(m)
+	for _, want := range []string{"enter connect", "/ search", "? help", "q quit"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("60-column footer missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestHelpGroupsActionsAndExplainsFavorite(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	sendKey(m, runeKey("?"))
+	view := plainView(m)
+	for _, want := range []string{"NAVIGATION", "HOSTS", "SESSIONS", "favorite (*)", "up/down"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("help missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestDisplayConfigPathShortensHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("home directory unavailable")
+	}
+	path := filepath.Join(home, ".ssh", "config")
+	want := filepath.Join("~", ".ssh", "config")
+	if got := displayConfigPath(path); got != want {
+		t.Fatalf("displayConfigPath(%q) = %q, want %q", path, got, want)
+	}
+	if got := displayConfigPath("~/.ssh/config"); got != "~/.ssh/config" {
+		t.Fatalf("already-short path changed to %q", got)
+	}
+
+	m, _ := newTestModel(t, testHosts())
+	m.configPath = filepath.Join(home, "very", "long", "config")
+	m.width = 60
+	if view := plainView(m); strings.Contains(view, "very") {
+		t.Fatalf("narrow header should omit the config path:\n%s", view)
 	}
 }
