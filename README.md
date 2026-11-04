@@ -98,6 +98,10 @@ ttydeck search --json "error"
 ttydeck zmodem put prod-db ./backup.tar
 ttydeck zmodem get prod-db /var/log/syslog
 
+# In an interactive session:
+#   remote `rz` -> ttydeck prompts for local files
+#   remote `sz FILE` -> ttydeck downloads to ~/Downloads/ttydeck/<alias>/
+
 # Encrypted host-password vault
 ttydeck vault init                 # master password mode
 ttydeck vault init --auto-unlock   # optional zero-prompt mode, 0600 key file

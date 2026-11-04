@@ -60,7 +60,7 @@ connector/session abstractions rather than bolted onto the UI.
 - [x] remote `rz` -> local upload, remote `sz` -> local download over SSH
 - [x] manual CLI `zmodem put` / `zmodem get`
 - [x] path traversal, overwrite, size, CRC, and cancellation safety
-- [ ] automatic ZMODEM header detection
+- [x] automatic ZMODEM header detection with interactive upload/download
 - [ ] Serial transport integration
 - [ ] Telnet binary-mode (IAC escaping) support
 

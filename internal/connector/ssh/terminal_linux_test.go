@@ -20,7 +20,7 @@ func TestPrepareTerminalInputEnablesRawModeAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, restore, err := prepareTerminalInput(slave)
+	_, terminal, err := prepareTerminalInput(slave)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestPrepareTerminalInputEnablesRawModeAndRestores(t *testing.T) {
 	if raw.Lflag&unix.ICANON != 0 || raw.Lflag&unix.ECHO != 0 {
 		t.Fatalf("terminal was not raw: lflag=%#x", raw.Lflag)
 	}
-	if err := restore(); err != nil {
+	if err := terminal.Restore(); err != nil {
 		t.Fatal(err)
 	}
 	after, err := unix.IoctlGetTermios(fd, unix.TCGETS)

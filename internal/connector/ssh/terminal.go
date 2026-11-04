@@ -18,26 +18,79 @@ func DefaultTerminalSize() (width, height int) {
 	return width, height
 }
 
+// terminalMode tracks a local TTY in raw mode. Suspend is used for interactive
+// prompts such as ZMODEM file selection, and Resume restores raw forwarding.
+type terminalMode struct {
+	mu       sync.Mutex
+	file     *os.File
+	original *term.State
+	active   bool
+}
+
 // prepareTerminalInput switches a local TTY to raw mode so control keys,
 // arrow-key escape sequences, Ctrl+L, Ctrl+C, and interactive applications are
 // forwarded to the remote PTY instead of being interpreted by the local line
 // discipline. Non-terminal readers are returned unchanged.
-func prepareTerminalInput(reader io.Reader) (io.Reader, func() error, error) {
+func prepareTerminalInput(reader io.Reader) (io.Reader, *terminalMode, error) {
+	mode := &terminalMode{}
 	file, ok := reader.(*os.File)
 	if !ok || file == nil || !term.IsTerminal(int(file.Fd())) {
-		return reader, func() error { return nil }, nil
+		return reader, mode, nil
 	}
 	state, err := term.MakeRaw(int(file.Fd()))
 	if err != nil {
 		return nil, nil, err
 	}
-	var once sync.Once
-	var restoreErr error
-	restore := func() error {
-		once.Do(func() {
-			restoreErr = term.Restore(int(file.Fd()), state)
-		})
-		return restoreErr
+	mode.file = file
+	mode.original = state
+	mode.active = true
+	return reader, mode, nil
+}
+
+func (m *terminalMode) Suspend() error {
+	if m == nil {
+		return nil
 	}
-	return reader, restore, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.active || m.file == nil || m.original == nil {
+		return nil
+	}
+	if err := term.Restore(int(m.file.Fd()), m.original); err != nil {
+		return err
+	}
+	m.active = false
+	return nil
+}
+
+func (m *terminalMode) Resume() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active || m.file == nil || m.original == nil {
+		return nil
+	}
+	if _, err := term.MakeRaw(int(m.file.Fd())); err != nil {
+		return err
+	}
+	m.active = true
+	return nil
+}
+
+func (m *terminalMode) Restore() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.active || m.file == nil || m.original == nil {
+		return nil
+	}
+	if err := term.Restore(int(m.file.Fd()), m.original); err != nil {
+		return err
+	}
+	m.active = false
+	return nil
 }

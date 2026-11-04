@@ -534,6 +534,7 @@ type Runner struct {
 	Connector        *Connector
 	Size             func() (width, height int)
 	RecordingFactory RecordingFactory
+	Zmodem           *ZmodemOptions
 }
 
 // NewRunner creates an interactive runner.
@@ -594,15 +595,38 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		stdoutWriter = io.MultiWriter(stdoutWriter, recorder)
 	}
 
-	rawStdin, restoreTerminal, err := prepareTerminalInput(stdin)
+	rawStdin, terminal, err := prepareTerminalInput(stdin)
 	if err != nil {
 		return &StageError{Stage: "terminal", Host: host.Alias, Err: fmt.Errorf("enable local raw mode: %w", err)}
 	}
 	defer func() {
-		if err := restoreTerminal(); err != nil && returnErr == nil {
+		if err := terminal.Restore(); err != nil && returnErr == nil {
 			returnErr = &StageError{Stage: "terminal", Host: host.Alias, Err: fmt.Errorf("restore local terminal: %w", err)}
 		}
 	}()
+
+	if r.Zmodem != nil {
+		stdinPipe, err := session.StdinPipe()
+		if err != nil {
+			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open stdin: %w", err)}
+		}
+		stdoutPipe, err := session.StdoutPipe()
+		if err != nil {
+			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open stdout: %w", err)}
+		}
+		session.Stderr = stderr
+		if err := session.Shell(); err != nil {
+			return &StageError{Stage: "shell", Host: host.Alias, Err: fmt.Errorf("start shell: %w", err)}
+		}
+		remote := &sessionStream{Reader: stdoutPipe, Writer: stdinPipe}
+		proxyErr := runZmodemAwareShell(ctx, host, rawStdin, stdoutWriter, stderr, remote, terminal, r.Zmodem)
+		_ = stdinPipe.Close()
+		waitErr := session.Wait()
+		if proxyErr != nil {
+			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("interactive stream: %w", proxyErr)}
+		}
+		return shellWaitError(host.Alias, ptyRejected, waitErr)
+	}
 
 	session.Stdin = rawStdin
 	session.Stdout = stdoutWriter
@@ -610,17 +634,26 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 	if err := session.Shell(); err != nil {
 		return &StageError{Stage: "shell", Host: host.Alias, Err: fmt.Errorf("start shell: %w", err)}
 	}
-	if err := session.Wait(); err != nil {
-		if ptyRejected {
-			return &StageError{Stage: "pty", Host: host.Alias, Err: ErrInteractiveUnavailable}
-		}
-		var exit *ssh.ExitError
-		if errors.As(err, &exit) {
-			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("remote shell exited with status %d", exit.ExitStatus())}
-		}
-		return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("wait for shell: %w", err)}
+	return shellWaitError(host.Alias, ptyRejected, session.Wait())
+}
+
+func shellWaitError(host string, ptyRejected bool, err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	if ptyRejected {
+		return &StageError{Stage: "pty", Host: host, Err: ErrInteractiveUnavailable}
+	}
+	var exit *ssh.ExitError
+	if errors.As(err, &exit) {
+		return &StageError{Stage: "session", Host: host, Err: fmt.Errorf("remote shell exited with status %d", exit.ExitStatus())}
+	}
+	return &StageError{Stage: "session", Host: host, Err: fmt.Errorf("wait for shell: %w", err)}
+}
+
+type sessionStream struct {
+	io.Reader
+	io.Writer
 }
 
 func isPTYRejected(err error) bool {

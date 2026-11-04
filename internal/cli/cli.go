@@ -1167,6 +1167,7 @@ func sshConnectorWithHosts(hosts []sshconfig.Host, useAgent bool, password sshco
 func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string, useAgent bool, password sshconn.PasswordProvider) *sshconn.Runner {
 	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	runner := sshconn.NewRunner(connector, nil)
+	configureAutoZmodem(runner)
 	if record {
 		runner.RecordingFactory = func(host sshconfig.Host, width, height int) (io.WriteCloser, error) {
 			recording, _, err := session.NewFileRecording(recordingDir, host.Alias, width, height, time.Now())
