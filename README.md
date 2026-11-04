@@ -161,7 +161,9 @@ ends with one. Plain `send` steps are for non-secret commands; a macro is not an
 encrypted vault.
 
 Use `whop macro run -json login prod-db` for a structured failure diagnostic.
-In the TUI, press `m` on a selected host to choose and run a stored macro.
+In the TUI, press `m` on a selected host to choose and run a stored macro. After
+the macro finishes, its output remains on screen; press Enter to return to the
+host list.
 Macro lifecycle, expect matches, timeouts, retries, and failures are persisted in
 the local audit log without command text or terminal output.
 

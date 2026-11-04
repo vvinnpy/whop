@@ -580,6 +580,7 @@ WHOP_DEPLOY_PASSWORD='...' whop macro run login prod-db
 - 正则不能匹配空字符串；
 - 每个 `wait` 的超时优先级高于整体 `--timeout`；
 - 宏通过交互式 shell 执行，不代表完全替代普通 `whop run`；
+- TUI 执行宏结束后会保留输出，按 Enter 才返回服务器列表；
 - 设备 prompt 变化时优先修 pattern，而不是无限增加 sleep。
 
 ---

@@ -14,7 +14,7 @@ import (
 
 func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	td := newTestDeps()
-	t.Setenv("WHOP_TUI_NOTICE", "")
+	t.Setenv(tuiNoticeEnv, "")
 	calls := 0
 	td.deps.RunTUI = func(opts ui.Options) error {
 		calls++
@@ -43,7 +43,7 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if !td.relaunched {
 		t.Fatal("TUI was not relaunched")
 	}
-	if got := os.Getenv("WHOP_TUI_NOTICE"); got != "session ended" {
+	if got := os.Getenv(tuiNoticeEnv); got != "session ended" {
 		t.Fatalf("notice = %q", got)
 	}
 }
@@ -57,7 +57,8 @@ func TestTUIMacroRelaunchesInsteadOfTeaExec(t *testing.T) {
 		td.ranHosts = append(td.ranHosts, host.Alias)
 		return nil
 	}
-	t.Setenv("WHOP_TUI_NOTICE", "")
+	t.Setenv(tuiNoticeEnv, "")
+	t.Setenv(tuiMacroPauseEnv, "")
 	calls := 0
 	td.deps.RunTUI = func(opts ui.Options) error {
 		calls++
@@ -78,10 +79,44 @@ func TestTUIMacroRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if calls != 1 || !td.relaunched {
 		t.Fatalf("calls=%d relaunched=%v", calls, td.relaunched)
 	}
-	if got := os.Getenv("WHOP_TUI_NOTICE"); !strings.Contains(got, "macro collect completed on prod-db") {
+	if got := os.Getenv(tuiNoticeEnv); !strings.Contains(got, "macro collect completed on prod-db") {
 		t.Fatalf("notice = %q", got)
+	}
+	if got := os.Getenv(tuiMacroPauseEnv); got != "1" {
+		t.Fatalf("pause flag = %q", got)
 	}
 	if len(td.ranHosts) != 1 || td.ranHosts[0] != "prod-db" {
 		t.Fatalf("macro host = %#v", td.ranHosts)
+	}
+}
+
+func TestTUIMacroRelaunchWaitsForEnter(t *testing.T) {
+	td := newTestDeps()
+	td.deps.Stdin = strings.NewReader("\n")
+	t.Setenv(tuiNoticeEnv, "macro collect completed on prod-db")
+	t.Setenv(tuiMacroPauseEnv, "1")
+
+	td.deps.RunTUI = func(opts ui.Options) error {
+		td.tuiRan = true
+		if opts.InitialStatus != "macro collect completed on prod-db" {
+			t.Fatalf("initial status = %q", opts.InitialStatus)
+		}
+		if !strings.Contains(td.stderr.String(), "Press Enter to return to the host list...") {
+			t.Fatalf("missing pause prompt: %q", td.stderr.String())
+		}
+		if _, exists := os.LookupEnv(tuiMacroPauseEnv); exists {
+			t.Fatal("pause flag should be consumed before the TUI starts")
+		}
+		return nil
+	}
+
+	if code := Run(nil, td.deps); code != 0 {
+		t.Fatalf("exit = %d: %s", code, td.stderr.String())
+	}
+	if !td.tuiRan {
+		t.Fatal("TUI was not started after the pause")
+	}
+	if !strings.Contains(td.stderr.String(), "macro collect completed on prod-db") {
+		t.Fatalf("missing macro result: %q", td.stderr.String())
 	}
 }

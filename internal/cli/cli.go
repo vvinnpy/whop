@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,11 @@ import (
 	"whop/internal/store"
 	"whop/internal/ui"
 	"whop/internal/zmodem"
+)
+
+const (
+	tuiNoticeEnv     = "WHOP_TUI_NOTICE"
+	tuiMacroPauseEnv = "WHOP_TUI_MACRO_PAUSE"
 )
 
 // Version is the development version string.
@@ -263,6 +269,14 @@ func runTUI(args []string, deps Deps) int {
 		return 2
 	}
 
+	tuiNotice := os.Getenv(tuiNoticeEnv)
+	_ = os.Unsetenv(tuiNoticeEnv)
+	pauseAfterMacro := envBool(tuiMacroPauseEnv)
+	_ = os.Unsetenv(tuiMacroPauseEnv)
+	if pauseAfterMacro {
+		waitForMacroResult(deps, tuiNotice)
+	}
+
 	configPathValue := resolvePath(*configPath)
 	initialFilter := strings.Join(fs.Args(), " ")
 	metaStore, err := deps.OpenStore()
@@ -272,8 +286,6 @@ func runTUI(args []string, deps Deps) int {
 	}
 	defer metaStore.Close()
 
-	tuiNotice := os.Getenv("WHOP_TUI_NOTICE")
-	_ = os.Unsetenv("WHOP_TUI_NOTICE")
 	for {
 		var pendingConnect *connectRequest
 		var pendingMacro *macroRequest
@@ -357,6 +369,9 @@ func runTUI(args []string, deps Deps) int {
 			request := *pendingMacro
 			pendingMacro = nil
 			tuiNotice = runTUIMacro(deps, metaStore, configPathValue, request.host, request.name)
+			// The next process shows the macro result before reopening the TUI.
+			// Waiting here would race with Bubble Tea's old stdin reader.
+			_ = os.Setenv(tuiMacroPauseEnv, "1")
 			return relaunchTUI(deps, tuiNotice)
 
 		default:
@@ -367,13 +382,25 @@ func runTUI(args []string, deps Deps) int {
 
 func relaunchTUI(deps Deps, notice string) int {
 	if notice != "" {
-		_ = os.Setenv("WHOP_TUI_NOTICE", notice)
+		_ = os.Setenv(tuiNoticeEnv, notice)
 	}
 	if err := deps.Relaunch(); err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: restart TUI: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+func waitForMacroResult(deps Deps, notice string) {
+	fmt.Fprintln(deps.Stderr)
+	if notice != "" {
+		fmt.Fprintln(deps.Stderr, notice)
+	}
+	fmt.Fprint(deps.Stderr, "Press Enter to return to the host list...")
+	if deps.Stdin != nil {
+		_, _ = bufio.NewReader(deps.Stdin).ReadByte()
+	}
+	fmt.Fprintln(deps.Stderr)
 }
 
 type connectRequest struct {
