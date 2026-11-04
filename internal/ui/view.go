@@ -33,19 +33,19 @@ func (m *Model) View() string {
 	header := m.viewHeader(width)
 	filter := m.viewFilter(width)
 	if m.diffMode {
-		return strings.Join([]string{header, filter, m.viewDiff(width, height), m.viewFooter(width), m.viewStatus(width)}, "\n")
+		return joinView(header, filter, m.viewDiff(width, height), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.editing {
-		return strings.Join([]string{header, filter, m.viewEdit(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+		return joinView(header, filter, m.viewEdit(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.notesMode {
-		return strings.Join([]string{header, filter, m.viewNotes(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+		return joinView(header, filter, m.viewNotes(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.macroMode {
-		return strings.Join([]string{header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+		return joinView(header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.help {
-		return strings.Join([]string{header, filter, m.viewHelp(width), m.viewFooter(width)}, "\n")
+		return joinView(header, filter, m.viewHelp(width), m.viewFooter(width))
 	}
 
 	list := m.viewList(width, height)
@@ -60,7 +60,17 @@ func (m *Model) View() string {
 		body = joinColumns(list, strings.Split(detail, "\n"), width)
 	}
 
-	return strings.Join([]string{header, filter, body, m.viewFooter(width), m.viewStatus(width)}, "\n")
+	return joinView(header, filter, body, m.viewFooter(width), m.viewStatus(width))
+}
+
+func joinView(sections ...string) string {
+	visible := make([]string, 0, len(sections))
+	for _, section := range sections {
+		if section != "" {
+			visible = append(visible, section)
+		}
+	}
+	return strings.Join(visible, "\n")
 }
 
 func (m *Model) viewHeader(width int) string {
@@ -196,43 +206,25 @@ func (m *Model) viewDetail(width int) string {
 		detailWidth = 24
 	}
 	identity := strings.Join(host.IdentityFiles, ", ")
-	if identity == "" {
-		identity = "-"
-	}
 	proxy := host.ProxyJump
-	if proxy == "" {
-		proxy = "-"
-	}
 	tags := strings.Join(host.Tags, ",")
-	if tags == "" {
-		tags = "-"
-	}
 
-	last := "-"
-	if !host.LastConnectedAt.IsZero() {
-		last = host.LastConnectedAt.Local().Format("2006-01-02 15:04")
-	}
-	favorite := "no"
-	if host.Favorite {
-		favorite = "yes"
-	}
-	notes := host.Notes
-	if notes == "" {
-		notes = "-"
-	}
 	lines := []string{
 		styleAccent.Render(fit(strings.ToUpper(host.Alias), detailWidth)),
 		detailLine("host", host.Address(), detailWidth),
 		detailLine("user", valueOrDash(host.User), detailWidth),
-		detailLine("identity", identity, detailWidth),
-		detailLine("proxy", proxy, detailWidth),
-		detailLine("tags", tags, detailWidth),
-		detailLine("kind", string(host.Kind), detailWidth),
-		detailLine("favorite", favorite, detailWidth),
-		detailLine("last", last, detailWidth),
-		detailLine("count", fmt.Sprintf("%d", host.ConnectCount), detailWidth),
-		detailLine("notes", notes, detailWidth),
-		detailLine("source", host.Source, detailWidth),
+	}
+	if identity != "" {
+		lines = append(lines, detailLine("identity", identity, detailWidth))
+	}
+	if proxy != "" {
+		lines = append(lines, detailLine("proxy", proxy, detailWidth))
+	}
+	if tags != "" {
+		lines = append(lines, detailLine("tags", tags, detailWidth))
+	}
+	if host.Notes != "" {
+		lines = append(lines, detailLine("notes", host.Notes, detailWidth))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -275,7 +267,15 @@ func (m *Model) viewEdit(width int) string {
 		}
 		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
 	}
-	lines = append(lines, "", styleDim.Render(" IdentityFile blank inherits Host * / OpenSSH defaults"), styleDim.Render(" password blank keeps current; saved in encrypted vault"))
+	passwordHint := " Password optional; if set, saved in the encrypted vault"
+	if !m.creating {
+		passwordHint = " Leave password blank to keep the current password"
+	}
+	lines = append(lines,
+		"",
+		styleDim.Render(" IdentityFile blank inherits Host * / OpenSSH defaults"),
+		styleDim.Render(passwordHint),
+	)
 	return strings.Join(lines, "\n")
 }
 
@@ -327,7 +327,7 @@ func (m *Model) viewHelp(width int) string {
 		"  n           edit notes",
 		"  m           run an automation macro",
 		"  R           toggle session recording",
-		"  esc         list mode: clear filter or quit",
+		"  esc         clear the active search",
 		"  ?           close help",
 	}
 	for i := range lines {
@@ -340,8 +340,8 @@ func (m *Model) viewFooter(width int) string {
 	var hint string
 	if m.editing {
 		hint = " tab next  enter save  esc cancel"
-		if width >= 100 {
-			hint += "  identity blank=default  password blank=keep"
+		if m.editFocus < len(m.editFields)-1 {
+			hint = " tab/enter next  ctrl+s save  esc cancel"
 		}
 	} else if m.notesMode {
 		hint = " ctrl+s save  esc cancel"

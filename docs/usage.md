@@ -145,6 +145,8 @@ whop prod
 - `Tags`：whop 本地标签；
 - `Password` / `Confirm password`：可选的 vault 密码。
 
+表单内按 `tab` / `enter` 移到下一项，按 `ctrl+s` 保存并进入 diff 预览，按 `esc` 取消。
+
 保存后会先显示 diff，确认后才写入。
 
 ### 编辑 Host

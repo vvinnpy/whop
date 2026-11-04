@@ -27,7 +27,6 @@
  │ user      deploy                                        │
  │ identity  ~/.ssh/id_ed25519                             │
  │ proxy     none                                          │
- │ source    ~/.ssh/config                                 │
  └─────────────────────────────────────────────────────────┘
 
  enter connect   / filter   j/k move   g/G top/bottom   r reload   ? help   q quit

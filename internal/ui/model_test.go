@@ -154,7 +154,7 @@ func TestFilterTabAppliesWithoutClearing(t *testing.T) {
 	}
 }
 
-func TestEscapeClearsActiveFilterThenQuits(t *testing.T) {
+func TestEscapeClearsActiveFilterWithoutQuitting(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	sendKey(m, runeKey("/"))
 	sendKey(m, runeKey("prod"))
@@ -164,8 +164,8 @@ func TestEscapeClearsActiveFilterThenQuits(t *testing.T) {
 		t.Fatalf("active filter not cleared: %q filtered=%d", m.filter, len(m.filtered))
 	}
 	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if cmd == nil {
-		t.Fatal("expected quit after clearing filter")
+	if cmd != nil {
+		t.Fatal("esc must not quit after clearing the filter")
 	}
 }
 
@@ -270,15 +270,11 @@ func TestWideAndNarrowLayouts(t *testing.T) {
 	}
 }
 
-func TestEscQuitsWhenFilterEmpty(t *testing.T) {
+func TestEscDoesNotQuitWhenFilterEmpty(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if cmd == nil {
-		t.Fatal("expected quit command")
-	}
-	msg := cmd()
-	if fmt.Sprintf("%T", msg) != "tea.QuitMsg" {
-		t.Fatalf("unexpected quit message: %T", msg)
+	if cmd != nil {
+		t.Fatal("esc must not quit; q remains the quit key")
 	}
 }
 
@@ -428,7 +424,7 @@ func TestEditFormSave(t *testing.T) {
 	if view := plainView(m); strings.Contains(view, "new-secret") {
 		t.Fatalf("password leaked in edit view:\n%s", view)
 	}
-	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if m.editing {
 		t.Fatal("edit mode should close after save")
 	}
@@ -477,7 +473,7 @@ func TestEditPasswordSaveFailureKeepsConfigUntouched(t *testing.T) {
 	sendKey(m, runeKey("e"))
 	m.editFields[editFieldPassword].SetValue("new-secret")
 	m.editFields[editFieldPasswordConfirm].SetValue("new-secret")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if !m.editing {
 		t.Fatal("edit form should remain open after password failure")
 	}
@@ -516,7 +512,7 @@ func TestEditPasswordWaitsForDiffConfirmation(t *testing.T) {
 	m.editFields[editFieldHostName].SetValue("10.0.0.99")
 	m.editFields[editFieldPassword].SetValue("new-secret")
 	m.editFields[editFieldPasswordConfirm].SetValue("new-secret")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if !m.diffMode {
 		t.Fatal("expected diff confirmation")
 	}
@@ -534,12 +530,15 @@ func TestEditFormRejectsPasswordMismatch(t *testing.T) {
 	sendKey(m, runeKey("e"))
 	m.editFields[editFieldPassword].SetValue("new-secret")
 	m.editFields[editFieldPasswordConfirm].SetValue("typo")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if !m.editing {
 		t.Fatal("edit mode should remain active")
 	}
-	if !strings.Contains(plainView(m), "host passwords do not match") {
+	if !strings.Contains(plainView(m), "passwords do not match") {
 		t.Fatalf("mismatch not shown:\n%s", plainView(m))
+	}
+	if m.editFocus != editFieldPasswordConfirm {
+		t.Fatalf("expected confirmation field focus, got %d", m.editFocus)
 	}
 }
 
@@ -547,12 +546,15 @@ func TestEditFormRejectsInvalidPort(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	sendKey(m, runeKey("e"))
 	m.editFields[editFieldPort].SetValue("not-a-port")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if !m.editing {
 		t.Fatal("edit mode should remain active")
 	}
 	if !strings.Contains(plainView(m), "invalid port") {
 		t.Fatalf("invalid port not shown:\n%s", plainView(m))
+	}
+	if m.editFocus != editFieldPort {
+		t.Fatalf("expected port field focus, got %d", m.editFocus)
 	}
 }
 
@@ -662,7 +664,7 @@ func TestEditShowsDiffBeforeApplying(t *testing.T) {
 	m.Update(msg)
 	sendKey(m, runeKey("e"))
 	m.editFields[editFieldHostName].SetValue("10.0.0.99")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if !m.diffMode || m.editing {
 		t.Fatalf("diff mode=%v editing=%v", m.diffMode, m.editing)
 	}
@@ -701,7 +703,7 @@ func TestEditDiffCanReturnToForm(t *testing.T) {
 	m.Update(msg)
 	sendKey(m, runeKey("e"))
 	m.editFields[editFieldUser].SetValue("admin")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.diffMode || !m.editing {
 		t.Fatalf("diffMode=%v editing=%v", m.diffMode, m.editing)
@@ -731,7 +733,7 @@ func TestEditNoDiffAppliesImmediately(t *testing.T) {
 	msg := m.Init()()
 	m.Update(msg)
 	sendKey(m, runeKey("e"))
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if m.diffMode || applied.HostName != nil || applied.User != nil || applied.Port != nil {
 		t.Fatalf("diffMode=%v applied=%+v", m.diffMode, applied)
 	}
@@ -787,7 +789,7 @@ func TestEditFormRenamesHostAndMigratesMetadata(t *testing.T) {
 	m.Update(msg)
 	sendKey(m, runeKey("e"))
 	m.editFields[editFieldAlias].SetValue("prod-main")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if edited.Alias == nil || *edited.Alias != "prod-main" {
 		t.Fatalf("alias edit = %+v", edited)
 	}
@@ -846,7 +848,7 @@ func TestCreateHostFlow(t *testing.T) {
 	m.editFields[editFieldTags].SetValue("lab,test")
 	m.editFields[editFieldPassword].SetValue("secret")
 	m.editFields[editFieldPasswordConfirm].SetValue("secret")
-	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
 	if !m.diffMode || added.Alias != "" {
 		t.Fatalf("diffMode=%v added=%+v", m.diffMode, added)
 	}
@@ -865,5 +867,62 @@ func TestCreateHostFlow(t *testing.T) {
 	}
 	if m.editing || m.creating {
 		t.Fatal("create form should close")
+	}
+}
+
+func TestLoadedStateHasNoDuplicateHostCount(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	if m.status != "" {
+		t.Fatalf("default status should be empty, got %q", m.status)
+	}
+	if view := plainView(m); strings.Contains(view, "servers / 4 total") {
+		t.Fatalf("host count is duplicated in the status line:\n%s", view)
+	}
+}
+
+func TestFilterChangesClearTransientStatus(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.status = "session ended"
+	sendKey(m, runeKey("/"))
+	sendKey(m, runeKey("p"))
+	if m.status != "" {
+		t.Fatalf("typing in search left stale status %q", m.status)
+	}
+
+	m.status = "session ended"
+	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.status != "" {
+		t.Fatalf("applying search left stale status %q", m.status)
+	}
+
+	m.status = "session ended"
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.filter != "" || m.status != "" {
+		t.Fatalf("clearing search filter=%q status=%q", m.filter, m.status)
+	}
+}
+
+func TestEditEnterAdvancesFieldsAndLastFieldSaves(t *testing.T) {
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return testHosts(), nil
+		},
+		Connect:  func(sshconfig.Host, bool) tea.Cmd { return nil },
+		EditHost: func(sshconfig.Host, sshconfig.Edit) error { return nil },
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("e"))
+
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.editing || m.editFocus != editFieldHostName {
+		t.Fatalf("enter should advance to the next field: editing=%v focus=%d", m.editing, m.editFocus)
+	}
+
+	m.focusEditFieldIndex(editFieldPasswordConfirm)
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.editing {
+		t.Fatal("enter on the last field should save the form")
 	}
 }

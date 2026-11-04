@@ -119,7 +119,7 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 
 	sendKey(m, runeKey("e"))
-	if got := strings.Count(plainView(m), "tab next"); got != 1 {
+	if got := strings.Count(plainView(m), "tab/enter next"); got != 1 {
 		t.Fatalf("edit screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -150,5 +150,48 @@ func TestHelpDoesNotShowStaleListStatus(t *testing.T) {
 	}
 	if !strings.Contains(view, "? / esc close help") {
 		t.Fatalf("help footer is not contextual:\n%s", view)
+	}
+}
+
+func TestDetailPanelSkipsEmptyAndLowValueFields(t *testing.T) {
+	m, _ := newTestModel(t, []sshconfig.Host{{
+		Alias:    "minimal",
+		HostName: "10.0.0.20",
+		User:     "deploy",
+		Port:     22,
+		Kind:     sshconfig.KindServer,
+		Source:   "~/.ssh/config",
+	}})
+	detail := plainView(m)
+	for _, unwanted := range []string{"identity", "proxy", "tags", "kind", "favorite", "last", "count", "source"} {
+		if strings.Contains(detail, unwanted) {
+			t.Fatalf("minimal detail should omit %q:\n%s", unwanted, detail)
+		}
+	}
+
+	full, _ := newTestModel(t, testHosts())
+	for _, unwanted := range []string{"kind", "favorite", "last", "count", "source"} {
+		if strings.Contains(plainView(full), unwanted) {
+			t.Fatalf("detail should omit low-value field %q:\n%s", unwanted, plainView(full))
+		}
+	}
+	for _, wanted := range []string{"identity", "tags"} {
+		if !strings.Contains(plainView(full), wanted) {
+			t.Fatalf("detail should keep useful field %q:\n%s", wanted, plainView(full))
+		}
+	}
+}
+
+func TestEditPasswordHintDependsOnMode(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	sendKey(m, runeKey("e"))
+	if view := plainView(m); !strings.Contains(view, "Leave password blank to keep the current password") {
+		t.Fatalf("edit password hint is not state-aware:\n%s", view)
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	sendKey(m, runeKey("N"))
+	if view := plainView(m); !strings.Contains(view, "Password optional; if set, saved in the encrypted vault") {
+		t.Fatalf("create password hint is misleading:\n%s", view)
 	}
 }

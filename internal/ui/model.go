@@ -196,8 +196,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.initialStatus != "" {
 			m.status = m.initialStatus
 			m.initialStatus = ""
-		} else {
-			m.status = fmt.Sprintf("%d servers / %d total", len(sshconfig.Servers(m.allHosts)), len(m.allHosts))
 		}
 		return m, nil
 
@@ -263,10 +261,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.connectSelected()
 		case "backspace":
 			m.removeLastFilterRune()
+			m.status = ""
 			return m, nil
 		case "ctrl+u":
 			m.filter = ""
 			m.applyFilter()
+			m.status = ""
 			return m, nil
 		case "up", "ctrl+p":
 			m.move(-1)
@@ -278,6 +278,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(msg.Runes) > 0 {
 			m.filter += string(msg.Runes)
 			m.applyFilter()
+			m.status = ""
 		}
 		return m, nil
 	}
@@ -338,8 +339,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.filter != "" {
 			m.filter = ""
 			m.applyFilter()
-		} else {
-			return m, tea.Quit
+			m.status = ""
 		}
 	}
 	return m, nil
@@ -394,7 +394,7 @@ func (m *Model) startMacros() {
 	m.macroTarget = host
 	m.macroMode = true
 	m.err = nil
-	m.status = "macros for " + host.Alias
+	m.status = ""
 }
 
 func (m *Model) updateMacros(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -471,7 +471,7 @@ func (m *Model) startEdit() {
 	m.pendingAddHash = ""
 	m.editing = true
 	m.err = nil
-	m.status = "editing " + host.Alias
+	m.status = ""
 }
 
 func (m *Model) startCreate() {
@@ -505,7 +505,7 @@ func (m *Model) startCreate() {
 	m.pendingAddHash = ""
 	m.editing = true
 	m.err = nil
-	m.status = "new host"
+	m.status = ""
 }
 
 func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -524,7 +524,13 @@ func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.focusEditField(-1)
 		return m, nil
-	case "enter", "ctrl+s":
+	case "enter":
+		if m.editFocus < len(m.editFields)-1 {
+			m.focusEditField(1)
+			return m, nil
+		}
+		return m.saveEdit()
+	case "ctrl+s":
 		return m.saveEdit()
 	}
 	cmd := m.editFields[m.editFocus].Update(msg)
@@ -532,21 +538,31 @@ func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) focusEditField(delta int) {
+	next := (m.editFocus + delta + len(m.editFields)) % len(m.editFields)
+	m.focusEditFieldIndex(next)
+}
+
+func (m *Model) focusEditFieldIndex(index int) {
+	if index < 0 || index >= len(m.editFields) {
+		return
+	}
 	m.editFields[m.editFocus].Blur()
-	m.editFocus = (m.editFocus + delta + len(m.editFields)) % len(m.editFields)
+	m.editFocus = index
 	m.editFields[m.editFocus].Focus()
 }
 
 func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 	port, err := strconv.Atoi(strings.TrimSpace(m.editFields[editFieldPort].Value()))
 	if err != nil || port < 1 || port > 65535 {
-		m.err = fmt.Errorf("invalid port %q", m.editFields[editFieldPort].Value())
+		m.focusEditFieldIndex(editFieldPort)
+		m.err = fmt.Errorf("invalid port: enter a number from 1 to 65535")
 		m.status = "invalid port"
 		return m, nil
 	}
 	alias := strings.TrimSpace(m.editFields[editFieldAlias].Value())
 	if alias == "" {
-		m.err = fmt.Errorf("host name is required")
+		m.focusEditFieldIndex(editFieldAlias)
+		m.err = fmt.Errorf("name is required")
 		m.status = "invalid host name"
 		return m, nil
 	}
@@ -557,14 +573,16 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 	tags := splitTags(m.editFields[editFieldTags].Value())
 	password := m.editFields[editFieldPassword].Value()
 	if password != m.editFields[editFieldPasswordConfirm].Value() {
-		m.err = fmt.Errorf("host passwords do not match")
+		m.focusEditFieldIndex(editFieldPasswordConfirm)
+		m.err = fmt.Errorf("passwords do not match")
 		m.status = "password confirmation does not match"
 		return m, nil
 	}
 
 	if m.creating {
 		if hostName == "" {
-			m.err = fmt.Errorf("hostname is required")
+			m.focusEditFieldIndex(editFieldHostName)
+			m.err = fmt.Errorf("HostName is required")
 			m.status = "invalid hostname"
 			return m, nil
 		}
@@ -838,7 +856,7 @@ func (m *Model) startNotes() {
 	m.notesTarget = host
 	m.notesMode = true
 	m.err = nil
-	m.status = "notes: " + host.Alias
+	m.status = ""
 }
 
 func (m *Model) updateNotes(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -957,11 +975,7 @@ func (m *Model) clampCursor() {
 
 func (m *Model) applyFilterAndExit() {
 	m.filterFocused = false
-	if m.filter != "" {
-		m.status = "filter applied: " + m.filter
-	} else {
-		m.status = "filter cleared"
-	}
+	m.status = ""
 }
 
 func (m *Model) removeLastFilterRune() {
@@ -974,7 +988,7 @@ func (m *Model) removeLastFilterRune() {
 
 func (m *Model) filterSummary() string {
 	if m.filter == "" {
-		return "(type to filter)"
+		return "(press / to search)"
 	}
 	return m.filter
 }

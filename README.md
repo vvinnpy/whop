@@ -236,8 +236,8 @@ notes. Examples: `tag:prod db`, `user:admin 10.1.`.
 While the filter input is focused, printable characters are always filter text.
 Press `tab` or `esc` to apply the filter and return to list action mode. The
 query and filtered results remain active, so `e`, `n`, `m`, `f`, and `N` work on
-the selected host. In list action mode, `esc` clears the active filter; press it
-again to quit.
+the selected host. In list action mode, `esc` clears the active filter; use `q`
+to quit.
 
 ### Keys
 
