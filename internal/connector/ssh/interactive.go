@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"ttydeck/internal/automation"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/automation"
+	"whop/internal/sshconfig"
 )
 
 // RunInteractive opens a shell on host and gives its bidirectional terminal

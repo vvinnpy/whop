@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"ttydeck/internal/cli"
+	"whop/internal/cli"
 )
 
 func main() {

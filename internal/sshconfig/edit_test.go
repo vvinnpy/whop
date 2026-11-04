@@ -52,7 +52,7 @@ Host staging
 	if strings.Contains(text, "10.0.0.11") {
 		t.Fatalf("old hostname remains:\n%s", text)
 	}
-	for _, want := range []string{"HostName 10.0.0.99", "User admin", "Port 2222", "ProxyJump bastion", "ttydeck:tags=prod,db"} {
+	for _, want := range []string{"HostName 10.0.0.99", "User admin", "Port 2222", "ProxyJump bastion", "whop:tags=prod,db"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in:\n%s", want, text)
 		}

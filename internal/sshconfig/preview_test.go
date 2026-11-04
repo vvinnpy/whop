@@ -24,7 +24,7 @@ Host prod-db
   # keep inner comment
   Port 22
   ProxyJump old-jump
-  # ttydeck:tags=old
+  # whop:tags=old
 
 Host staging
   HostName 10.0.0.12
@@ -54,8 +54,8 @@ Host staging
 		"+  Port 2222",
 		"-  ProxyJump old-jump",
 		"+  ProxyJump bastion",
-		"-  # ttydeck:tags=old",
-		"+  # ttydeck:tags=prod,db",
+		"-  # whop:tags=old",
+		"+  # whop:tags=prod,db",
 	} {
 		if !strings.Contains(diff, want) {
 			t.Fatalf("missing %q in diff:\n%s", want, diff)
@@ -136,14 +136,14 @@ func TestPreviewHostIdentityFileAddAndReplacement(t *testing.T) {
 
 func TestPreviewHostUpdatesTags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config")
-	original := "Host target\n  HostName 10.0.0.1\n  # ttydeck:tags=old,dev\n"
+	original := "Host target\n  HostName 10.0.0.1\n  # whop:tags=old,dev\n"
 	writeFile(t, path, original)
 
 	diff, err := PreviewHost(path, "target", Edit{Tags: previewTagsPtr("prod", "db")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(diff, "-  # ttydeck:tags=old,dev\n+  # ttydeck:tags=prod,db\n") {
+	if !strings.Contains(diff, "-  # whop:tags=old,dev\n+  # whop:tags=prod,db\n") {
 		t.Fatalf("missing tag change:\n%s", diff)
 	}
 	assertPreviewReadOnly(t, path, original)
@@ -289,7 +289,7 @@ func assertPreviewReadOnly(t *testing.T, path, original string) {
 	if string(content) != original {
 		t.Fatalf("preview changed %s:\n%s", path, content)
 	}
-	for _, pattern := range []string{path + ".bak.*", path + ".lock", filepath.Join(filepath.Dir(path), ".ttydeck-config-*")} {
+	for _, pattern := range []string{path + ".bak.*", path + ".lock", filepath.Join(filepath.Dir(path), ".whop-config-*")} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)

@@ -244,7 +244,7 @@ func parseTags(block *ssh_config.Host) []string {
 }
 
 func extractTags(comment string) []string {
-	const marker = "ttydeck:tags="
+	const marker = "whop:tags="
 	index := strings.Index(strings.ToLower(comment), marker)
 	if index < 0 {
 		return nil

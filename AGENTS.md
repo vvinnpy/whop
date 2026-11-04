@@ -1,12 +1,12 @@
-# AGENTS.md — ttydeck project contract
+# AGENTS.md — whop project contract
 
-> 中文摘要：ttydeck 是一个纯 Go、无 CGO、无外部运行时依赖的跨平台终端连接工作台。任何改动都不得破坏纯 Go、跨平台、本地优先、配置安全和密钥安全这五条底线。
+> 中文摘要：whop 是一个纯 Go、无 CGO、无外部运行时依赖的跨平台终端连接工作台。任何改动都不得破坏纯 Go、跨平台、本地优先、配置安全和密钥安全这五条底线。
 
 This file is the project contract for humans and coding agents. Read it before changing code.
 
 ## 1. Product
 
-`ttydeck` is a fast, local-first terminal connection deck.
+`whop` is a fast, local-first terminal connection deck.
 
 It manages terminal connections, sessions, and automation in one TUI, with a headless CLI and JSON output.
 The first supported protocol is SSH; the architecture must allow Serial, Telnet, and other connectors later.
@@ -112,7 +112,7 @@ For a significant dependency or architectural choice, add an ADR under `docs/adr
 Planned layout:
 
 ```text
-cmd/ttydeck/          entry point
+cmd/whop/          entry point
 internal/ui/          Bubble Tea models, views, keymaps
 internal/core/        use cases and orchestration
 internal/connector/   Connector interface and implementations

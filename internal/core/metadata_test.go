@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/store"
+	"whop/internal/sshconfig"
+	"whop/internal/store"
 )
 
 func TestApplyMetadata(t *testing.T) {

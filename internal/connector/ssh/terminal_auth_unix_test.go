@@ -9,7 +9,7 @@ import (
 
 	"github.com/creack/pty"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 func TestTerminalPasswordProviderPTY(t *testing.T) {

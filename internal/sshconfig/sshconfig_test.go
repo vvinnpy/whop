@@ -23,7 +23,7 @@ func TestLoadDiscoversConcreteServers(t *testing.T) {
 Host *
   ServerAliveInterval 60
 
-Host prod-db # ttydeck:tags=prod,db
+Host prod-db # whop:tags=prod,db
   HostName 10.0.0.11
   User deploy
   Port 2222
@@ -47,7 +47,7 @@ Match host *.example.com
   User matchuser
 
 Host tagged
-  # ttydeck:tags=dev,test
+  # whop:tags=dev,test
   HostName tagged.example.com
 
 Include config.d/*.conf

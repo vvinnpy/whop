@@ -1,4 +1,4 @@
-// Package cli implements the ttydeck command-line interface.
+// Package cli implements the whop command-line interface.
 package cli
 
 import (
@@ -16,14 +16,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"ttydeck/internal/automation"
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/core"
-	"ttydeck/internal/session"
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/store"
-	"ttydeck/internal/ui"
-	"ttydeck/internal/zmodem"
+	"whop/internal/automation"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/core"
+	"whop/internal/session"
+	"whop/internal/sshconfig"
+	"whop/internal/store"
+	"whop/internal/ui"
+	"whop/internal/zmodem"
 )
 
 // Version is the development version string.
@@ -151,7 +151,7 @@ func Run(args []string, deps Deps) int {
 	case "diagnose":
 		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
-		fmt.Fprintf(deps.Stdout, "ttydeck %s\n", Version)
+		fmt.Fprintf(deps.Stdout, "whop %s\n", Version)
 		return 0
 	case "help", "--help", "-h":
 		printUsage(deps.Stdout)
@@ -166,7 +166,7 @@ func Run(args []string, deps Deps) int {
 }
 
 func extractAgentFlag(args []string) ([]string, bool) {
-	useAgent := envBool("TTYDECK_SSH_AGENT")
+	useAgent := envBool("WHOP_SSH_AGENT")
 	filtered := make([]string, 0, len(args))
 	for _, arg := range args {
 		switch arg {
@@ -251,7 +251,7 @@ func normalizeDeps(deps Deps) Deps {
 }
 
 func runTUI(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck", deps)
+	fs := newFlagSet("whop", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	showAll := fs.Bool("all", false, "show Git/Auth hosts too")
 	record := fs.Bool("record", false, "record interactive sessions")
@@ -266,13 +266,13 @@ func runTUI(args []string, deps Deps) int {
 	initialFilter := strings.Join(fs.Args(), " ")
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: open metadata: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: open metadata: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 
-	tuiNotice := os.Getenv("TTYDECK_TUI_NOTICE")
-	_ = os.Unsetenv("TTYDECK_TUI_NOTICE")
+	tuiNotice := os.Getenv("WHOP_TUI_NOTICE")
+	_ = os.Unsetenv("WHOP_TUI_NOTICE")
 	for {
 		var pendingConnect *connectRequest
 		var pendingMacro *macroRequest
@@ -313,7 +313,7 @@ func runTUI(args []string, deps Deps) int {
 			},
 		}
 		if err := deps.RunTUI(options); err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 
@@ -351,10 +351,10 @@ func runTUI(args []string, deps Deps) int {
 
 func relaunchTUI(deps Deps, notice string) int {
 	if notice != "" {
-		_ = os.Setenv("TTYDECK_TUI_NOTICE", notice)
+		_ = os.Setenv("WHOP_TUI_NOTICE", notice)
 	}
 	if err := deps.Relaunch(); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: restart TUI: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: restart TUI: %v\n", err)
 		return 1
 	}
 	return 0
@@ -397,7 +397,7 @@ func runTUIMacro(deps Deps, metaStore MetaStore, configPath string, host sshconf
 }
 
 func runList(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck list", deps)
+	fs := newFlagSet("whop list", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	showAll := fs.Bool("all", false, "show Git/Auth hosts too")
 	asJSON := fs.Bool("json", false, "emit JSON")
@@ -410,7 +410,7 @@ func runList(args []string, deps Deps) int {
 
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if !*showAll {
@@ -423,7 +423,7 @@ func runList(args []string, deps Deps) int {
 	if *asJSON {
 		encoded, err := json.MarshalIndent(hosts, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))
@@ -451,7 +451,7 @@ func runList(args []string, deps Deps) int {
 }
 
 func runConnect(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck connect", deps)
+	fs := newFlagSet("whop connect", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	record := fs.Bool("record", false, "record the session")
 	asJSON := fs.Bool("json", false, "output structured error diagnostics")
@@ -462,18 +462,18 @@ func runConnect(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck connect [flags] <alias>")
+		fmt.Fprintln(deps.Stderr, "usage: whop connect [flags] <alias>")
 		return 2
 	}
 
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
 		return 1
 	}
 	stdout, stderr := deps.Stdout, deps.Stderr
@@ -486,8 +486,8 @@ func runConnect(args []string, deps Deps) int {
 			return 1
 		}
 		if errors.Is(err, sshconn.ErrInteractiveUnavailable) {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %s is a Git/Auth endpoint; interactive shell is unavailable\n", host.Alias)
-			fmt.Fprintf(deps.Stderr, "try: ttydeck run %s help\n", host.Alias)
+			fmt.Fprintf(deps.Stderr, "whop: %s is a Git/Auth endpoint; interactive shell is unavailable\n", host.Alias)
+			fmt.Fprintf(deps.Stderr, "try: whop run %s help\n", host.Alias)
 			return 0
 		}
 		writeDiagnostic(deps, host.Alias, err, false)
@@ -520,7 +520,7 @@ func loadHosts(deps Deps, metaStore MetaStore, configPath string) ([]sshconfig.H
 }
 
 func runFavorite(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck favorite", deps)
+	fs := newFlagSet("whop favorite", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -529,17 +529,17 @@ func runFavorite(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck favorite [flags] <alias> <on|off>")
+		fmt.Fprintln(deps.Stderr, "usage: whop favorite [flags] <alias> <on|off>")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	alias := fs.Arg(0)
 	if _, ok := sshconfig.Find(hosts, alias); !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 		return 1
 	}
 	value := strings.ToLower(fs.Arg(1))
@@ -550,12 +550,12 @@ func runFavorite(args []string, deps Deps) int {
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if err := metaStore.SetFavorite(alias, favorite); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "%s favorite=%v\n", alias, favorite)
@@ -563,7 +563,7 @@ func runFavorite(args []string, deps Deps) int {
 }
 
 func runNote(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck note", deps)
+	fs := newFlagSet("whop note", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -572,29 +572,29 @@ func runNote(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck note [flags] <alias> [text...]")
+		fmt.Fprintln(deps.Stderr, "usage: whop note [flags] <alias> [text...]")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	alias := fs.Arg(0)
 	host, ok := sshconfig.Find(hosts, alias)
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 		return 1
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if fs.NArg() > 1 {
 		if err := metaStore.SetNotes(alias, strings.Join(fs.Args()[1:], " ")); err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(deps.Stdout, "%s note updated\n", alias)
@@ -605,7 +605,7 @@ func runNote(args []string, deps Deps) int {
 }
 
 func runTag(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck tag", deps)
+	fs := newFlagSet("whop tag", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -614,29 +614,29 @@ func runTag(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck tag [flags] <alias> [tag...]")
+		fmt.Fprintln(deps.Stderr, "usage: whop tag [flags] <alias> [tag...]")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	alias := fs.Arg(0)
 	host, ok := sshconfig.Find(hosts, alias)
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 		return 1
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if fs.NArg() > 1 {
 		if err := metaStore.SetTags(alias, fs.Args()[1:]); err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(deps.Stdout, "%s tags updated\n", alias)
@@ -647,7 +647,7 @@ func runTag(args []string, deps Deps) int {
 }
 
 func runReplay(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck replay", deps)
+	fs := newFlagSet("whop replay", deps)
 	speed := fs.Float64("speed", 1, "playback speed")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -656,18 +656,18 @@ func runReplay(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck replay [flags] <file.cast>")
+		fmt.Fprintln(deps.Stderr, "usage: whop replay [flags] <file.cast>")
 		return 2
 	}
 	if err := session.ReplayFile(fs.Arg(0), deps.Stdout, *speed); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
 func runSearch(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck search", deps)
+	fs := newFlagSet("whop search", deps)
 	dir := fs.String("dir", deps.RecordingDir, "recording directory")
 	files := fs.Bool("files", false, "scan transcript files instead of the SQLite index")
 	noSync := fs.Bool("no-sync", false, "search the existing index without scanning recordings")
@@ -680,14 +680,14 @@ func runSearch(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() == 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck search [flags] <query>")
+		fmt.Fprintln(deps.Stderr, "usage: whop search [flags] <query>")
 		return 2
 	}
 	query := strings.Join(fs.Args(), " ")
 	if *files {
 		matches, err := session.Search(*dir, query)
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		if *asJSON {
@@ -696,7 +696,7 @@ func runSearch(args []string, deps Deps) int {
 			}
 			encoded, err := json.MarshalIndent(matches, "", "  ")
 			if err != nil {
-				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 				return 1
 			}
 			fmt.Fprintln(deps.Stdout, string(encoded))
@@ -710,26 +710,26 @@ func runSearch(args []string, deps Deps) int {
 
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if !*noSync {
 		if _, _, err := syncTranscriptIndex(metaStore, *dir, *skipInvalid, false); err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 	}
 	matches, err := metaStore.SearchTranscripts(query)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	return writeTranscriptMatches(deps, matches, *asJSON)
 }
 
 func runRemoteCommand(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck run", deps)
+	fs := newFlagSet("whop run", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -738,17 +738,17 @@ func runRemoteCommand(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck run [flags] <alias> <command...>")
+		fmt.Fprintln(deps.Stderr, "usage: whop run [flags] <alias> <command...>")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
 		return 1
 	}
 	command := strings.Join(fs.Args()[1:], " ")
@@ -760,7 +760,7 @@ func runRemoteCommand(args []string, deps Deps) int {
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	return 0
@@ -768,7 +768,7 @@ func runRemoteCommand(args []string, deps Deps) int {
 
 func runSnippet(args []string, deps Deps) int {
 	if len(args) == 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet <set|list|delete|run> ...")
+		fmt.Fprintln(deps.Stderr, "usage: whop snippet <set|list|delete|run> ...")
 		return 2
 	}
 	switch args[0] {
@@ -781,13 +781,13 @@ func runSnippet(args []string, deps Deps) int {
 	case "run":
 		return runSnippetRun(args[1:], deps)
 	default:
-		fmt.Fprintf(deps.Stderr, "ttydeck: unknown snippet command %q\n", args[0])
+		fmt.Fprintf(deps.Stderr, "whop: unknown snippet command %q\n", args[0])
 		return 2
 	}
 }
 
 func runSnippetSet(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck snippet set", deps)
+	fs := newFlagSet("whop snippet set", deps)
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -795,19 +795,19 @@ func runSnippetSet(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet set <name> <command...>")
+		fmt.Fprintln(deps.Stderr, "usage: whop snippet set <name> <command...>")
 		return 2
 	}
 	name := fs.Arg(0)
 	command := strings.Join(fs.Args()[1:], " ")
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if err := metaStore.SetSnippet(name, command); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "snippet %s saved\n", name)
@@ -815,7 +815,7 @@ func runSnippetSet(args []string, deps Deps) int {
 }
 
 func runSnippetList(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck snippet list", deps)
+	fs := newFlagSet("whop snippet list", deps)
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -824,13 +824,13 @@ func runSnippetList(args []string, deps Deps) int {
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	snippets, err := metaStore.Snippets()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	names := make([]string, 0, len(snippets))
@@ -845,7 +845,7 @@ func runSnippetList(args []string, deps Deps) int {
 }
 
 func runSnippetDelete(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck snippet delete", deps)
+	fs := newFlagSet("whop snippet delete", deps)
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -853,17 +853,17 @@ func runSnippetDelete(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet delete <name>")
+		fmt.Fprintln(deps.Stderr, "usage: whop snippet delete <name>")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if err := metaStore.DeleteSnippet(fs.Arg(0)); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "snippet %s deleted\n", fs.Arg(0))
@@ -871,7 +871,7 @@ func runSnippetDelete(args []string, deps Deps) int {
 }
 
 func runSnippetRun(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck snippet run", deps)
+	fs := newFlagSet("whop snippet run", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -880,36 +880,36 @@ func runSnippetRun(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck snippet run [flags] <name> <alias...>")
+		fmt.Fprintln(deps.Stderr, "usage: whop snippet run [flags] <name> <alias...>")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	snippets, err := metaStore.Snippets()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	name := fs.Arg(0)
 	command, ok := snippets[name]
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: snippet %q not found\n", name)
+		fmt.Fprintf(deps.Stderr, "whop: snippet %q not found\n", name)
 		return 1
 	}
 	hosts, err := loadHosts(deps, metaStore, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	failed := false
 	for _, alias := range fs.Args()[1:] {
 		host, ok := sshconfig.Find(hosts, alias)
 		if !ok {
-			fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+			fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 			failed = true
 			continue
 		}
@@ -922,7 +922,7 @@ func runSnippetRun(args []string, deps Deps) int {
 			}
 		}
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %s: %v\n", alias, err)
+			fmt.Fprintf(deps.Stderr, "whop: %s: %v\n", alias, err)
 			failed = true
 		}
 	}
@@ -943,7 +943,7 @@ func writeDiagnostic(deps Deps, host string, err error, asJSON bool) {
 		fmt.Fprintln(deps.Stdout, string(encoded))
 		return
 	}
-	fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+	fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 	if diagnostic.Stage != "" {
 		fmt.Fprintf(deps.Stderr, "  stage: %s\n  category: %s\n", diagnostic.Stage, diagnostic.Category)
 	}
@@ -953,7 +953,7 @@ func writeDiagnostic(deps Deps, host string, err error, asJSON bool) {
 }
 
 func runDiagnose(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck diagnose", deps)
+	fs := newFlagSet("whop diagnose", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	asJSON := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
@@ -963,17 +963,17 @@ func runDiagnose(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck diagnose [flags] <alias>")
+		fmt.Fprintln(deps.Stderr, "usage: whop diagnose [flags] <alias>")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
 		return 1
 	}
 	if err := deps.Diagnose(host, hosts, deps.UseAgent); err != nil {
@@ -1014,7 +1014,7 @@ func defaultRunMacro(ctx context.Context, host sshconfig.Host, hosts []sshconfig
 
 func runZmodem(args []string, deps Deps) int {
 	if len(args) == 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem <put|get> [flags] <alias> <path...>")
+		fmt.Fprintln(deps.Stderr, "usage: whop zmodem <put|get> [flags] <alias> <path...>")
 		return 2
 	}
 	switch args[0] {
@@ -1023,13 +1023,13 @@ func runZmodem(args []string, deps Deps) int {
 	case "get", "download":
 		return runZmodemGet(args[1:], deps)
 	default:
-		fmt.Fprintf(deps.Stderr, "ttydeck: unknown zmodem command %q\n", args[0])
+		fmt.Fprintf(deps.Stderr, "whop: unknown zmodem command %q\n", args[0])
 		return 2
 	}
 }
 
 func runZmodemPut(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck zmodem put", deps)
+	fs := newFlagSet("whop zmodem put", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	overwrite := fs.Bool("overwrite", false, "overwrite remote files")
 	if err := fs.Parse(args); err != nil {
@@ -1039,28 +1039,28 @@ func runZmodemPut(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem put [flags] <alias> <file...>")
+		fmt.Fprintln(deps.Stderr, "usage: whop zmodem put [flags] <alias> <file...>")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
 		return 1
 	}
 	if err := deps.ZmodemPut(host, hosts, fs.Args()[1:], *overwrite, deps.UseAgent, deps.Stdout); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: zmodem put: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: zmodem put: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
 func runZmodemGet(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck zmodem get", deps)
+	fs := newFlagSet("whop zmodem get", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	dest := fs.String("dest", "", "local destination directory")
 	overwrite := fs.Bool("overwrite", false, "overwrite local files")
@@ -1072,17 +1072,17 @@ func runZmodemGet(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem get [flags] <alias> <remote-file...>")
+		fmt.Fprintln(deps.Stderr, "usage: whop zmodem get [flags] <alias> <remote-file...>")
 		return 2
 	}
 	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", fs.Arg(0))
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
 		return 1
 	}
 	destination := *dest
@@ -1090,7 +1090,7 @@ func runZmodemGet(args []string, deps Deps) int {
 		destination = defaultDownloadDir(host.Alias)
 	}
 	if err := deps.ZmodemGet(host, hosts, fs.Args()[1:], destination, *maxSize, *overwrite, deps.UseAgent, deps.Stdout); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: zmodem get: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: zmodem get: %v\n", err)
 		return 1
 	}
 	return 0
@@ -1133,7 +1133,7 @@ func defaultDownloadDir(alias string) string {
 		}
 		return r
 	}, alias)
-	return filepath.Join(home, "Downloads", "ttydeck", name)
+	return filepath.Join(home, "Downloads", "whop", name)
 }
 
 func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool, useAgent bool, password sshconn.PasswordProvider) error {
@@ -1199,7 +1199,7 @@ func defaultStorePath() string {
 	if err != nil {
 		dir = "."
 	}
-	return filepath.Join(dir, "ttydeck", "state.db")
+	return filepath.Join(dir, "whop", "state.db")
 }
 
 func defaultRecordingDir() string {
@@ -1207,7 +1207,7 @@ func defaultRecordingDir() string {
 	if err != nil {
 		dir = "."
 	}
-	return filepath.Join(dir, "ttydeck", "recordings")
+	return filepath.Join(dir, "whop", "recordings")
 }
 
 func defaultConfigPath() string {
@@ -1238,31 +1238,31 @@ func valueOrDash(value string) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `ttydeck - fast, local-first terminal connection deck
+	fmt.Fprintln(w, `whop - fast, local-first terminal connection deck
 
 Usage:
-  ttydeck [flags] [filter...]       open the interactive host list
-  ttydeck list [flags]              list hosts
-  ttydeck connect [flags] <alias>   connect to a host
-  ttydeck favorite [flags] <alias> <on|off>
-  ttydeck note [flags] <alias> [text...]
-  ttydeck tag [flags] <alias> [tag...]
-  ttydeck replay [flags] <file.cast>
-  ttydeck search [flags] <query>
-  ttydeck index [flags]
-  ttydeck zmodem put [flags] <alias> <file...>
-  ttydeck zmodem get [flags] <alias> <remote-file...>
-  ttydeck run [flags] <alias> <command...>
-  ttydeck snippet <set|list|delete|run> ...
-  ttydeck macro <set|list|show|delete|run> ...
-  ttydeck audit [flags]             show persisted automation audit events
-  ttydeck audit clear [flags]       clear the audit log
-  ttydeck import nccm [flags]       preview or apply nccm.yml migration
-  ttydeck vault <init|set|list|delete|status> ...
-  ttydeck diagnose [flags] <alias>
-  ttydeck version                   print version
+  whop [flags] [filter...]       open the interactive host list
+  whop list [flags]              list hosts
+  whop connect [flags] <alias>   connect to a host
+  whop favorite [flags] <alias> <on|off>
+  whop note [flags] <alias> [text...]
+  whop tag [flags] <alias> [tag...]
+  whop replay [flags] <file.cast>
+  whop search [flags] <query>
+  whop index [flags]
+  whop zmodem put [flags] <alias> <file...>
+  whop zmodem get [flags] <alias> <remote-file...>
+  whop run [flags] <alias> <command...>
+  whop snippet <set|list|delete|run> ...
+  whop macro <set|list|show|delete|run> ...
+  whop audit [flags]             show persisted automation audit events
+  whop audit clear [flags]       clear the audit log
+  whop import nccm [flags]       preview or apply nccm.yml migration
+  whop vault <init|set|list|delete|status> ...
+  whop diagnose [flags] <alias>
+  whop version                   print version
 
-Flags for ttydeck:
+Flags for whop:
   -config path   path to ssh config (default ~/.ssh/config)
   -all           show Git/Auth hosts too
   -record        record interactive sessions
@@ -1309,8 +1309,8 @@ Flags for import nccm:
   -json           emit JSON
 
 Vault environment:
-  TTYDECK_VAULT_PATH       override vault file path
-  TTYDECK_VAULT_PASSWORD   master password for automation
-  TTYDECK_VAULT_KEY_FILE   override auto-unlock key file
-  TTYDECK_HOST_PASSWORD    host password for 'vault set' automation`)
+  WHOP_VAULT_PATH       override vault file path
+  WHOP_VAULT_PASSWORD   master password for automation
+  WHOP_VAULT_KEY_FILE   override auto-unlock key file
+  WHOP_HOST_PASSWORD    host password for 'vault set' automation`)
 }

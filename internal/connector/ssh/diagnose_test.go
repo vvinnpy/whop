@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"ttydeck/internal/automation"
+	"whop/internal/automation"
 )
 
 func TestDiagnoseHandshakeEOF(t *testing.T) {

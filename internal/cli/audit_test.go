@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"ttydeck/internal/automation"
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/store"
+	"whop/internal/automation"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/sshconfig"
+	"whop/internal/store"
 )
 
 func TestAuditCommandAndClear(t *testing.T) {

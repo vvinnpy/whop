@@ -78,7 +78,7 @@ func TestNewFileRecording(t *testing.T) {
 	if err := json.Unmarshal(bytes.SplitN(castData, []byte("\n"), 2)[0], &header); err != nil {
 		t.Fatal(err)
 	}
-	if header.Env["TTYDECK_HOST"] != "prod/db" {
+	if header.Env["WHOP_HOST"] != "prod/db" {
 		t.Fatalf("recorded host metadata = %#v", header.Env)
 	}
 	transcriptPath := strings.TrimSuffix(castPath, ".cast") + ".txt"

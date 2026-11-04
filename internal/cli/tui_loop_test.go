@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"ttydeck/internal/automation"
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/ui"
+	"whop/internal/automation"
+	"whop/internal/sshconfig"
+	"whop/internal/ui"
 )
 
 func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	td := newTestDeps()
-	t.Setenv("TTYDECK_TUI_NOTICE", "")
+	t.Setenv("WHOP_TUI_NOTICE", "")
 	calls := 0
 	td.deps.RunTUI = func(opts ui.Options) error {
 		calls++
@@ -43,7 +43,7 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if !td.relaunched {
 		t.Fatal("TUI was not relaunched")
 	}
-	if got := os.Getenv("TTYDECK_TUI_NOTICE"); got != "session ended" {
+	if got := os.Getenv("WHOP_TUI_NOTICE"); got != "session ended" {
 		t.Fatalf("notice = %q", got)
 	}
 }
@@ -57,7 +57,7 @@ func TestTUIMacroRelaunchesInsteadOfTeaExec(t *testing.T) {
 		td.ranHosts = append(td.ranHosts, host.Alias)
 		return nil
 	}
-	t.Setenv("TTYDECK_TUI_NOTICE", "")
+	t.Setenv("WHOP_TUI_NOTICE", "")
 	calls := 0
 	td.deps.RunTUI = func(opts ui.Options) error {
 		calls++
@@ -78,7 +78,7 @@ func TestTUIMacroRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if calls != 1 || !td.relaunched {
 		t.Fatalf("calls=%d relaunched=%v", calls, td.relaunched)
 	}
-	if got := os.Getenv("TTYDECK_TUI_NOTICE"); !strings.Contains(got, "macro collect completed on prod-db") {
+	if got := os.Getenv("WHOP_TUI_NOTICE"); !strings.Contains(got, "macro collect completed on prod-db") {
 		t.Fatalf("notice = %q", got)
 	}
 	if len(td.ranHosts) != 1 || td.ranHosts[0] != "prod-db" {

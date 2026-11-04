@@ -1,8 +1,8 @@
-# ttydeck implementation plan
+# whop implementation plan
 
 ## Product direction
 
-`ttydeck` is a fast, local-first terminal connection deck. The interaction model follows
+`whop` is a fast, local-first terminal connection deck. The interaction model follows
 nccm's "type, filter, enter" speed, while the layout and information density follow tools
 such as lazygit, k9s, and lazyssh.
 
@@ -18,7 +18,7 @@ connector/session abstractions rather than bolted onto the UI.
 - Bubble Tea host list, detail panel, filter bar, help overlay
 - in-process SSH connector using `x/crypto/ssh`
 - key and ssh-agent authentication
-- CLI: `ttydeck`, `ttydeck list`, `ttydeck connect`, `ttydeck version`
+- CLI: `whop`, `whop list`, `whop connect`, `whop version`
 - unit tests and an in-process SSH integration test
 - three-platform CI with `CGO_ENABLED=0`
 
@@ -90,7 +90,7 @@ Completed in this iteration:
 - [x] key and ssh-agent authentication
 - [x] password and keyboard-interactive prompts
 - [x] single-hop ProxyJump
-- [x] CLI: `ttydeck`, `ttydeck list`, `ttydeck connect`, `ttydeck version`
+- [x] CLI: `whop`, `whop list`, `whop connect`, `whop version`
 - [x] unit tests and an in-process SSH integration test
 - [x] three-platform CI with `CGO_ENABLED=0`
 
@@ -108,7 +108,7 @@ The SSH-first V0.1 scope is functional:
 - SSH key/password/keyboard-interactive auth
 - optional ssh-agent integration (disabled by default)
 - single-hop ProxyJump
-- structured connection diagnostics (`ttydeck diagnose -json`)
+- structured connection diagnostics (`whop diagnose -json`)
 - safe single-Host config editing with diff preview and stale-preview protection
 - favorites, tags, notes, recents
 - asciicast recording, replay, transcript search
@@ -128,7 +128,7 @@ Post-V0.1 work:
 ## M0 architecture
 
 ```text
-cmd/ttydeck/          process entry point
+cmd/whop/          process entry point
 internal/cli/         argument parsing and commands
 internal/sshconfig/   config expansion, parsing, classification
 internal/core/        host filtering and use cases
@@ -139,11 +139,11 @@ internal/platform/    OS-specific PTY/path helpers (introduced as needed)
 
 ## M0 acceptance criteria
 
-- `ttydeck` opens a responsive host list from the user's SSH config
+- `whop` opens a responsive host list from the user's SSH config
 - typing filters immediately; `/` explicitly focuses the filter
 - `enter` connects to the selected host using key or ssh-agent auth
 - Git/Auth hosts and wildcard/Match entries are not shown as servers
-- `ttydeck list --json` returns machine-readable hosts
+- `whop list --json` returns machine-readable hosts
 - all tests pass with `CGO_ENABLED=0`
 - CI builds on Linux, macOS, and Windows
 

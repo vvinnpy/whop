@@ -1,4 +1,4 @@
-// Package ui implements the ttydeck terminal user interface.
+// Package ui implements the whop terminal user interface.
 package ui
 
 import (
@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"ttydeck/internal/core"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/core"
+	"whop/internal/sshconfig"
 )
 
 // HostLoader loads all SSH config entries.
@@ -59,7 +59,7 @@ type hostsLoadedMsg struct {
 	err   error
 }
 
-// Model is the ttydeck list/detail screen.
+// Model is the whop list/detail screen.
 type Model struct {
 	configPath     string
 	load           HostLoader
@@ -355,7 +355,7 @@ func (m *Model) startMacros() {
 	}
 	if len(names) == 0 {
 		m.err = nil
-		m.status = "no macros; create one with: ttydeck macro set"
+		m.status = "no macros; create one with: whop macro set"
 		return
 	}
 	m.macroNames = names

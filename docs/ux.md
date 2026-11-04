@@ -1,4 +1,4 @@
-# ttydeck UX specification
+# whop UX specification
 
 ## Principles
 
@@ -13,7 +13,7 @@
 ## Main screen
 
 ```text
- ttydeck  12 hosts  ~/.ssh/config                         all | servers
+ whop  12 hosts  ~/.ssh/config                         all | servers
 
  / filter: prod█
 
@@ -59,7 +59,7 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 - Typing filters without opening a dialog.
 - `enter` connects immediately.
 - Initial CLI arguments act as an initial filter:
-  `ttydeck prod` opens with `prod` already applied.
+  `whop prod` opens with `prod` already applied.
 - If the initial filter matches exactly one host, the user can press `enter`
   immediately; auto-connect is a later opt-in flag.
 

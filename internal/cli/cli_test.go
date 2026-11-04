@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/store"
-	"ttydeck/internal/ui"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/sshconfig"
+	"whop/internal/store"
+	"whop/internal/ui"
 )
 
 func cliHosts() []sshconfig.Host {
@@ -88,7 +88,7 @@ func newTestDeps() *testDeps {
 		OpenStore: func() (MetaStore, error) {
 			return persistentTestStore{td.metaStore}, nil
 		},
-		RecordingDir: filepath.Join(os.TempDir(), "ttydeck-test-recordings"),
+		RecordingDir: filepath.Join(os.TempDir(), "whop-test-recordings"),
 		ZmodemPut: func(host sshconfig.Host, _ []sshconfig.Host, files []string, overwrite bool, useAgent bool, _ io.Writer) error {
 			td.zmPutHost = host.Alias
 			td.zmPutFiles = append([]string(nil), files...)
@@ -122,7 +122,7 @@ func TestVersion(t *testing.T) {
 	if code := Run([]string{"version"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !strings.Contains(td.stdout.String(), "ttydeck "+Version) {
+	if !strings.Contains(td.stdout.String(), "whop "+Version) {
 		t.Fatalf("stdout = %q", td.stdout.String())
 	}
 }
@@ -431,7 +431,7 @@ func TestSearchFilesCommand(t *testing.T) {
 func TestIndexCommand(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "prod-db-20261103-100000.000")
-	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"TTYDECK_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"WHOP_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {
@@ -665,7 +665,7 @@ func TestAgentFlagOn(t *testing.T) {
 }
 
 func TestAgentEnvAndNoAgent(t *testing.T) {
-	t.Setenv("TTYDECK_SSH_AGENT", "1")
+	t.Setenv("WHOP_SSH_AGENT", "1")
 	td := newTestDeps()
 	if code := Run([]string{"-no-agent", "connect", "prod-db"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d", code)
@@ -678,7 +678,7 @@ func TestAgentEnvAndNoAgent(t *testing.T) {
 func TestSearchMissingDirectoryDoesNotPruneIndex(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "prod-db-20261103-100000.000")
-	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"TTYDECK_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"WHOP_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {
@@ -720,7 +720,7 @@ func TestSearchFilesJSONEmptyIsArray(t *testing.T) {
 func TestIndexPrunesDeletedTranscripts(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "prod-db-20261103-100000.000")
-	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"TTYDECK_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"WHOP_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {

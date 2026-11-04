@@ -7,16 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	"ttydeck/internal/secrets"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/secrets"
+	"whop/internal/sshconfig"
 )
 
 func TestVaultLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	vaultPath := filepath.Join(dir, "secrets.vault")
-	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
-	t.Setenv("TTYDECK_VAULT_PASSWORD", "master-secret")
-	t.Setenv("TTYDECK_HOST_PASSWORD", "host-secret")
+	t.Setenv("WHOP_VAULT_PATH", vaultPath)
+	t.Setenv("WHOP_VAULT_PASSWORD", "master-secret")
+	t.Setenv("WHOP_HOST_PASSWORD", "host-secret")
 
 	td := newTestDeps()
 	if code := Run([]string{"vault", "init"}, td.deps); code != 0 {
@@ -89,8 +89,8 @@ func TestStoredVaultPasswordProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = vault.Close()
-	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
-	t.Setenv("TTYDECK_VAULT_PASSWORD", "master-secret")
+	t.Setenv("WHOP_VAULT_PATH", vaultPath)
+	t.Setenv("WHOP_VAULT_PASSWORD", "master-secret")
 
 	provider := defaultPasswordProvider()
 	got, err := provider.Password(sshconfig.Host{Alias: "prod-db"})
@@ -110,8 +110,8 @@ func TestVaultWrongMasterPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = vault.Close()
-	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
-	t.Setenv("TTYDECK_VAULT_PASSWORD", "wrong")
+	t.Setenv("WHOP_VAULT_PATH", vaultPath)
+	t.Setenv("WHOP_VAULT_PASSWORD", "wrong")
 	td := newTestDeps()
 	if code := Run([]string{"vault", "list"}, td.deps); code != 1 {
 		t.Fatalf("exit = %d", code)
@@ -125,10 +125,10 @@ func TestVaultAutoUnlock(t *testing.T) {
 	dir := t.TempDir()
 	vaultPath := filepath.Join(dir, "secrets.vault")
 	keyPath := filepath.Join(dir, "secrets.key")
-	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
-	t.Setenv("TTYDECK_VAULT_KEY_FILE", keyPath)
-	t.Setenv("TTYDECK_VAULT_PASSWORD", "")
-	t.Setenv("TTYDECK_HOST_PASSWORD", "auto-host-secret")
+	t.Setenv("WHOP_VAULT_PATH", vaultPath)
+	t.Setenv("WHOP_VAULT_KEY_FILE", keyPath)
+	t.Setenv("WHOP_VAULT_PASSWORD", "")
+	t.Setenv("WHOP_HOST_PASSWORD", "auto-host-secret")
 
 	td := newTestDeps()
 	if code := Run([]string{"vault", "init", "--auto-unlock"}, td.deps); code != 0 {

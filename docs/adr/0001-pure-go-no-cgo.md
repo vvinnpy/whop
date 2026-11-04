@@ -5,7 +5,7 @@
 
 ## Context
 
-`ttydeck` must be easy to build, distribute, and maintain across Linux, macOS, and Windows.
+`whop` must be easy to build, distribute, and maintain across Linux, macOS, and Windows.
 Depending on system tools such as OpenSSH, telnet, picocom, or asciinema creates inconsistent
 behavior and makes packaging fragile. CGO makes cross-compilation and static distribution harder.
 

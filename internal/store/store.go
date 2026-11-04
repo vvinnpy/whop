@@ -1,4 +1,4 @@
-// Package store persists ttydeck metadata in SQLite.
+// Package store persists whop metadata in SQLite.
 package store
 
 import (

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/zmodem"
+	"whop/internal/sshconfig"
+	"whop/internal/zmodem"
 )
 
 type testRemote struct {

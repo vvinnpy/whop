@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"ttydeck/internal/automation"
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/store"
+	"whop/internal/automation"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/store"
 )
 
 type auditCollector struct {
@@ -66,7 +66,7 @@ func runAudit(args []string, deps Deps) int {
 	if len(args) > 0 && args[0] == "clear" {
 		return runAuditClear(args[1:], deps)
 	}
-	fs := newFlagSet("ttydeck audit", deps)
+	fs := newFlagSet("whop audit", deps)
 	limit := fs.Int("limit", 100, "maximum events to show (max 1000)")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
@@ -76,18 +76,18 @@ func runAudit(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck audit [flags] | ttydeck audit clear")
+		fmt.Fprintln(deps.Stderr, "usage: whop audit [flags] | whop audit clear")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	events, err := metaStore.AuditEvents(*limit)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if *asJSON {
@@ -96,7 +96,7 @@ func runAudit(args []string, deps Deps) int {
 		}
 		encoded, err := json.MarshalIndent(events, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))
@@ -119,7 +119,7 @@ func runAudit(args []string, deps Deps) int {
 }
 
 func runAuditClear(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck audit clear", deps)
+	fs := newFlagSet("whop audit clear", deps)
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -128,17 +128,17 @@ func runAuditClear(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck audit clear [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop audit clear [flags]")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if err := metaStore.ClearAudit(); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if *asJSON {
@@ -176,7 +176,7 @@ func macroAuditFailed(collector *auditCollector, host, macro string, err error) 
 func macroAuditFlush(collector *auditCollector, stderrWriter io.Writer) error {
 	if err := collector.flush(); err != nil {
 		if stderrWriter != nil {
-			_, _ = fmt.Fprintf(stderrWriter, "ttydeck: warning: write audit log: %v\n", err)
+			_, _ = fmt.Fprintf(stderrWriter, "whop: warning: write audit log: %v\n", err)
 		}
 		return err
 	}

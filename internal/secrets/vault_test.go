@@ -388,7 +388,7 @@ func TestSaveUsesAtomicFileAndNoTemporaryFilesRemain(t *testing.T) {
 	}
 	v.Close()
 
-	matches, err := filepath.Glob(filepath.Join(dir, ".ttydeck-vault-*"))
+	matches, err := filepath.Glob(filepath.Join(dir, ".whop-vault-*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +487,7 @@ func TestDefaultPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
 	}
-	if path == "" || !strings.HasSuffix(path, filepath.Join("ttydeck", "secrets.vault")) {
+	if path == "" || !strings.HasSuffix(path, filepath.Join("whop", "secrets.vault")) {
 		t.Fatalf("DefaultPath = %q", path)
 	}
 }

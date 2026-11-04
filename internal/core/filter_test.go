@@ -3,7 +3,7 @@ package core
 import (
 	"testing"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 func sampleHosts() []sshconfig.Host {

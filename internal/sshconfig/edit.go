@@ -106,7 +106,7 @@ func EditHost(path, alias string, edit Edit) error {
 		return fmt.Errorf("sshconfig: backup %s: %w", backup, err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".ttydeck-config-*")
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".whop-config-*")
 	if err != nil {
 		return fmt.Errorf("sshconfig: create temporary file: %w", err)
 	}
@@ -359,7 +359,7 @@ func rewriteKV(line, key, value string) string {
 
 func applyTags(lines *[]string, start, end *int, tags []string) {
 	value := strings.Join(normalizeTags(tags), ",")
-	const marker = "ttydeck:tags="
+	const marker = "whop:tags="
 	for i := *start + 1; i < *end; i++ {
 		line := (*lines)[i]
 		index := strings.Index(strings.ToLower(line), marker)

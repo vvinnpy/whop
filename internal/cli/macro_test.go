@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"ttydeck/internal/automation"
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/ui"
+	"whop/internal/automation"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/sshconfig"
+	"whop/internal/ui"
 )
 
 func TestMacroLifecycleAndRun(t *testing.T) {
@@ -111,7 +111,7 @@ func TestMacroSecretUsesEnvironmentOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secret.json")
 	definition := `{"version":1,"steps":[
 		{"kind":"wait","pattern":"Password: ","timeout":"2s"},
-		{"kind":"send","secret_env":"TTYDECK_TEST_PASSWORD","newline":true},
+		{"kind":"send","secret_env":"WHOP_TEST_PASSWORD","newline":true},
 		{"kind":"wait","pattern":"shell> ","timeout":"2s"}
 	]}`
 	if err := os.WriteFile(path, []byte(definition), 0o600); err != nil {
@@ -124,12 +124,12 @@ func TestMacroSecretUsesEnvironmentOnly(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("stored macro: found=%v err=%v", found, err)
 	}
-	if strings.Contains(string(raw), "super-secret") || !strings.Contains(string(raw), "TTYDECK_TEST_PASSWORD") {
+	if strings.Contains(string(raw), "super-secret") || !strings.Contains(string(raw), "WHOP_TEST_PASSWORD") {
 		t.Fatalf("stored definition leaked or omitted secret source: %s", raw)
 	}
 
 	td.deps.LookupEnv = func(name string) (string, bool) {
-		if name == "TTYDECK_TEST_PASSWORD" {
+		if name == "WHOP_TEST_PASSWORD" {
 			return "super-secret", true
 		}
 		return "", false
@@ -154,7 +154,7 @@ func TestMacroSecretUsesEnvironmentOnly(t *testing.T) {
 	if code := Run([]string{"macro", "run", "secret-login", "prod-db"}, td.deps); code != 1 {
 		t.Fatalf("missing env exit = %d", code)
 	}
-	if !strings.Contains(td.stderr.String(), "TTYDECK_TEST_PASSWORD is not set") {
+	if !strings.Contains(td.stderr.String(), "WHOP_TEST_PASSWORD is not set") {
 		t.Fatalf("stderr = %q", td.stderr.String())
 	}
 }

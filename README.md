@@ -1,12 +1,12 @@
-# ttydeck
+# whop
 
 **A fast, local-first terminal connection deck.**
 
-`ttydeck` is a cross-platform TUI for managing terminal connections, sessions, and automation.
+`whop` is a cross-platform TUI for managing terminal connections, sessions, and automation.
 It is designed to be a single pure-Go binary: no CGO, no external `ssh`/`telnet`/`picocom`/`asciinema`
 runtime dependencies.
 
-## Why ttydeck
+## Why whop
 
 Existing connection managers are good at one or two things, but rarely all of them:
 
@@ -17,7 +17,7 @@ Existing connection managers are good at one or two things, but rarely all of th
 - macros and expect-style automation
 - local-first storage, headless CLI, and machine-readable output
 
-`ttydeck` is the attempt to combine those strengths without becoming an operations platform.
+`whop` is the attempt to combine those strengths without becoming an operations platform.
 
 ## Design principles
 
@@ -62,68 +62,68 @@ pure-Go, cross-platform, config-safe development.
 
 ```bash
 # Interactive host list
-ttydeck
+whop
 
 # ssh-agent is optional and disabled by default
-ttydeck -agent
-TTYDECK_SSH_AGENT=1 ttydeck
-ttydeck -no-agent
+whop -agent
+WHOP_SSH_AGENT=1 whop
+whop -no-agent
 
 # Start with an initial filter
-ttydeck prod
+whop prod
 
 # Machine-readable host list
-ttydeck list --json
+whop list --json
 
 # Connect from the CLI
-ttydeck connect prod-db
+whop connect prod-db
 
 # Local metadata
-ttydeck favorite prod-db on
-ttydeck tag prod-db prod db
-ttydeck note prod-db "primary database"
+whop favorite prod-db on
+whop tag prod-db prod db
+whop note prod-db "primary database"
 
 # Record, replay, and search sessions
-ttydeck -record
-ttydeck connect -record prod-db
-ttydeck replay ~/.config/ttydeck/recordings/prod-db-*.cast
-ttydeck index                        # rebuild and prune the FTS5 index
-ttydeck index --no-prune             # rebuild without removing stale entries
-ttydeck search "error"               # sync, then search the SQLite index
-ttydeck search --no-sync "error"     # fast search using the existing index
-ttydeck search --files "error"       # compatibility fallback: raw line scan
-ttydeck search --json "error"
+whop -record
+whop connect -record prod-db
+whop replay ~/.config/whop/recordings/prod-db-*.cast
+whop index                        # rebuild and prune the FTS5 index
+whop index --no-prune             # rebuild without removing stale entries
+whop search "error"               # sync, then search the SQLite index
+whop search --no-sync "error"     # fast search using the existing index
+whop search --files "error"       # compatibility fallback: raw line scan
+whop search --json "error"
 
 # ZMODEM upload/download (remote needs lrzsz: rz/sz)
-ttydeck zmodem put prod-db ./backup.tar
-ttydeck zmodem get prod-db /var/log/syslog
+whop zmodem put prod-db ./backup.tar
+whop zmodem get prod-db /var/log/syslog
 
 # In an interactive session:
-#   remote `rz` -> ttydeck prompts for local files
-#   remote `sz FILE` -> ttydeck downloads to ~/Downloads/ttydeck/<alias>/
+#   remote `rz` -> whop prompts for local files
+#   remote `sz FILE` -> whop downloads to ~/Downloads/whop/<alias>/
 
 # Encrypted host-password vault
-ttydeck vault init                 # master password mode
-ttydeck vault init --auto-unlock   # optional zero-prompt mode, 0600 key file
-ttydeck vault set 232
-ttydeck vault list
-ttydeck vault status
+whop vault init                 # master password mode
+whop vault init --auto-unlock   # optional zero-prompt mode, 0600 key file
+whop vault set 232
+whop vault list
+whop vault status
 
 # Migrate an existing nccm YAML configuration
-ttydeck import nccm --json              # dry-run: preview additions and warnings
-ttydeck import nccm --only 10.215.211.232 --apply
-ttydeck import nccm --apply             # import hosts and available passwords
+whop import nccm --json              # dry-run: preview additions and warnings
+whop import nccm --only 10.215.211.232 --apply
+whop import nccm --apply             # import hosts and available passwords
 
 # Automation
-ttydeck run prod-db uptime
-ttydeck snippet set disk "df -h"
-ttydeck snippet run disk prod-db prod-cache
-ttydeck snippet list
-ttydeck macro list
-ttydeck macro run login prod-db
-ttydeck audit --limit 50
-ttydeck audit --json
-ttydeck audit clear
+whop run prod-db uptime
+whop snippet set disk "df -h"
+whop snippet run disk prod-db prod-cache
+whop snippet list
+whop macro list
+whop macro run login prod-db
+whop audit --limit 50
+whop audit --json
+whop audit clear
 ```
 
 ### Macros
@@ -138,7 +138,7 @@ they are saved. A macro contains ordered `send`, `wait`, and `sleep` steps:
     {"kind": "wait", "pattern": "login: ", "timeout": "10s"},
     {"kind": "send", "send": "deploy", "newline": true},
     {"kind": "wait", "pattern": "Password: ", "timeout": "10s"},
-    {"kind": "send", "secret_env": "TTYDECK_DEPLOY_PASSWORD", "newline": true},
+    {"kind": "send", "secret_env": "WHOP_DEPLOY_PASSWORD", "newline": true},
     {"kind": "wait", "pattern": "\$ $", "timeout": "10s"},
     {"kind": "send", "send": "uptime", "newline": true},
     {"kind": "sleep", "sleep": "500ms"}
@@ -147,9 +147,9 @@ they are saved. A macro contains ordered `send`, `wait`, and `sleep` steps:
 ```
 
 ```bash
-ttydeck macro set login ./login.json
-ttydeck macro show login
-ttydeck macro run --timeout 30s login prod-db
+whop macro set login ./login.json
+whop macro show login
+whop macro run --timeout 30s login prod-db
 ```
 
 `secret_env` stores only the environment-variable name. The secret value is
@@ -158,14 +158,14 @@ command arguments. `newline: true` appends a newline unless the value already
 ends with one. Plain `send` steps are for non-secret commands; a macro is not an
 encrypted vault.
 
-Use `ttydeck macro run -json login prod-db` for a structured failure diagnostic.
+Use `whop macro run -json login prod-db` for a structured failure diagnostic.
 In the TUI, press `m` on a selected host to choose and run a stored macro.
 Macro lifecycle, expect matches, timeouts, retries, and failures are persisted in
 the local audit log without command text or terminal output.
 
 ### nccm migration
 
-`ttydeck import nccm` auto-detects the normal nccm config locations and is
+`whop import nccm` auto-detects the normal nccm config locations and is
 dry-run by default. It imports connection fields, keepalive, identity files,
 comments, `-z ssh-rsa` compatibility, and safe custom arguments. Existing aliases
 and identical endpoints are skipped. Use `--only name1,name2` to migrate selected
@@ -173,12 +173,12 @@ connections and `--apply` to write.
 
 When applying, nccm `-P` password values are stored in the encrypted vault, not
 in `~/.ssh/config` or SQLite. The vault master password is requested once per
-process, after which ttydeck can authenticate to all stored hosts without asking
+process, after which whop can authenticate to all stored hosts without asking
 for their individual passwords.
 
 ```bash
-TTYDECK_VAULT_PASSWORD='...' ttydeck connect 232
-TTYDECK_VAULT_PASSWORD='...' TTYDECK_HOST_PASSWORD='...' ttydeck vault set 232
+WHOP_VAULT_PASSWORD='...' whop connect 232
+WHOP_VAULT_PASSWORD='...' WHOP_HOST_PASSWORD='...' whop vault set 232
 ```
 
 Environment variables are intended for automation. Interactive use prompts with
@@ -221,13 +221,13 @@ blocks, `Match` blocks) from the default server list. Use `-all` to inspect them
 `aur.archlinux.org` is a Git/Auth endpoint, not an interactive shell. Use:
 
 ```bash
-ttydeck run aur.archlinux.org help
+whop run aur.archlinux.org help
 ```
 
 For machine-readable connection diagnostics:
 
 ```bash
-ttydeck diagnose -json aur.archlinux.org
+whop diagnose -json aur.archlinux.org
 ```
 
 This reports the failing stage (`dial`, `handshake`, `auth`, `host_key`,

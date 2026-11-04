@@ -7,7 +7,7 @@
 
 nccm configurations may contain SSH passwords in `customargs`. Repeatedly asking
 for each host password is unacceptable, but storing plaintext passwords in
-`~/.ssh/config`, SQLite, logs, or process arguments violates ttydeck's security
+`~/.ssh/config`, SQLite, logs, or process arguments violates whop's security
 contract. A portable pure-Go design is required for Linux, macOS, and Windows.
 
 ## Decision
@@ -16,7 +16,7 @@ Store host passwords in a local encrypted vault at the platform user config
 directory:
 
 ```text
-~/.config/ttydeck/secrets.vault
+~/.config/whop/secrets.vault
 ```
 
 The vault uses:
@@ -27,7 +27,7 @@ The vault uses:
 - mode `0600`, same-directory temporary file, fsync, atomic replace, and flock
 - no plaintext password, master password, or derived key on disk
 
-The master password is requested once per ttydeck process. `TTYDECK_VAULT_PASSWORD`
+The master password is requested once per whop process. `WHOP_VAULT_PASSWORD`
 may provide it for automation. The vault is lazy-opened only when SSH password
 authentication is actually attempted.
 

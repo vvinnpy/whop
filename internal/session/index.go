@@ -148,7 +148,7 @@ func indexTranscriptPair(root, rootID, transcriptPath string) (TranscriptDocumen
 	}
 
 	startedAt := fileStartedAt(resolvedTranscript, base, meta, castErr == nil)
-	host := strings.TrimSpace(meta.Env["TTYDECK_HOST"])
+	host := strings.TrimSpace(meta.Env["WHOP_HOST"])
 	if host == "" {
 		host = hostFromBase(base)
 	}

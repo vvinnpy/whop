@@ -9,7 +9,7 @@ import (
 )
 
 // CustomOptions contains the typed subset of nccm customargs understood by
-// ttydeck. Options are parsed from left to right; when an option is repeated,
+// whop. Options are parsed from left to right; when an option is repeated,
 // the last value wins.
 type CustomOptions struct {
 	Mode        string

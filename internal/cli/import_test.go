@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"ttydeck/internal/secrets"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/secrets"
+	"whop/internal/sshconfig"
 )
 
 func TestImportNCCMDryRunAndApply(t *testing.T) {
@@ -48,8 +48,8 @@ password-host:
 		t.Fatal(err)
 	}
 	vaultPath := filepath.Join(dir, "secrets.vault")
-	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
-	t.Setenv("TTYDECK_VAULT_PASSWORD", "import-master")
+	t.Setenv("WHOP_VAULT_PATH", vaultPath)
+	t.Setenv("WHOP_VAULT_PASSWORD", "import-master")
 	td := newTestDeps()
 	td.deps.LoadConfig = sshconfig.Load
 	td.deps.RecordingDir = dir

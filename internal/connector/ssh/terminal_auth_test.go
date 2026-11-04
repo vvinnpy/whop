@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 func TestTerminalKeyboardInteractiveEchoed(t *testing.T) {

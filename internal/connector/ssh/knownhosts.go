@@ -29,7 +29,7 @@ func defaultHostKeyCallback() ssh.HostKeyCallback {
 
 	filtered, filterErr := filterKnownHosts(path)
 	if filterErr == nil && len(filtered) > 0 {
-		tmp, tmpErr := os.CreateTemp("", "ttydeck-known-hosts-*")
+		tmp, tmpErr := os.CreateTemp("", "whop-known-hosts-*")
 		if tmpErr == nil {
 			tmpName := tmp.Name()
 			_, writeErr := tmp.Write(filtered)

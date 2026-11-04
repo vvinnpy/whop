@@ -17,14 +17,14 @@ import (
 
 	"golang.org/x/term"
 
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/secrets"
-	"ttydeck/internal/sshconfig"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/secrets"
+	"whop/internal/sshconfig"
 )
 
 const (
-	vaultMasterPasswordEnv = "TTYDECK_VAULT_PASSWORD"
-	vaultHostPasswordEnv   = "TTYDECK_HOST_PASSWORD"
+	vaultMasterPasswordEnv = "WHOP_VAULT_PASSWORD"
+	vaultHostPasswordEnv   = "WHOP_HOST_PASSWORD"
 )
 
 type vaultStatus struct {
@@ -35,7 +35,7 @@ type vaultStatus struct {
 
 func runVault(args []string, deps Deps) int {
 	if len(args) == 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck vault <init|set|list|delete|status> ...")
+		fmt.Fprintln(deps.Stderr, "usage: whop vault <init|set|list|delete|status> ...")
 		return 2
 	}
 	switch args[0] {
@@ -50,13 +50,13 @@ func runVault(args []string, deps Deps) int {
 	case "status":
 		return runVaultStatus(args[1:], deps)
 	default:
-		fmt.Fprintf(deps.Stderr, "ttydeck: unknown vault command %q\n", args[0])
+		fmt.Fprintf(deps.Stderr, "whop: unknown vault command %q\n", args[0])
 		return 2
 	}
 }
 
 func runVaultInit(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck vault init", deps)
+	fs := newFlagSet("whop vault init", deps)
 	autoUnlock := fs.Bool("auto-unlock", false, "generate a 0600 local key file for non-interactive unlock")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -65,19 +65,19 @@ func runVaultInit(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck vault init")
+		fmt.Fprintln(deps.Stderr, "usage: whop vault init")
 		return 2
 	}
 	path, err := vaultPath()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if _, err := os.Stat(path); err == nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: vault already exists: %s\n", path)
+		fmt.Fprintf(deps.Stderr, "whop: vault already exists: %s\n", path)
 		return 1
 	} else if !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	var master string
@@ -85,18 +85,18 @@ func runVaultInit(args []string, deps Deps) int {
 	if *autoUnlock {
 		keyPath, err = vaultKeyPath()
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		master, err = generateVaultKey(keyPath)
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 	} else {
 		master, err = readVaultMasterPassword(deps, true)
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 	}
@@ -105,7 +105,7 @@ func runVaultInit(args []string, deps Deps) int {
 		if keyPath != "" {
 			_ = os.Remove(keyPath)
 		}
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	_ = vault.Close()
@@ -117,7 +117,7 @@ func runVaultInit(args []string, deps Deps) int {
 }
 
 func runVaultSet(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck vault set", deps)
+	fs := newFlagSet("whop vault set", deps)
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -125,42 +125,42 @@ func runVaultSet(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck vault set <alias>")
+		fmt.Fprintln(deps.Stderr, "usage: whop vault set <alias>")
 		return 2
 	}
 	alias := strings.TrimSpace(fs.Arg(0))
 	if alias == "" {
-		fmt.Fprintln(deps.Stderr, "ttydeck: alias is required")
+		fmt.Fprintln(deps.Stderr, "whop: alias is required")
 		return 2
 	}
 	path, err := vaultPath()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	_, statErr := os.Stat(path)
 	master, err := readVaultMasterPassword(deps, errors.Is(statErr, os.ErrNotExist))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	vault, err := openOrCreateVault(path, master)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer vault.Close()
 	hostPassword, err := readHostPassword(deps, alias, true)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if err := vault.Set(alias, hostPassword); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if err := vault.Save(); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "password saved for %s\n", alias)
@@ -168,7 +168,7 @@ func runVaultSet(args []string, deps Deps) int {
 }
 
 func runVaultList(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck vault list", deps)
+	fs := newFlagSet("whop vault list", deps)
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -177,25 +177,25 @@ func runVaultList(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck vault list [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop vault list [flags]")
 		return 2
 	}
 	vault, err := openExistingVault(deps)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer vault.Close()
 	names, err := vault.List()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	sort.Strings(names)
 	if *asJSON {
 		encoded, err := json.MarshalIndent(names, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))
@@ -208,7 +208,7 @@ func runVaultList(args []string, deps Deps) int {
 }
 
 func runVaultDelete(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck vault delete", deps)
+	fs := newFlagSet("whop vault delete", deps)
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -216,21 +216,21 @@ func runVaultDelete(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck vault delete <alias>")
+		fmt.Fprintln(deps.Stderr, "usage: whop vault delete <alias>")
 		return 2
 	}
 	vault, err := openExistingVault(deps)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer vault.Close()
 	if err := vault.Delete(fs.Arg(0)); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if err := vault.Save(); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "password deleted for %s\n", fs.Arg(0))
@@ -238,7 +238,7 @@ func runVaultDelete(args []string, deps Deps) int {
 }
 
 func runVaultStatus(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck vault status", deps)
+	fs := newFlagSet("whop vault status", deps)
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -247,12 +247,12 @@ func runVaultStatus(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck vault status [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop vault status [flags]")
 		return 2
 	}
 	path, err := vaultPath()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	keyPath, _ := vaultKeyPath()
@@ -262,13 +262,13 @@ func runVaultStatus(args []string, deps Deps) int {
 	if err == nil && info.Mode().IsRegular() {
 		status.Exists = true
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if *asJSON {
 		encoded, err := json.MarshalIndent(status, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))
@@ -283,14 +283,14 @@ func runVaultStatus(args []string, deps Deps) int {
 }
 
 func vaultPath() (string, error) {
-	if value := strings.TrimSpace(os.Getenv("TTYDECK_VAULT_PATH")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("WHOP_VAULT_PATH")); value != "" {
 		return value, nil
 	}
 	return secrets.DefaultPath()
 }
 
 func vaultKeyPath() (string, error) {
-	if value := strings.TrimSpace(os.Getenv("TTYDECK_VAULT_KEY_FILE")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("WHOP_VAULT_KEY_FILE")); value != "" {
 		return value, nil
 	}
 	path, err := vaultPath()

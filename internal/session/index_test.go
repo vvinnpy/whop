@@ -85,12 +85,12 @@ func TestIndexDirectoryNormal(t *testing.T) {
 	}
 }
 
-func TestIndexDirectoryUsesTTYDECKHost(t *testing.T) {
+func TestIndexDirectoryUsesWHOPHost(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "filename-host-20261103-100000.000")
 	writeIndexCast(t, base+".cast", v2Header(t, 1762164000, map[string]string{
 		"TERM":         "xterm-256color",
-		"TTYDECK_HOST": "db.example.com",
+		"WHOP_HOST": "db.example.com",
 	}))
 	writeIndexTranscript(t, base+".txt", "hello\n")
 

@@ -53,7 +53,7 @@ func NewRecordingWithOptions(cast, transcript io.Writer, width, height int, star
 		"TERM": "xterm-256color",
 	}
 	if host := strings.TrimSpace(opts.Host); host != "" {
-		env["TTYDECK_HOST"] = host
+		env["WHOP_HOST"] = host
 	}
 	header, err := json.Marshal(map[string]any{
 		"version":   2,

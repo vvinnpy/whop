@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 func TestTeatestInitialRenderAndFilter(t *testing.T) {
@@ -24,7 +24,7 @@ func TestTeatestInitialRenderAndFilter(t *testing.T) {
 	defer tm.Quit()
 
 	teatest.WaitFor(t, tm.Output(), func(output []byte) bool {
-		return bytes.Contains(output, []byte("prod-db")) && bytes.Contains(output, []byte("ttydeck"))
+		return bytes.Contains(output, []byte("prod-db")) && bytes.Contains(output, []byte("whop"))
 	}, teatest.WithDuration(3*time.Second))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})

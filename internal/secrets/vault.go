@@ -93,7 +93,7 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("secrets: default path: %w", err)
 	}
-	return filepath.Join(dir, "ttydeck", "secrets.vault"), nil
+	return filepath.Join(dir, "whop", "secrets.vault"), nil
 }
 
 // Create creates a new empty vault protected by masterPassword.
@@ -489,7 +489,7 @@ func parseHeader(data []byte) ([]byte, Params, [saltSize]byte, [nonceSize]byte, 
 
 func writeVaultFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".ttydeck-vault-*")
+	tmp, err := os.CreateTemp(dir, ".whop-vault-*")
 	if err != nil {
 		return fmt.Errorf("secrets: create temporary file: %w", err)
 	}

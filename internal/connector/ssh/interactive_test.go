@@ -17,8 +17,8 @@ import (
 	gliderssh "github.com/gliderlabs/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 
-	"ttydeck/internal/automation"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/automation"
+	"whop/internal/sshconfig"
 )
 
 func TestRunInteractiveExecutesMacro(t *testing.T) {

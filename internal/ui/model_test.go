@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 func testHosts() []sshconfig.Host {
@@ -89,7 +89,7 @@ func TestInitialViewShowsServers(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	view := plainView(m)
 
-	for _, want := range []string{"ttydeck", "3/4 hosts", "prod-db", "10.0.0.11", "deploy", "[servers]"} {
+	for _, want := range []string{"whop", "3/4 hosts", "prod-db", "10.0.0.11", "deploy", "[servers]"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"unicode"
 
-	"ttydeck/internal/nccm"
-	"ttydeck/internal/secrets"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/nccm"
+	"whop/internal/secrets"
+	"whop/internal/sshconfig"
 )
 
 type importReport struct {
@@ -30,10 +30,10 @@ type importReport struct {
 
 func runImport(args []string, deps Deps) int {
 	if len(args) == 0 || args[0] != "nccm" {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck import nccm [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop import nccm [flags]")
 		return 2
 	}
-	fs := newFlagSet("ttydeck import nccm", deps)
+	fs := newFlagSet("whop import nccm", deps)
 	source := fs.String("file", "", "path to nccm.yml (default: search standard locations)")
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	only := fs.String("only", "", "comma-separated nccm connection names")
@@ -46,7 +46,7 @@ func runImport(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck import nccm [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop import nccm [flags]")
 		return 2
 	}
 	sourcePath := strings.TrimSpace(*source)
@@ -54,13 +54,13 @@ func runImport(args []string, deps Deps) int {
 		var err error
 		sourcePath, err = nccm.DefaultPath()
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 	}
 	cfg, err := nccm.Load(sourcePath)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	selected := parseOnlyNames(*only)
@@ -71,7 +71,7 @@ func runImport(args []string, deps Deps) int {
 	cfgPath := resolvePath(*configPath)
 	existing, err := deps.LoadConfig(cfgPath)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	imports, skipped := filterExistingImports(existing, imports)
@@ -100,36 +100,36 @@ func runImport(args []string, deps Deps) int {
 		if len(keptPasswords) > 0 {
 			path, err := vaultPath()
 			if err != nil {
-				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 				return 1
 			}
 			_, statErr := os.Stat(path)
 			master, err := readVaultMasterPassword(deps, errors.Is(statErr, os.ErrNotExist))
 			if err != nil {
-				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 				return 1
 			}
 			vault, err = openOrCreateVault(path, master)
 			if err != nil {
-				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 				return 1
 			}
 			defer vault.Close()
 			for alias, password := range keptPasswords {
 				if err := vault.Set(alias, password); err != nil {
-					fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+					fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 					return 1
 				}
 			}
 		}
 		result, err := sshconfig.AddHosts(cfgPath, imports)
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		if vault != nil {
 			if err := vault.Save(); err != nil {
-				fmt.Fprintf(deps.Stderr, "ttydeck: save vault: %v\n", err)
+				fmt.Fprintf(deps.Stderr, "whop: save vault: %v\n", err)
 				return 1
 			}
 			for alias := range keptPasswords {
@@ -151,7 +151,7 @@ func runImport(args []string, deps Deps) int {
 	if *asJSON {
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))

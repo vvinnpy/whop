@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 // Filter applies nccm-style whitespace-separated AND filters.

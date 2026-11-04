@@ -16,8 +16,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"ttydeck/internal/automation"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/automation"
+	"whop/internal/sshconfig"
 )
 
 const maxMacroDefinitionBytes = 1 << 20
@@ -47,7 +47,7 @@ type macroStepDef struct {
 
 func runMacro(args []string, deps Deps) int {
 	if len(args) == 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck macro <set|list|show|delete|run> ...")
+		fmt.Fprintln(deps.Stderr, "usage: whop macro <set|list|show|delete|run> ...")
 		return 2
 	}
 	switch args[0] {
@@ -62,44 +62,44 @@ func runMacro(args []string, deps Deps) int {
 	case "run":
 		return runMacroRun(args[1:], deps)
 	default:
-		fmt.Fprintf(deps.Stderr, "ttydeck: unknown macro command %q\n", args[0])
+		fmt.Fprintf(deps.Stderr, "whop: unknown macro command %q\n", args[0])
 		return 2
 	}
 }
 
 func runMacroSet(args []string, deps Deps) int {
 	if len(args) != 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck macro set <name> <file|->")
+		fmt.Fprintln(deps.Stderr, "usage: whop macro set <name> <file|->")
 		return 2
 	}
 	name, path := strings.TrimSpace(args[0]), args[1]
 	if err := validateMacroName(name); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 2
 	}
 	raw, err := readLimited(path, deps.Stdin, maxMacroDefinitionBytes)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: read macro: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: read macro: %v\n", err)
 		return 1
 	}
 	definition, err := parseMacroDefinition(raw, name, nil)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: invalid macro: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: invalid macro: %v\n", err)
 		return 1
 	}
 	canonical, err := json.MarshalIndent(definition, "", "  ")
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: encode macro: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: encode macro: %v\n", err)
 		return 1
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if err := metaStore.SetMacroDefinition(name, append(canonical, '\n')); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "macro %s saved (%d steps)\n", name, len(definition.Steps))
@@ -107,7 +107,7 @@ func runMacroSet(args []string, deps Deps) int {
 }
 
 func runMacroList(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck macro list", deps)
+	fs := newFlagSet("whop macro list", deps)
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -116,18 +116,18 @@ func runMacroList(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck macro list [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop macro list [flags]")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	definitions, err := metaStore.MacroDefinitions()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	type summary struct {
@@ -148,7 +148,7 @@ func runMacroList(args []string, deps Deps) int {
 	if *asJSON {
 		encoded, err := json.MarshalIndent(items, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))
@@ -164,7 +164,7 @@ func runMacroList(args []string, deps Deps) int {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			fmt.Fprintf(deps.Stderr, "ttydeck: macro %s is invalid: %s\n", sanitizeSingleLine(name), invalid[name])
+			fmt.Fprintf(deps.Stderr, "whop: macro %s is invalid: %s\n", sanitizeSingleLine(name), invalid[name])
 		}
 		return 1
 	}
@@ -173,26 +173,26 @@ func runMacroList(args []string, deps Deps) int {
 
 func runMacroShow(args []string, deps Deps) int {
 	if len(args) != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck macro show <name>")
+		fmt.Fprintln(deps.Stderr, "usage: whop macro show <name>")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	raw, found, err := metaStore.MacroDefinition(args[0])
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	if !found {
-		fmt.Fprintf(deps.Stderr, "ttydeck: macro %q not found\n", args[0])
+		fmt.Fprintf(deps.Stderr, "whop: macro %q not found\n", args[0])
 		return 1
 	}
 	if _, err := parseMacroDefinition(raw, args[0], nil); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: macro %q is invalid: %v\n", args[0], err)
+		fmt.Fprintf(deps.Stderr, "whop: macro %q is invalid: %v\n", args[0], err)
 		return 1
 	}
 	fmt.Fprint(deps.Stdout, string(raw))
@@ -204,17 +204,17 @@ func runMacroShow(args []string, deps Deps) int {
 
 func runMacroDelete(args []string, deps Deps) int {
 	if len(args) != 1 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck macro delete <name>")
+		fmt.Fprintln(deps.Stderr, "usage: whop macro delete <name>")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	if err := metaStore.DeleteMacroDefinition(args[0]); err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "macro %s deleted\n", args[0])
@@ -222,7 +222,7 @@ func runMacroDelete(args []string, deps Deps) int {
 }
 
 func runMacroRun(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck macro run", deps)
+	fs := newFlagSet("whop macro run", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	timeout := fs.Duration("timeout", 30*time.Second, "overall automation timeout")
 	asJSON := fs.Bool("json", false, "emit a structured diagnostic on failure")
@@ -233,33 +233,33 @@ func runMacroRun(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck macro run [flags] <name> <alias>")
+		fmt.Fprintln(deps.Stderr, "usage: whop macro run [flags] <name> <alias>")
 		return 2
 	}
 	if *timeout <= 0 {
-		fmt.Fprintln(deps.Stderr, "ttydeck: timeout must be positive")
+		fmt.Fprintln(deps.Stderr, "whop: timeout must be positive")
 		return 2
 	}
 	name, alias := fs.Arg(0), fs.Arg(1)
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	macro, err := loadStoredMacro(metaStore, name, deps.LookupEnv)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	hosts, err := loadHosts(deps, metaStore, resolvePath(*configPath))
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	host, ok := sshconfig.Find(hosts, alias)
 	if !ok {
-		fmt.Fprintf(deps.Stderr, "ttydeck: host %q not found\n", alias)
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 		return 1
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)

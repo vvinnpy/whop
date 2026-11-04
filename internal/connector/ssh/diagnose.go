@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"ttydeck/internal/automation"
+	"whop/internal/automation"
 )
 
 // StageError adds the failing SSH phase to an error.
@@ -149,11 +149,11 @@ func categoryHint(category, host string) string {
 	case "authentication":
 		return "Authentication failed. Check IdentityFile, ssh-agent keys, authorized_keys, and server auth policy."
 	case "host_key":
-		return "Host-key verification failed. Check ~/.ssh/known_hosts; ttydeck filters unsupported algorithms but real key mismatches must be resolved manually."
+		return "Host-key verification failed. Check ~/.ssh/known_hosts; whop filters unsupported algorithms but real key mismatches must be resolved manually."
 	case "algorithm_mismatch":
 		return "No common SSH algorithm. The server may be old/new, or the client may need explicit legacy algorithm support."
 	case "pty_rejected":
-		return "The remote endpoint does not provide an interactive shell. Use `ttydeck run <alias> <command>` instead."
+		return "The remote endpoint does not provide an interactive shell. Use `whop run <alias> <command>` instead."
 	case "connection_reset":
 		return "The connection was reset after TCP establishment. Check server logs, rate limits, and network middleboxes."
 	case "automation_timeout":

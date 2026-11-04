@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/term"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 // TerminalPasswordProvider prompts on the controlling terminal.

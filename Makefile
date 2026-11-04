@@ -1,9 +1,9 @@
 .PHONY: build test vet race cross clean
 
-BINARY := ttydeck
+BINARY := whop
 
 build:
-	CGO_ENABLED=0 go build -trimpath -o bin/$(BINARY) ./cmd/ttydeck
+	CGO_ENABLED=0 go build -trimpath -o bin/$(BINARY) ./cmd/whop
 
 test:
 	CGO_ENABLED=0 go test ./...

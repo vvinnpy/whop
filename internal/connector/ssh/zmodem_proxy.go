@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/zmodem"
+	"whop/internal/sshconfig"
+	"whop/internal/zmodem"
 )
 
 var zmodemHeaderMarker = []byte("**\x18B")
@@ -113,10 +113,10 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 				paused.Store(false)
 				_ = writer.writeProtocol([]byte("\n"))
 				if transferErr != nil {
-					fmt.Fprintf(stderr, "\r\nttydeck zmodem: %v\r\n", transferErr)
+					fmt.Fprintf(stderr, "\r\nwhop zmodem: %v\r\n", transferErr)
 					_ = writer.writeProtocol(zmodemCancel)
 				} else {
-					fmt.Fprint(stderr, "\r\nttydeck zmodem: transfer complete\r\n")
+					fmt.Fprint(stderr, "\r\nwhop zmodem: transfer complete\r\n")
 				}
 				break
 			}

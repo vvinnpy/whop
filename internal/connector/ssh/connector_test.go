@@ -20,8 +20,8 @@ import (
 	gliderssh "github.com/gliderlabs/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 
-	"ttydeck/internal/session"
-	"ttydeck/internal/sshconfig"
+	"whop/internal/session"
+	"whop/internal/sshconfig"
 )
 
 type testSSHServer struct {
@@ -147,7 +147,7 @@ func writeClientKey(t *testing.T) (string, cryptossh.PublicKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, err := cryptossh.MarshalPrivateKey(private, "ttydeck test key")
+	block, err := cryptossh.MarshalPrivateKey(private, "whop test key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func writeEncryptedClientKey(t *testing.T, passphrase string) (string, cryptossh
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, err := cryptossh.MarshalPrivateKeyWithPassphrase(private, "encrypted ttydeck key", []byte(passphrase))
+	block, err := cryptossh.MarshalPrivateKeyWithPassphrase(private, "encrypted whop key", []byte(passphrase))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 // SecretLookup returns a stored password for a host. found=false means the

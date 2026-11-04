@@ -1,15 +1,15 @@
 version: 2
 
-project_name: ttydeck
+project_name: whop
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: ttydeck
-    main: ./cmd/ttydeck
-    binary: ttydeck
+  - id: whop
+    main: ./cmd/whop
+    binary: whop
     env:
       - CGO_ENABLED=0
     goos:
@@ -20,10 +20,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X ttydeck/internal/cli.Version={{ .Version }}
+      - -s -w -X whop/internal/cli.Version={{ .Version }}
 
 archives:
-  - id: ttydeck
+  - id: whop
     formats:
       - tar.gz
     format_overrides:

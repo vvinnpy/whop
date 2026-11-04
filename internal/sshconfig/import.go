@@ -368,7 +368,7 @@ func writeImportBackup(target string, data []byte, mode fs.FileMode) (string, er
 
 func replaceImportTarget(target string, data []byte, mode fs.FileMode) error {
 	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, ".ttydeck-import-*")
+	tmp, err := os.CreateTemp(dir, ".whop-import-*")
 	if err != nil {
 		return fmt.Errorf("sshconfig: create temporary file: %w", err)
 	}

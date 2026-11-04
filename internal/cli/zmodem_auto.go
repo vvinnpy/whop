@@ -9,8 +9,8 @@ import (
 
 	shlex "github.com/anmitsu/go-shlex"
 
-	sshconn "ttydeck/internal/connector/ssh"
-	"ttydeck/internal/sshconfig"
+	sshconn "whop/internal/connector/ssh"
+	"whop/internal/sshconfig"
 )
 
 func defaultZmodemOptions() *sshconn.ZmodemOptions {

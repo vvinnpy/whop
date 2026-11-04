@@ -18,7 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 var (
@@ -578,7 +578,7 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		}
 		ptyRejected = true
 		if stderr != nil {
-			fmt.Fprintf(stderr, "ttydeck: remote host refused PTY; continuing without a TTY\n")
+			fmt.Fprintf(stderr, "whop: remote host refused PTY; continuing without a TTY\n")
 		}
 	}
 

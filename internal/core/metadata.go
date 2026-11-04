@@ -3,8 +3,8 @@ package core
 import (
 	"sort"
 
-	"ttydeck/internal/sshconfig"
-	"ttydeck/internal/store"
+	"whop/internal/sshconfig"
+	"whop/internal/store"
 )
 
 // ApplyMetadata merges local metadata into config hosts.

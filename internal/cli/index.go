@@ -10,8 +10,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"ttydeck/internal/session"
-	"ttydeck/internal/store"
+	"whop/internal/session"
+	"whop/internal/store"
 )
 
 type indexResult struct {
@@ -56,7 +56,7 @@ func syncTranscriptIndex(metaStore MetaStore, dir string, skipInvalid, prune boo
 }
 
 func runIndex(args []string, deps Deps) int {
-	fs := newFlagSet("ttydeck index", deps)
+	fs := newFlagSet("whop index", deps)
 	dir := fs.String("dir", deps.RecordingDir, "recording directory")
 	skipInvalid := fs.Bool("skip-invalid", false, "skip malformed recordings")
 	noPrune := fs.Bool("no-prune", false, "keep index entries for removed recordings")
@@ -68,25 +68,25 @@ func runIndex(args []string, deps Deps) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(deps.Stderr, "usage: ttydeck index [flags]")
+		fmt.Fprintln(deps.Stderr, "usage: whop index [flags]")
 		return 2
 	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	defer metaStore.Close()
 	documents, removed, err := syncTranscriptIndex(metaStore, *dir, *skipInvalid, !*noPrune)
 	if err != nil {
-		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
 	result := indexResult{Directory: *dir, Indexed: len(documents), Removed: removed}
 	if *asJSON {
 		encoded, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))
@@ -103,7 +103,7 @@ func writeTranscriptMatches(deps Deps, matches []store.TranscriptMatch, asJSON b
 		}
 		encoded, err := json.MarshalIndent(matches, "", "  ")
 		if err != nil {
-			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(deps.Stdout, string(encoded))

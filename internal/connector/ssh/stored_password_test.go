@@ -11,7 +11,7 @@ import (
 
 	cryptossh "golang.org/x/crypto/ssh"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 type storedTestPasswordProvider struct {

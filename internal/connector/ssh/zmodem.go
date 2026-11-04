@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"ttydeck/internal/sshconfig"
+	"whop/internal/sshconfig"
 )
 
 // RunZmodem starts command on host and hands its terminal stream to transfer.

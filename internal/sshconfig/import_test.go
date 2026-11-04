@@ -350,7 +350,7 @@ func assertFileEquals(t *testing.T, path, want string) {
 
 func assertNoImportArtifacts(t *testing.T, dir, base string) {
 	t.Helper()
-	for _, pattern := range []string{base + ".lock", base + ".bak.*", ".ttydeck-import-*"} {
+	for _, pattern := range []string{base + ".lock", base + ".bak.*", ".whop-import-*"} {
 		matches, err := filepath.Glob(filepath.Join(dir, pattern))
 		if err != nil {
 			t.Fatal(err)

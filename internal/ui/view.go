@@ -65,7 +65,7 @@ func (m *Model) View() string {
 
 func (m *Model) viewHeader(width int) string {
 	count := fmt.Sprintf("%d/%d hosts", len(m.filtered), len(m.allHosts))
-	left := styleTitle.Render(" ttydeck ") + styleDim.Render(" "+count+"  "+m.configPath)
+	left := styleTitle.Render(" whop ") + styleDim.Render(" "+count+"  "+m.configPath)
 	modeText := m.modeLabel()
 	if m.record {
 		modeText += " rec"
