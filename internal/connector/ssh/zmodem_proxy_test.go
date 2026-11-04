@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"whop/internal/sshconfig"
 	"whop/internal/zmodem"
@@ -147,6 +148,76 @@ func TestZmodemHeaderSplitAcrossReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stdout.String() != "prompt" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+type notifyWriter struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+	writes chan string
+}
+
+func newNotifyWriter() *notifyWriter {
+	return &notifyWriter{writes: make(chan string, 16)}
+}
+
+func (w *notifyWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	n, err := w.buffer.Write(data)
+	chunk := string(append([]byte(nil), data...))
+	w.mu.Unlock()
+	select {
+	case w.writes <- chunk:
+	default:
+	}
+	return n, err
+}
+
+func (w *notifyWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
+}
+
+func TestRunZmodemAwareShellFlushesPromptImmediately(t *testing.T) {
+	reader, writer := io.Pipe()
+	remote := &testRemote{reader: reader}
+	out := newNotifyWriter()
+	done := make(chan error, 1)
+	go func() {
+		done <- runZmodemAwareShell(context.Background(), sshconfig.Host{}, strings.NewReader(""), out, io.Discard, remote, nil, &ZmodemOptions{})
+	}()
+
+	if _, err := writer.Write([]byte("]# ")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-out.writes:
+		if got != "]# " {
+			t.Fatalf("prompt chunk = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("prompt ending in ordinary characters was buffered")
+	}
+	_ = writer.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunZmodemAwareShellFlushesMarkerPrefixAtEOF(t *testing.T) {
+	reader, writer := io.Pipe()
+	remote := &testRemote{reader: reader}
+	var stdout, stderr bytes.Buffer
+	go func() {
+		_, _ = writer.Write([]byte("*"))
+		_ = writer.Close()
+	}()
+	if err := runZmodemAwareShell(context.Background(), sshconfig.Host{}, strings.NewReader(""), &stdout, &stderr, remote, nil, &ZmodemOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "*" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

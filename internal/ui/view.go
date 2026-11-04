@@ -85,11 +85,10 @@ func (m *Model) viewFilter(width int) string {
 	label := styleAccent.Render(" / filter: ")
 	value := m.filterSummary()
 	if m.filterFocused {
+		label = styleAccent.Render(" [FILTER EDIT] / filter: ")
 		value = m.filter + "█"
-		if value == "█" {
-			value = "█"
-		}
 	} else if m.filter != "" {
+		label = styleAccent.Render(" [FILTER ACTIVE] / filter: ")
 		value = m.filter
 	} else {
 		value = styleDim.Render("(type to filter)")
@@ -107,8 +106,15 @@ func (m *Model) viewList(width, height int) []string {
 		}
 	}
 
-	columns := listColumns(listWidth)
-	lines := []string{styleDim.Render(padTo(rowLine(columns, "NAME", "HOST", "USER", "PORT", "TAGS"), listWidth))}
+	cols := listColumns(listWidth)
+	if detailVisible {
+		// User and port remain visible in the detail pane, so the list
+		// prefers tags in split view.
+		available := max(22, listWidth-26)
+		hostWidth := max(14, available*3/5)
+		cols = columns{name: 20, host: hostWidth, tags: max(8, available-hostWidth), showTags: true}
+	}
+	lines := []string{styleDim.Render(padTo(rowLine(cols, "NAME", "HOST", "USER", "PORT", "TAGS"), listWidth))}
 
 	available := height - 7
 	if available < 3 {
@@ -139,7 +145,11 @@ func (m *Model) viewList(width, height int) []string {
 		if host.Favorite {
 			name = "*" + name
 		}
-		line := padTo(rowLine(columns, prefix+name, host.HostName, host.User, fmt.Sprintf("%d", host.Port), strings.Join(host.Tags, ",")), listWidth)
+		tags := strings.Join(host.Tags, ",")
+		if tags == "" {
+			tags = "-"
+		}
+		line := padTo(rowLine(cols, prefix+name, host.HostName, host.User, fmt.Sprintf("%d", host.Port), tags), listWidth)
 		if selected {
 			line = styleSelected.Render(padTo(line, listWidth))
 		}
@@ -230,7 +240,11 @@ func (m *Model) viewDiff(width, height int) string {
 }
 
 func (m *Model) viewEdit(width int) string {
-	lines := []string{styleAccent.Render(" EDIT " + m.editTarget.Alias), ""}
+	title := " EDIT " + m.editTarget.Alias
+	if m.creating {
+		title = " NEW HOST"
+	}
+	lines := []string{styleAccent.Render(title), ""}
 	for index, field := range m.editFields {
 		prefix := "  "
 		if index == m.editFocus {
@@ -238,7 +252,7 @@ func (m *Model) viewEdit(width int) string {
 		}
 		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
 	}
-	lines = append(lines, "", styleDim.Render(" tab next  enter save  esc cancel"))
+	lines = append(lines, "", styleDim.Render(" IdentityFile blank inherits Host * / OpenSSH defaults"), styleDim.Render(" password blank keeps current; saved in encrypted vault"), styleDim.Render(" tab next  enter save  esc cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -280,17 +294,20 @@ func (m *Model) viewHelp(width int) string {
 		"",
 		"  enter       connect to selected host",
 		"  /           focus filter",
+		"  tab / esc   apply filter and return to list",
 		"  j / k       move down / up",
+		"  ctrl+p/n    move up / down",
 		"  g / G       first / last",
 		"  ctrl+d/u    page down / up",
 		"  r           reload config",
 		"  a           toggle servers / all",
 		"  f           toggle favorite",
-		"  e           edit host",
+		"  N           create a new host",
+		"  e           edit host name, identity, and password",
 		"  n           edit notes",
 		"  m           run an automation macro",
 		"  R           toggle session recording",
-		"  esc         clear filter or quit",
+		"  esc         list mode: clear filter or quit",
 		"  ?           close help",
 	}
 	for i := range lines {
@@ -302,17 +319,19 @@ func (m *Model) viewHelp(width int) string {
 func (m *Model) viewFooter(width int) string {
 	var hint string
 	if m.editing {
-		hint = " tab next  enter save  esc cancel"
+		hint = " tab next  enter save  esc cancel  identity blank=default  password blank=keep"
 	} else if m.notesMode {
 		hint = " ctrl+s save  esc cancel"
 	} else if m.diffMode {
 		hint = " enter/y apply  n/esc edit  j/k scroll  ctrl+d/u page"
 	} else if m.macroMode {
-		hint = " enter run  j/k move  esc cancel"
+		hint = " enter run  j/k ctrl+p/n move  esc cancel"
 	} else if m.filterFocused {
-		hint = " type filter  enter connect  esc clear  ctrl+u clear"
+		hint = " type filter  enter connect  tab/esc apply  ctrl+u clear"
+	} else if m.filter != "" {
+		hint = " enter connect  / edit filter  j/k ctrl+p/n  e edit  esc clear"
 	} else {
-		hint = " enter connect  / filter  j/k  f fav  e edit  m macro  R rec  ? help  q quit"
+		hint = " enter connect  / filter  j/k ctrl+p/n  N new  f fav  e edit  m macro  ? help  q quit"
 	}
 	return styleDim.Render(ansi.Truncate(hint, width, "~"))
 }
@@ -340,7 +359,7 @@ func listColumns(width int) columns {
 	case width >= 100:
 		return columns{name: 24, host: 30, user: 12, port: 5, tags: max(8, width-24-30-12-5-6), showUser: true, showPort: true, showTags: true}
 	case width >= 72:
-		return columns{name: 20, host: 24, user: 10, port: 5, showUser: true, showPort: true}
+		return columns{name: 20, host: max(16, width-49), user: 10, port: 5, tags: 8, showUser: true, showPort: true, showTags: true}
 	case width >= 52:
 		hostWidth := max(12, (width-18-8)/2)
 		userWidth := max(8, width-18-hostWidth-6)

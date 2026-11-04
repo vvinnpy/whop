@@ -141,9 +141,9 @@ func (c *Connector) dialMultiJump(ctx context.Context, host sshconfig.Host, hops
 	jumps := make([]*ssh.Client, 0, len(hops))
 	closeJumps := func() { closeJumpClients(jumps) }
 
-	// ProxyJump lists the hop closest to the target first. The local process
-	// therefore connects to the last hop, which then connects toward the target.
-	for i := len(hops) - 1; i >= 0; i-- {
+	// OpenSSH visits ProxyJump entries sequentially from the local host toward
+	// the target, so hops[0] is the first SSH connection we establish.
+	for i := 0; i < len(hops); i++ {
 		var via *ssh.Client
 		if len(jumps) > 0 {
 			via = jumps[len(jumps)-1]
@@ -156,7 +156,7 @@ func (c *Connector) dialMultiJump(ctx context.Context, host sshconfig.Host, hops
 		jumps = append(jumps, client)
 	}
 
-	client, err := c.dialTargetThrough(ctx, host, jumps[len(jumps)-1], hops[0].host.Alias)
+	client, err := c.dialTargetThrough(ctx, host, jumps[len(jumps)-1], hops[len(hops)-1].host.Alias)
 	if err != nil {
 		closeJumps()
 		return nil, err

@@ -18,13 +18,14 @@ import (
 
 // HostImport describes one Host block to append to an OpenSSH client config.
 // Port must be 1-65535; the default Port 22 is omitted from the generated block.
-// Empty User or IdentityFile fields are omitted. LegacySSHRSA enables the two
-// opt-in ssh-rsa algorithm settings.
+// Empty User, IdentityFile, and ProxyJump fields are omitted. LegacySSHRSA
+// enables the two opt-in ssh-rsa algorithm settings.
 type HostImport struct {
 	Alias               string
 	HostName            string
 	User                string
 	IdentityFile        string
+	ProxyJump           string
 	Comment             string
 	Port                int
 	ServerAliveInterval int
@@ -127,15 +128,100 @@ func AddHosts(path string, imports []HostImport) (ImportResult, error) {
 	return result, nil
 }
 
+// PreviewHostAdd returns the unified diff that AddHost would produce.
+func PreviewHostAdd(path string, imp HostImport) (Preview, error) {
+	if err := validateHostImport(imp); err != nil {
+		return Preview{}, err
+	}
+	target, err := resolveImportTarget(path)
+	if err != nil {
+		return Preview{}, err
+	}
+	original, _, exists, err := readImportTarget(target)
+	if err != nil {
+		return Preview{}, err
+	}
+	if exists {
+		hosts, err := Load(target)
+		if err != nil {
+			return Preview{}, err
+		}
+		if aliasInHosts(hosts, imp.Alias) {
+			return Preview{}, fmt.Errorf("%w: %s", ErrHostExists, imp.Alias)
+		}
+	}
+	updated := appendHostImports(original, []HostImport{imp})
+	normalized := strings.ReplaceAll(string(original), "\r\n", "\n")
+	updatedDisplay := strings.ReplaceAll(string(updated), "\r\n", "\n")
+	return Preview{
+		Diff: previewUnifiedDiff(target, normalized, updatedDisplay),
+		Hash: contentHash(original),
+	}, nil
+}
+
+// AddHost appends one new concrete Host block after verifying that the config
+// still matches the content hash shown by PreviewHostAdd.
+func AddHost(path string, imp HostImport, expectedHash string) error {
+	if err := validateHostImport(imp); err != nil {
+		return err
+	}
+	target, err := resolveImportTarget(path)
+	if err != nil {
+		return err
+	}
+	lock := flock.New(target + ".lock")
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("sshconfig: lock %s: %w", target, err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	original, mode, exists, err := readImportTarget(target)
+	if err != nil {
+		return err
+	}
+	if expectedHash != "" && contentHash(original) != expectedHash {
+		return fmt.Errorf("%w: config changed since preview", ErrConfigChanged)
+	}
+	if exists {
+		hosts, err := Load(target)
+		if err != nil {
+			return err
+		}
+		if aliasInHosts(hosts, imp.Alias) {
+			return fmt.Errorf("%w: %s", ErrHostExists, imp.Alias)
+		}
+	}
+	updated := appendHostImports(original, []HostImport{imp})
+	current, _, currentExists, err := readImportTarget(target)
+	if err != nil {
+		return err
+	}
+	if currentExists != exists || !bytes.Equal(current, original) {
+		return fmt.Errorf("%w: %s changed during add", ErrConfigChanged, target)
+	}
+	if _, err := writeImportBackup(target, original, mode); err != nil {
+		return err
+	}
+	return replaceImportTarget(target, updated, mode)
+}
+
+func validateHostAlias(alias string) error {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return errors.New("sshconfig: alias is required")
+	}
+	if strings.ContainsAny(alias, "*?![#") || strings.ContainsRune(alias, ']') {
+		return fmt.Errorf("sshconfig: invalid alias %q", alias)
+	}
+	if strings.IndexFunc(alias, unicode.IsSpace) >= 0 || hasControlOrLineBreak(alias) {
+		return fmt.Errorf("sshconfig: invalid alias %q", alias)
+	}
+	return nil
+}
+
 func validateHostImport(imp HostImport) error {
-	if strings.TrimSpace(imp.Alias) == "" {
-		return errors.New("sshconfig: import alias is required")
-	}
-	if strings.ContainsAny(imp.Alias, "*?![#") || strings.ContainsRune(imp.Alias, ']') {
-		return fmt.Errorf("sshconfig: invalid import alias %q", imp.Alias)
-	}
-	if strings.IndexFunc(imp.Alias, unicode.IsSpace) >= 0 || hasControlOrLineBreak(imp.Alias) {
-		return fmt.Errorf("sshconfig: invalid import alias %q", imp.Alias)
+	if err := validateHostAlias(imp.Alias); err != nil {
+		return fmt.Errorf("sshconfig: import: %w", err)
 	}
 	if strings.TrimSpace(imp.HostName) == "" {
 		return fmt.Errorf("sshconfig: import %s requires a hostname", imp.Alias)
@@ -157,6 +243,9 @@ func validateHostImport(imp HostImport) error {
 	}
 	if hasControlOrLineBreak(imp.IdentityFile) {
 		return fmt.Errorf("sshconfig: invalid IdentityFile for %s", imp.Alias)
+	}
+	if hasControlOrLineBreak(imp.ProxyJump) {
+		return fmt.Errorf("sshconfig: invalid ProxyJump for %s", imp.Alias)
 	}
 	if hasControlOrLineBreak(imp.Comment) {
 		return fmt.Errorf("sshconfig: invalid comment for %s", imp.Alias)
@@ -306,6 +395,9 @@ func formatHostImport(imp HostImport) string {
 	}
 	if imp.IdentityFile != "" {
 		lines = append(lines, "  IdentityFile "+quoteSSHValue(imp.IdentityFile))
+	}
+	if imp.ProxyJump != "" {
+		lines = append(lines, "  ProxyJump "+quoteSSHValue(imp.ProxyJump))
 	}
 	if imp.ServerAliveInterval > 0 {
 		lines = append(lines, "  ServerAliveInterval "+strconv.Itoa(imp.ServerAliveInterval))

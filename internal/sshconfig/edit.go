@@ -18,12 +18,15 @@ import (
 var (
 	// ErrHostNotFound means the requested alias has no concrete Host block.
 	ErrHostNotFound = fmt.Errorf("sshconfig: host not found")
+	// ErrHostExists means the requested alias is already in use.
+	ErrHostExists = fmt.Errorf("sshconfig: host already exists")
 	// ErrConfigChanged means the file changed while we were editing it.
 	ErrConfigChanged = fmt.Errorf("sshconfig: config changed while editing")
 )
 
 // Edit describes safe changes to a single concrete Host block.
 type Edit struct {
+	Alias        *string
 	HostName     *string
 	User         *string
 	Port         *int
@@ -49,6 +52,13 @@ func EditHost(path, alias string, edit Edit) error {
 	if edit.Port != nil && (*edit.Port < 1 || *edit.Port > 65535) {
 		return fmt.Errorf("sshconfig: invalid port %d", *edit.Port)
 	}
+	newAlias := alias
+	if edit.Alias != nil {
+		newAlias = strings.TrimSpace(*edit.Alias)
+		if err := validateHostAlias(newAlias); err != nil {
+			return err
+		}
+	}
 
 	root := path
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
@@ -62,6 +72,14 @@ func EditHost(path, alias string, edit Edit) error {
 		return fmt.Errorf("sshconfig: lock %s: %w", root, err)
 	}
 	defer func() { _ = lock.Unlock() }()
+
+	if !strings.EqualFold(alias, newAlias) {
+		if _, _, _, err := findHostSource(root, newAlias, 0, map[string]bool{}); err == nil {
+			return fmt.Errorf("%w: %s", ErrHostExists, newAlias)
+		} else if !errors.Is(err, ErrHostNotFound) {
+			return err
+		}
+	}
 
 	source, _, _, err := findHostSource(root, alias, 0, map[string]bool{})
 	if err != nil {
@@ -147,6 +165,16 @@ func applyHostEdit(original []byte, alias string, edit Edit) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	targetAlias := alias
+	if edit.Alias != nil {
+		targetAlias = strings.TrimSpace(*edit.Alias)
+		if err := validateHostAlias(targetAlias); err != nil {
+			return nil, err
+		}
+		if err := renameHostPattern(&lines[start], alias, targetAlias); err != nil {
+			return nil, err
+		}
+	}
 	if edit.HostName != nil {
 		setKV(&lines, &start, &end, "HostName", *edit.HostName)
 	}
@@ -169,10 +197,37 @@ func applyHostEdit(original []byte, alias string, edit Edit) ([]byte, error) {
 	if _, err := ssh_config.Decode(strings.NewReader(updated)); err != nil {
 		return nil, fmt.Errorf("sshconfig: edited config is invalid: %w", err)
 	}
-	if _, _, err := findHostBlock(strings.Split(updated, "\n"), alias); err != nil {
-		return nil, fmt.Errorf("sshconfig: edited config lost host %s: %w", alias, err)
+	if _, _, err := findHostBlock(strings.Split(updated, "\n"), targetAlias); err != nil {
+		return nil, fmt.Errorf("sshconfig: edited config lost host %s: %w", targetAlias, err)
 	}
 	return []byte(updated), nil
+}
+
+func renameHostPattern(line *string, oldAlias, newAlias string) error {
+	trimmed := strings.TrimSpace(*line)
+	rest := strings.TrimSpace(trimmed[len("Host"):])
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "="))
+	patterns := strings.Fields(rest)
+	if len(patterns) == 0 {
+		return fmt.Errorf("sshconfig: empty Host line")
+	}
+	replaced := false
+	for i, pattern := range patterns {
+		if !strings.EqualFold(cleanPattern(pattern), oldAlias) {
+			if strings.EqualFold(cleanPattern(pattern), newAlias) {
+				return fmt.Errorf("%w: %s", ErrHostExists, newAlias)
+			}
+			continue
+		}
+		patterns[i] = newAlias
+		replaced = true
+	}
+	if !replaced {
+		return fmt.Errorf("%w: %s", ErrHostNotFound, oldAlias)
+	}
+	indent := (*line)[:len(*line)-len(strings.TrimLeft(*line, " \t"))]
+	*line = indent + "Host " + strings.Join(patterns, " ")
+	return nil
 }
 
 func findHostBlock(lines []string, alias string) (start, end int, err error) {

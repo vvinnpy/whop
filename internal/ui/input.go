@@ -15,11 +15,16 @@ type textField struct {
 	cursor  int
 	focused bool
 	width   int
+	secret  bool
 }
 
 func newTextField(label, value string, width int) textField {
 	runes := []rune(value)
 	return textField{label: label, value: runes, cursor: len(runes), width: width}
+}
+
+func newSecretField(label string, width int) textField {
+	return textField{label: label, width: width, secret: true}
 }
 
 func (f *textField) SetValue(value string) {
@@ -74,7 +79,11 @@ func (f *textField) Update(msg tea.KeyMsg) tea.Cmd {
 
 func (f *textField) View() string {
 	value := string(f.value)
-	if f.focused {
+	if f.secret {
+		if len(f.value) > 0 {
+			value = "********"
+		}
+	} else if f.focused {
 		before := string(f.value[:f.cursor])
 		after := string(f.value[f.cursor:])
 		value = before + "█" + after

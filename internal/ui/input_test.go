@@ -45,3 +45,16 @@ func TestTextFieldViewAndTrim(t *testing.T) {
 		t.Fatalf("trimmed = %q", field.String())
 	}
 }
+
+func TestSecretFieldNeverRendersValue(t *testing.T) {
+	field := newSecretField("Password", 40)
+	field.Focus()
+	field.Update(key("super-secret"))
+	view := field.View()
+	if strings.Contains(view, "super-secret") {
+		t.Fatalf("secret rendered in clear: %q", view)
+	}
+	if !strings.Contains(view, "********") {
+		t.Fatalf("mask missing: %q", view)
+	}
+}

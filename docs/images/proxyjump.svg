@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f141a"/><stop offset="1" stop-color="#18222d"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5fd7ff"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff6b6b"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="820" rx="24" fill="url(#bg)"/>
+  <text x="80" y="92" fill="#5fd7ff" font-family="Noto Sans CJK SC" font-size="42" font-weight="700">ProxyJump：通过跳板机连接内网目标</text>
+  <text x="80" y="137" fill="#91a0b3" font-family="Noto Sans CJK SC" font-size="23">whop 读取 ~/.ssh/config 中的 ProxyJump，并在进程内建立 SSH 隧道链。</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="230" width="330" height="220" rx="20" fill="#1b2732" stroke="#315064" stroke-width="2"/>
+    <rect x="635" y="230" width="330" height="220" rx="20" fill="#1b2732" stroke="#315064" stroke-width="2"/>
+    <rect x="1190" y="230" width="330" height="220" rx="20" fill="#1b2732" stroke="#315064" stroke-width="2"/>
+  </g>
+
+  <text x="115" y="286" fill="#e6fbff" font-family="Noto Sans CJK SC" font-size="28" font-weight="700">本地电脑</text>
+  <text x="115" y="330" fill="#91a0b3" font-family="JetBrains Mono" font-size="21">whop</text>
+  <text x="115" y="368" fill="#cbd5e1" font-family="Noto Sans CJK SC" font-size="20">发起连接</text>
+  <text x="115" y="406" fill="#6f8194" font-family="Noto Sans CJK SC" font-size="18">无需本机运行 ssh 命令</text>
+
+  <text x="670" y="286" fill="#e6fbff" font-family="Noto Sans CJK SC" font-size="28" font-weight="700">跳板机 / Bastion</text>
+  <text x="670" y="330" fill="#5fd7ff" font-family="JetBrains Mono" font-size="21">office-gw</text>
+  <text x="670" y="368" fill="#cbd5e1" font-family="JetBrains Mono" font-size="18">203.0.113.10:2202</text>
+  <text x="670" y="406" fill="#6f8194" font-family="Noto Sans CJK SC" font-size="18">公网可达，负责转发 TCP 通道</text>
+
+  <text x="1225" y="286" fill="#e6fbff" font-family="Noto Sans CJK SC" font-size="28" font-weight="700">目标服务器</text>
+  <text x="1225" y="330" fill="#5fd787" font-family="JetBrains Mono" font-size="21">db-via-bastion</text>
+  <text x="1225" y="368" fill="#cbd5e1" font-family="JetBrains Mono" font-size="18">10.40.0.50:22</text>
+  <text x="1225" y="406" fill="#6f8194" font-family="Noto Sans CJK SC" font-size="18">只允许从内网访问</text>
+
+  <line x1="420" y1="340" x2="620" y2="340" stroke="#5fd7ff" stroke-width="5" marker-end="url(#arrow)"/>
+  <text x="446" y="316" fill="#9fe8ff" font-family="Noto Sans CJK SC" font-size="18">SSH #1</text>
+  <line x1="975" y1="340" x2="1175" y2="340" stroke="#5fd7ff" stroke-width="5" marker-end="url(#arrow)"/>
+  <text x="1005" y="316" fill="#9fe8ff" font-family="Noto Sans CJK SC" font-size="18">SSH #2 / 隧道</text>
+
+  <path d="M 245 470 C 450 640, 1050 640, 1340 470" fill="none" stroke="#ff6b6b" stroke-width="4" stroke-dasharray="12 12" marker-end="url(#arrowRed)" opacity="0.85"/>
+  <text x="680" y="650" fill="#ff8e8e" font-family="Noto Sans CJK SC" font-size="22">目标通常不可从本地直接访问</text>
+  <text x="680" y="684" fill="#6f8194" font-family="Noto Sans CJK SC" font-size="18">直连路径不通时，由跳板机承担转发</text>
+
+  <rect x="80" y="690" width="1440" height="0" fill="none"/>
+  <text x="80" y="752" fill="#91a0b3" font-family="JetBrains Mono" font-size="18">Host db-via-bastion</text>
+  <text x="80" y="786" fill="#91a0b3" font-family="JetBrains Mono" font-size="18">  ProxyJump office-gw</text>
+</svg>

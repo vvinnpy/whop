@@ -56,6 +56,7 @@ type MetaStore interface {
 	SetFavorite(string, bool) error
 	SetNotes(string, string) error
 	SetTags(string, []string) error
+	RenameHost(string, string) error
 	RecordConnect(string, time.Time) error
 	SetSnippet(string, string) error
 	Snippets() (map[string]string, error)
@@ -293,6 +294,21 @@ func runTUI(args []string, deps Deps) int {
 			},
 			EditHost: func(host sshconfig.Host, edit sshconfig.Edit) error {
 				return sshconfig.EditHost(configPathValue, host.Alias, edit)
+			},
+			PreviewAdd: func(imp sshconfig.HostImport) (sshconfig.Preview, error) {
+				return sshconfig.PreviewHostAdd(configPathValue, imp)
+			},
+			AddHost: func(imp sshconfig.HostImport, expectedHash string) error {
+				return sshconfig.AddHost(configPathValue, imp, expectedHash)
+			},
+			RenameHost: func(oldAlias, newAlias string) error {
+				if err := metaStore.RenameHost(oldAlias, newAlias); err != nil {
+					return err
+				}
+				return renameVaultPassword(deps, oldAlias, newAlias)
+			},
+			SetHostPassword: func(host sshconfig.Host, password string) error {
+				return saveHostPassword(deps, host.Alias, password)
 			},
 			SetTags: func(host sshconfig.Host, tags []string) error {
 				return metaStore.SetTags(host.Alias, tags)

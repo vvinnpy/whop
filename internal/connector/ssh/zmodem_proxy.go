@@ -83,7 +83,7 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 			for {
 				index := bytes.Index(pending, zmodemHeaderMarker)
 				if index < 0 {
-					flush := len(pending) - (len(zmodemHeaderMarker) - 1)
+					flush := zmodemPreviewFlushLen(pending, zmodemHeaderMarker)
 					if flush > 0 {
 						if _, err := stdout.Write(pending[:flush]); err != nil {
 							return err
@@ -123,11 +123,33 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
+				if len(pending) > 0 {
+					if _, err := stdout.Write(pending); err != nil {
+						return err
+					}
+				}
 				return nil
 			}
 			return readErr
 		}
 	}
+}
+
+// zmodemPreviewFlushLen returns how many bytes can be emitted immediately
+// without losing a split ZMODEM header. Ordinary terminal output must never be
+// delayed by the marker length; only a suffix that is actually a marker prefix
+// needs to remain buffered.
+func zmodemPreviewFlushLen(pending, marker []byte) int {
+	maxHold := len(marker) - 1
+	if len(pending) < maxHold {
+		maxHold = len(pending)
+	}
+	for hold := maxHold; hold > 0; hold-- {
+		if bytes.Equal(pending[len(pending)-hold:], marker[:hold]) {
+			return len(pending) - hold
+		}
+	}
+	return len(pending)
 }
 
 func readLocalInput(stdin io.Reader, output chan<- []byte) {

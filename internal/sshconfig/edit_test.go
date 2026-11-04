@@ -339,3 +339,42 @@ func TestEditHostPreservesIncludedSymlink(t *testing.T) {
 		t.Fatalf("included symlink target not updated:\n%s", updated)
 	}
 }
+
+func TestEditHostRenamesAlias(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	writeFile(t, path, `Host old-name # keep comment
+  HostName 10.0.0.1
+  User deploy
+
+Host other
+  HostName 10.0.0.2
+`)
+	if err := EditHost(path, "old-name", Edit{Alias: strPtr("new-name")}); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := os.ReadFile(path)
+	if !strings.Contains(string(text), "Host new-name") || strings.Contains(string(text), "Host old-name") {
+		t.Fatalf("alias not renamed:\n%s", text)
+	}
+	if !strings.Contains(string(text), "10.0.0.2") {
+		t.Fatalf("unrelated host changed:\n%s", text)
+	}
+	hosts, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Find(hosts, "new-name"); !ok {
+		t.Fatal("renamed host missing")
+	}
+	if _, ok := Find(hosts, "old-name"); ok {
+		t.Fatal("old alias still present")
+	}
+}
+
+func TestEditHostRejectsDuplicateRename(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	writeFile(t, path, "Host one\n  HostName 10.0.0.1\nHost two\n  HostName 10.0.0.2\n")
+	if err := EditHost(path, "one", Edit{Alias: strPtr("two")}); err == nil {
+		t.Fatal("expected duplicate alias error")
+	}
+}

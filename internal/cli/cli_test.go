@@ -235,8 +235,54 @@ func TestTUIOptions(t *testing.T) {
 	if td.tuiOpts.EditHost == nil || td.tuiOpts.SetTags == nil || td.tuiOpts.SaveNotes == nil {
 		t.Fatal("tui metadata callbacks must be configured")
 	}
+	if td.tuiOpts.PreviewAdd == nil || td.tuiOpts.AddHost == nil || td.tuiOpts.RenameHost == nil || td.tuiOpts.SetHostPassword == nil {
+		t.Fatal("tui host management callbacks must be configured")
+	}
 	if td.tuiErr != nil || len(td.tuiHosts) != 3 {
 		t.Fatalf("load returned %#v, %v", td.tuiHosts, td.tuiErr)
+	}
+}
+
+func TestTUIAddAndRenameHostCallbacks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("Host old\n  HostName 10.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	if code := Run([]string{"-config", path}, td.deps); code != 0 {
+		t.Fatalf("TUI exit = %d: %s", code, td.stderr.String())
+	}
+	imp := sshconfig.HostImport{Alias: "new-host", HostName: "10.0.0.2", User: "deploy", Port: 22}
+	preview, err := td.tuiOpts.PreviewAdd(imp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Diff == "" {
+		t.Fatal("create preview is empty")
+	}
+	if err := td.tuiOpts.AddHost(imp, preview.Hash); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := sshconfig.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sshconfig.Find(hosts, "new-host"); !ok {
+		t.Fatal("new host was not written")
+	}
+
+	if err := td.metaStore.SetFavorite("old", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := td.tuiOpts.RenameHost("old", "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := td.metaStore.Get("renamed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Favorite {
+		t.Fatalf("renamed metadata = %+v", meta)
 	}
 }
 

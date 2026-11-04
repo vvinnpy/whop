@@ -1,6 +1,7 @@
 package sshconfig
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -358,5 +359,45 @@ func assertNoImportArtifacts(t *testing.T, dir, base string) {
 		if len(matches) != 0 {
 			t.Fatalf("unexpected artifacts for %q: %#v", pattern, matches)
 		}
+	}
+}
+
+func TestPreviewAndAddHost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	writeFile(t, path, "Host existing\n  HostName 10.0.0.1\n")
+	imp := HostImport{Alias: "new-host", HostName: "10.0.0.2", User: "deploy", Port: 2222, ProxyJump: "bastion"}
+	preview, err := PreviewHostAdd(path, imp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(preview.Diff, "+Host new-host") || preview.Hash == "" {
+		t.Fatalf("unexpected preview: %+v", preview)
+	}
+	if err := AddHost(path, imp, preview.Hash); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, ok := Find(hosts, "new-host")
+	if !ok || host.HostName != "10.0.0.2" || host.User != "deploy" || host.Port != 2222 || host.ProxyJump != "bastion" {
+		t.Fatalf("new host = %+v ok=%v", host, ok)
+	}
+	if err := AddHost(path, imp, ""); !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate add error = %v", err)
+	}
+}
+
+func TestAddHostRejectsStalePreview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	writeFile(t, path, "Host existing\n  HostName 10.0.0.1\n")
+	preview, err := PreviewHostAdd(path, HostImport{Alias: "new", HostName: "10.0.0.2", Port: 22})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, "Host changed\n  HostName 10.0.0.3\n")
+	if err := AddHost(path, HostImport{Alias: "new", HostName: "10.0.0.2", Port: 22}, preview.Hash); !errors.Is(err, ErrConfigChanged) {
+		t.Fatalf("stale add error = %v", err)
 	}
 }

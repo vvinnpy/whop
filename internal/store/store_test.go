@@ -328,3 +328,40 @@ func TestTranscriptQueryValidationAndEscaping(t *testing.T) {
 		}
 	}
 }
+
+func TestRenameHostMovesMetadataAndTags(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetFavorite("old", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetNotes("old", "keep me"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetTags("old", []string{"prod", "db"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RenameHost("old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := db.Get("old")
+	if old.Favorite || old.Notes != "" || len(old.Tags) != 0 {
+		t.Fatalf("old metadata remains: %+v", old)
+	}
+	newMeta, err := db.Get("new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !newMeta.Favorite || newMeta.Notes != "keep me" || len(newMeta.Tags) != 2 {
+		t.Fatalf("new metadata = %+v", newMeta)
+	}
+	if err := db.SetFavorite("other", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RenameHost("new", "other"); err == nil {
+		t.Fatal("expected target metadata conflict")
+	}
+}

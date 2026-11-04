@@ -3,6 +3,7 @@ package sshconfig
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,10 +39,25 @@ func PreviewHostChange(path, alias string, edit Edit) (Preview, error) {
 	if edit.Port != nil && (*edit.Port < 1 || *edit.Port > 65535) {
 		return Preview{}, fmt.Errorf("sshconfig: invalid port %d", *edit.Port)
 	}
+	newAlias := alias
+	if edit.Alias != nil {
+		newAlias = strings.TrimSpace(*edit.Alias)
+		if err := validateHostAlias(newAlias); err != nil {
+			return Preview{}, err
+		}
+	}
 
 	root := path
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		root = resolved
+	}
+
+	if !strings.EqualFold(alias, newAlias) {
+		if _, _, _, err := findHostSource(root, newAlias, 0, map[string]bool{}); err == nil {
+			return Preview{}, fmt.Errorf("%w: %s", ErrHostExists, newAlias)
+		} else if !errors.Is(err, ErrHostNotFound) {
+			return Preview{}, err
+		}
 	}
 
 	source, _, _, err := findHostSource(root, alias, 0, map[string]bool{})

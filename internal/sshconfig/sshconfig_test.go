@@ -159,3 +159,24 @@ func TestFind(t *testing.T) {
 		t.Fatal("unexpected match")
 	}
 }
+
+func TestLoadInheritsDefaultIdentityFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	writeFile(t, path, `Host *
+  IdentityFile ~/.ssh/id_ed25519
+
+Host new-host
+  HostName 10.0.0.9
+`)
+	hosts, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, ok := Find(hosts, "new-host")
+	if !ok {
+		t.Fatal("new-host missing")
+	}
+	if len(host.IdentityFiles) != 1 || host.IdentityFiles[0] != "~/.ssh/id_ed25519" {
+		t.Fatalf("default identity not inherited: %#v", host.IdentityFiles)
+	}
+}

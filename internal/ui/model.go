@@ -12,6 +12,18 @@ import (
 	"whop/internal/sshconfig"
 )
 
+const (
+	editFieldAlias = iota
+	editFieldHostName
+	editFieldUser
+	editFieldPort
+	editFieldProxyJump
+	editFieldIdentityFile
+	editFieldTags
+	editFieldPassword
+	editFieldPasswordConfirm
+)
+
 // HostLoader loads all SSH config entries.
 type HostLoader func() ([]sshconfig.Host, error)
 
@@ -26,20 +38,24 @@ type MacroRunner func(sshconfig.Host, string) tea.Cmd
 
 // Options configures the TUI model.
 type Options struct {
-	ConfigPath     string
-	InitialFilter  string
-	InitialStatus  string
-	ShowAll        bool
-	Record         bool
-	Load           HostLoader
-	Connect        ConnectFunc
-	LoadMacros     MacroLoader
-	RunMacro       MacroRunner
-	ToggleFavorite func(sshconfig.Host, bool) error
-	PreviewEdit    func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error)
-	EditHost       func(sshconfig.Host, sshconfig.Edit) error
-	SetTags        func(sshconfig.Host, []string) error
-	SaveNotes      func(sshconfig.Host, string) error
+	ConfigPath      string
+	InitialFilter   string
+	InitialStatus   string
+	ShowAll         bool
+	Record          bool
+	Load            HostLoader
+	Connect         ConnectFunc
+	LoadMacros      MacroLoader
+	RunMacro        MacroRunner
+	ToggleFavorite  func(sshconfig.Host, bool) error
+	PreviewEdit     func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error)
+	EditHost        func(sshconfig.Host, sshconfig.Edit) error
+	PreviewAdd      func(sshconfig.HostImport) (sshconfig.Preview, error)
+	AddHost         func(sshconfig.HostImport, string) error
+	RenameHost      func(oldAlias, newAlias string) error
+	SetHostPassword func(sshconfig.Host, string) error
+	SetTags         func(sshconfig.Host, []string) error
+	SaveNotes       func(sshconfig.Host, string) error
 }
 
 // ConnectFinishedMsg is emitted after an interactive session returns.
@@ -61,16 +77,20 @@ type hostsLoadedMsg struct {
 
 // Model is the whop list/detail screen.
 type Model struct {
-	configPath     string
-	load           HostLoader
-	connect        ConnectFunc
-	loadMacros     MacroLoader
-	runMacro       MacroRunner
-	toggleFavorite func(sshconfig.Host, bool) error
-	previewEdit    func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error)
-	editHost       func(sshconfig.Host, sshconfig.Edit) error
-	setTags        func(sshconfig.Host, []string) error
-	saveNotes      func(sshconfig.Host, string) error
+	configPath      string
+	load            HostLoader
+	connect         ConnectFunc
+	loadMacros      MacroLoader
+	runMacro        MacroRunner
+	toggleFavorite  func(sshconfig.Host, bool) error
+	previewEdit     func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error)
+	editHost        func(sshconfig.Host, sshconfig.Edit) error
+	previewAdd      func(sshconfig.HostImport) (sshconfig.Preview, error)
+	addHost         func(sshconfig.HostImport, string) error
+	renameHost      func(oldAlias, newAlias string) error
+	setHostPassword func(sshconfig.Host, string) error
+	setTags         func(sshconfig.Host, []string) error
+	saveNotes       func(sshconfig.Host, string) error
 
 	allHosts []sshconfig.Host
 	filtered []sshconfig.Host
@@ -90,17 +110,27 @@ type Model struct {
 	status string
 	err    error
 
-	editing    bool
-	editFields []textField
-	editFocus  int
-	editTarget sshconfig.Host
+	editing              bool
+	creating             bool
+	editFields           []textField
+	editFocus            int
+	editTarget           sshconfig.Host
+	editAliasInitial     string
+	editHostNameInitial  string
+	editUserInitial      string
+	editPortInitial      int
+	editProxyJumpInitial string
+	editIdentityInitial  string
 
-	diffMode    bool
-	diffLines   []string
-	diffOffset  int
-	diffTarget  sshconfig.Host
-	pendingEdit sshconfig.Edit
-	pendingTags []string
+	diffMode        bool
+	diffLines       []string
+	diffOffset      int
+	diffTarget      sshconfig.Host
+	pendingEdit     sshconfig.Edit
+	pendingAdd      *sshconfig.HostImport
+	pendingAddHash  string
+	pendingTags     []string
+	pendingPassword string
 
 	notesMode   bool
 	notesInput  textField
@@ -115,22 +145,26 @@ type Model struct {
 // New creates a new TUI model.
 func New(opts Options) *Model {
 	m := &Model{
-		configPath:     opts.ConfigPath,
-		load:           opts.Load,
-		connect:        opts.Connect,
-		loadMacros:     opts.LoadMacros,
-		runMacro:       opts.RunMacro,
-		toggleFavorite: opts.ToggleFavorite,
-		previewEdit:    opts.PreviewEdit,
-		editHost:       opts.EditHost,
-		setTags:        opts.SetTags,
-		saveNotes:      opts.SaveNotes,
-		filter:         opts.InitialFilter,
-		initialStatus:  opts.InitialStatus,
-		showAll:        opts.ShowAll,
-		record:         opts.Record,
-		width:          100,
-		height:         30,
+		configPath:      opts.ConfigPath,
+		load:            opts.Load,
+		connect:         opts.Connect,
+		loadMacros:      opts.LoadMacros,
+		runMacro:        opts.RunMacro,
+		toggleFavorite:  opts.ToggleFavorite,
+		previewEdit:     opts.PreviewEdit,
+		editHost:        opts.EditHost,
+		previewAdd:      opts.PreviewAdd,
+		addHost:         opts.AddHost,
+		renameHost:      opts.RenameHost,
+		setHostPassword: opts.SetHostPassword,
+		setTags:         opts.SetTags,
+		saveNotes:       opts.SaveNotes,
+		filter:          opts.InitialFilter,
+		initialStatus:   opts.InitialStatus,
+		showAll:         opts.ShowAll,
+		record:          opts.Record,
+		width:           100,
+		height:          30,
 	}
 	return m
 }
@@ -221,10 +255,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.filterFocused {
 		switch msg.String() {
-		case "esc":
-			m.filter = ""
-			m.filterFocused = false
-			m.applyFilter()
+		case "esc", "tab":
+			m.applyFilterAndExit()
 			return m, nil
 		case "enter":
 			m.filterFocused = false
@@ -236,14 +268,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter = ""
 			m.applyFilter()
 			return m, nil
-		case "up":
+		case "up", "ctrl+p":
 			m.move(-1)
 			return m, nil
-		case "down":
+		case "down", "ctrl+n":
 			m.move(1)
-			return m, nil
-		case "tab":
-			m.filterFocused = false
 			return m, nil
 		}
 		if len(msg.Runes) > 0 {
@@ -261,9 +290,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		return m.connectSelected()
-	case "j", "down":
+	case "j", "down", "ctrl+n":
 		m.move(1)
-	case "k", "up":
+	case "k", "up", "ctrl+p":
 		m.move(-1)
 	case "g":
 		m.cursor = 0
@@ -288,6 +317,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "f":
 		m.toggleSelectedFavorite()
+	case "N":
+		m.startCreate()
 	case "e":
 		m.startEdit()
 	case "n":
@@ -372,12 +403,12 @@ func (m *Model) updateMacros(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.macroMode = false
 		m.status = "macro cancelled"
 		return m, nil
-	case "j", "down":
+	case "j", "down", "ctrl+n":
 		if len(m.macroNames) > 0 {
 			m.macroCursor = (m.macroCursor + 1) % len(m.macroNames)
 		}
 		return m, nil
-	case "k", "up":
+	case "k", "up", "ctrl+p":
 		if len(m.macroNames) > 0 {
 			m.macroCursor = (m.macroCursor - 1 + len(m.macroNames)) % len(m.macroNames)
 		}
@@ -410,26 +441,81 @@ func (m *Model) startEdit() {
 	if width < 20 {
 		width = 20
 	}
+	identity := ""
+	if len(host.IdentityFiles) == 1 {
+		identity = host.IdentityFiles[0]
+	}
 	fields := []textField{
+		newTextField("Name", host.Alias, width),
 		newTextField("HostName", host.HostName, width),
 		newTextField("User", host.User, width),
 		newTextField("Port", strconv.Itoa(host.Port), width),
 		newTextField("ProxyJump", host.ProxyJump, width),
+		newTextField("IdentityFile", identity, width),
 		newTextField("Tags", strings.Join(host.Tags, ","), width),
+		newSecretField("Password", width),
+		newSecretField("Confirm password", width),
 	}
 	m.editFields = fields
-	m.editFocus = 0
-	m.editFields[0].Focus()
+	m.editFocus = editFieldAlias
+	m.editFields[m.editFocus].Focus()
 	m.editTarget = host
+	m.editAliasInitial = host.Alias
+	m.editHostNameInitial = host.HostName
+	m.editUserInitial = host.User
+	m.editPortInitial = host.Port
+	m.editProxyJumpInitial = host.ProxyJump
+	m.editIdentityInitial = identity
+	m.creating = false
+	m.pendingAdd = nil
+	m.pendingAddHash = ""
 	m.editing = true
 	m.err = nil
 	m.status = "editing " + host.Alias
 }
 
+func (m *Model) startCreate() {
+	width := m.width - 20
+	if width < 20 {
+		width = 20
+	}
+	fields := []textField{
+		newTextField("Name", "", width),
+		newTextField("HostName", "", width),
+		newTextField("User", "", width),
+		newTextField("Port", "22", width),
+		newTextField("ProxyJump", "", width),
+		newTextField("IdentityFile", "", width),
+		newTextField("Tags", "", width),
+		newSecretField("Password", width),
+		newSecretField("Confirm password", width),
+	}
+	m.editFields = fields
+	m.editFocus = editFieldAlias
+	m.editFields[m.editFocus].Focus()
+	m.editTarget = sshconfig.Host{}
+	m.editAliasInitial = ""
+	m.editHostNameInitial = ""
+	m.editUserInitial = ""
+	m.editPortInitial = 0
+	m.editProxyJumpInitial = ""
+	m.editIdentityInitial = ""
+	m.creating = true
+	m.pendingAdd = nil
+	m.pendingAddHash = ""
+	m.editing = true
+	m.err = nil
+	m.status = "new host"
+}
+
 func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		m.clearEditPassword()
 		m.editing = false
+		m.creating = false
+		m.pendingAdd = nil
+		m.pendingAddHash = ""
 		m.status = "edit cancelled"
 		return m, nil
 	case "tab":
@@ -452,17 +538,88 @@ func (m *Model) focusEditField(delta int) {
 }
 
 func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
-	port, err := strconv.Atoi(strings.TrimSpace(m.editFields[2].Value()))
+	port, err := strconv.Atoi(strings.TrimSpace(m.editFields[editFieldPort].Value()))
 	if err != nil || port < 1 || port > 65535 {
-		m.err = fmt.Errorf("invalid port %q", m.editFields[2].Value())
+		m.err = fmt.Errorf("invalid port %q", m.editFields[editFieldPort].Value())
 		m.status = "invalid port"
 		return m, nil
 	}
-	hostName := strings.TrimSpace(m.editFields[0].Value())
-	user := strings.TrimSpace(m.editFields[1].Value())
-	proxyJump := strings.TrimSpace(m.editFields[3].Value())
-	tags := splitTags(m.editFields[4].Value())
-	edit := sshconfig.Edit{HostName: &hostName, User: &user, Port: &port, ProxyJump: &proxyJump}
+	alias := strings.TrimSpace(m.editFields[editFieldAlias].Value())
+	if alias == "" {
+		m.err = fmt.Errorf("host name is required")
+		m.status = "invalid host name"
+		return m, nil
+	}
+	hostName := strings.TrimSpace(m.editFields[editFieldHostName].Value())
+	user := strings.TrimSpace(m.editFields[editFieldUser].Value())
+	proxyJump := strings.TrimSpace(m.editFields[editFieldProxyJump].Value())
+	identityFile := strings.TrimSpace(m.editFields[editFieldIdentityFile].Value())
+	tags := splitTags(m.editFields[editFieldTags].Value())
+	password := m.editFields[editFieldPassword].Value()
+	if password != m.editFields[editFieldPasswordConfirm].Value() {
+		m.err = fmt.Errorf("host passwords do not match")
+		m.status = "password confirmation does not match"
+		return m, nil
+	}
+
+	if m.creating {
+		if hostName == "" {
+			m.err = fmt.Errorf("hostname is required")
+			m.status = "invalid hostname"
+			return m, nil
+		}
+		imp := sshconfig.HostImport{
+			Alias:        alias,
+			HostName:     hostName,
+			User:         user,
+			Port:         port,
+			ProxyJump:    proxyJump,
+			IdentityFile: identityFile,
+		}
+		if m.previewAdd != nil {
+			preview, err := m.previewAdd(imp)
+			if err != nil {
+				m.err = err
+				m.status = "diff preview failed"
+				return m, nil
+			}
+			if strings.TrimSpace(preview.Diff) != "" {
+				m.pendingAdd = &imp
+				m.pendingAddHash = preview.Hash
+				m.pendingTags = tags
+				m.pendingPassword = password
+				m.diffTarget = sshconfig.Host{Alias: alias}
+				m.diffLines = strings.Split(strings.TrimRight(preview.Diff, "\n"), "\n")
+				m.diffOffset = 0
+				m.editing = false
+				m.diffMode = true
+				m.err = nil
+				m.status = "review new host"
+				return m, nil
+			}
+		}
+		return m.commitCreate(imp, tags, password, "")
+	}
+
+	edit := sshconfig.Edit{}
+	if alias != m.editAliasInitial {
+		edit.Alias = &alias
+	}
+	if hostName != m.editHostNameInitial {
+		edit.HostName = &hostName
+	}
+	if user != m.editUserInitial {
+		edit.User = &user
+	}
+	if port != m.editPortInitial {
+		edit.Port = &port
+	}
+	if proxyJump != m.editProxyJumpInitial {
+		edit.ProxyJump = &proxyJump
+	}
+	if identityFile != m.editIdentityInitial {
+		edit.IdentityFile = &identityFile
+	}
 	if m.previewEdit != nil {
 		preview, err := m.previewEdit(m.editTarget, edit)
 		if err != nil {
@@ -473,7 +630,9 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(preview.Diff) != "" {
 			edit.ExpectedHash = preview.Hash
 			m.pendingEdit = edit
+			m.pendingAdd = nil
 			m.pendingTags = tags
+			m.pendingPassword = password
 			m.diffTarget = m.editTarget
 			m.diffLines = strings.Split(strings.TrimRight(preview.Diff, "\n"), "\n")
 			m.diffOffset = 0
@@ -484,10 +643,23 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m.commitEdit(m.editTarget, edit, tags)
+	return m.commitEdit(m.editTarget, edit, tags, password)
 }
 
-func (m *Model) commitEdit(host sshconfig.Host, edit sshconfig.Edit, tags []string) (tea.Model, tea.Cmd) {
+func (m *Model) commitEdit(host sshconfig.Host, edit sshconfig.Edit, tags []string, password string) (tea.Model, tea.Cmd) {
+	if password != "" {
+		if m.setHostPassword == nil {
+			m.err = fmt.Errorf("password storage is not configured")
+			m.status = "password not saved"
+			return m, nil
+		}
+		if err := m.setHostPassword(host, password); err != nil {
+			m.err = err
+			m.status = "password not saved"
+			return m, nil
+		}
+		m.clearEditPassword()
+	}
 	if m.editHost == nil {
 		m.err = fmt.Errorf("edit is not configured")
 		m.status = "edit failed"
@@ -498,33 +670,114 @@ func (m *Model) commitEdit(host sshconfig.Host, edit sshconfig.Edit, tags []stri
 		m.status = "edit failed"
 		return m, nil
 	}
-	if m.setTags != nil {
-		if err := m.setTags(host, tags); err != nil {
-			m.err = err
-			m.status = "tag update failed"
-			return m, nil
+
+	effectiveAlias := host.Alias
+	if edit.Alias != nil {
+		effectiveAlias = strings.TrimSpace(*edit.Alias)
+	}
+	if effectiveAlias != host.Alias && m.renameHost != nil {
+		if err := m.renameHost(host.Alias, effectiveAlias); err != nil {
+			return m.finishEdit(fmt.Errorf("host renamed but metadata migration failed: %w", err))
 		}
 	}
+	if m.setTags != nil {
+		effectiveHost := host
+		effectiveHost.Alias = effectiveAlias
+		if err := m.setTags(effectiveHost, tags); err != nil {
+			return m.finishEdit(fmt.Errorf("host updated but tags were not saved: %w", err))
+		}
+	}
+	return m.finishEdit(nil)
+}
+
+func (m *Model) commitCreate(imp sshconfig.HostImport, tags []string, password, expectedHash string) (tea.Model, tea.Cmd) {
+	if m.addHost == nil {
+		m.err = fmt.Errorf("create is not configured")
+		m.status = "create failed"
+		return m, nil
+	}
+	if err := m.addHost(imp, expectedHash); err != nil {
+		m.err = err
+		m.status = "create failed"
+		return m, nil
+	}
+	host := sshconfig.Host{Alias: imp.Alias, HostName: imp.HostName, User: imp.User, Port: imp.Port, ProxyJump: imp.ProxyJump}
+	if m.setTags != nil {
+		if err := m.setTags(host, tags); err != nil {
+			return m.finishCreate(fmt.Errorf("host created but tags were not saved: %w", err))
+		}
+	}
+	if password != "" {
+		if m.setHostPassword == nil {
+			return m.finishCreate(fmt.Errorf("host created but password storage is not configured"))
+		}
+		if err := m.setHostPassword(host, password); err != nil {
+			return m.finishCreate(fmt.Errorf("host created but password was not saved: %w", err))
+		}
+	}
+	return m.finishCreate(nil)
+}
+
+func (m *Model) finishEdit(err error) (tea.Model, tea.Cmd) {
+	m.clearEditPassword()
+	m.pendingAdd = nil
+	m.pendingAddHash = ""
 	m.editing = false
+	m.creating = false
 	m.diffMode = false
-	m.err = nil
-	m.status = "host updated"
+	m.err = err
+	if err != nil {
+		m.status = "host updated with errors"
+	} else {
+		m.status = "host updated"
+	}
 	return m, m.reload
+}
+
+func (m *Model) finishCreate(err error) (tea.Model, tea.Cmd) {
+	m.clearEditPassword()
+	m.pendingAdd = nil
+	m.pendingAddHash = ""
+	m.editing = false
+	m.creating = false
+	m.diffMode = false
+	m.err = err
+	if err != nil {
+		m.status = "host created with errors"
+	} else {
+		m.status = "host created"
+	}
+	return m, m.reload
+}
+
+func (m *Model) clearEditPassword() {
+	if len(m.editFields) > editFieldPasswordConfirm {
+		m.editFields[editFieldPassword].SetValue("")
+		m.editFields[editFieldPasswordConfirm].SetValue("")
+	}
+	m.pendingPassword = ""
 }
 
 func (m *Model) updateDiff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "enter":
-		return m.commitEdit(m.diffTarget, m.pendingEdit, m.pendingTags)
+		if m.pendingAdd != nil {
+			return m.commitCreate(*m.pendingAdd, m.pendingTags, m.pendingPassword, m.pendingAddHash)
+		}
+		return m.commitEdit(m.diffTarget, m.pendingEdit, m.pendingTags, m.pendingPassword)
 	case "n", "esc", "q":
 		m.diffMode = false
 		m.editing = true
 		m.err = nil
-		m.status = "edit still open"
+		if m.creating {
+			m.status = "new host still open"
+		} else {
+			m.status = "edit still open"
+		}
 		return m, nil
-	case "j", "down":
+	case "j", "down", "ctrl+n":
 		m.diffOffset++
-	case "k", "up":
+	case "k", "up", "ctrl+p":
 		m.diffOffset--
 	case "ctrl+d", "pgdown":
 		m.diffOffset += m.diffPageSize()
@@ -699,6 +952,15 @@ func (m *Model) clampCursor() {
 	}
 	if m.cursor >= len(m.filtered) {
 		m.cursor = len(m.filtered) - 1
+	}
+}
+
+func (m *Model) applyFilterAndExit() {
+	m.filterFocused = false
+	if m.filter != "" {
+		m.status = "filter applied: " + m.filter
+	} else {
+		m.status = "filter cleared"
 	}
 }
 

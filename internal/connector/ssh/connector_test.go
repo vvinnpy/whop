@@ -294,7 +294,7 @@ func TestMultiHopProxyJump(t *testing.T) {
 		Port:          target.port(),
 		User:          "tester",
 		IdentityFiles: []string{keyPath},
-		ProxyJump:     "inner,outer",
+		ProxyJump:     "outer,inner",
 	}
 
 	connector := New(Options{

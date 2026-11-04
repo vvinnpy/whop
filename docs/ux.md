@@ -42,11 +42,12 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 | `enter` | connect to selected host |
 | `/` | focus filter |
 | any printable character | filter immediately (when filter focused) |
-| `esc` | clear filter; if empty, quit |
+| `tab` / `esc` | apply filter and return to list action mode |
+| `esc` in list mode | clear active filter; if empty, quit |
 | `backspace` | delete last filter character |
-| `ctrl+u` | clear filter |
-| `j` / `down` | next host |
-| `k` / `up` | previous host |
+| `ctrl+u` in filter mode | clear filter and stay in filter mode |
+| `j` / `down` / `ctrl+n` | next host |
+| `k` / `up` / `ctrl+p` | previous host |
 | `g` / `G` | first / last host |
 | `ctrl+d` / `ctrl+u` | page down / page up |
 | `r` | reload config |
@@ -58,6 +59,10 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 
 - Typing filters without opening a dialog.
 - `enter` connects immediately.
+- `tab` or `esc` applies the filter and returns to list action mode, so `e`,
+  `n`, `m`, `f`, and `N` can operate on the filtered result without typing into
+  the filter.
+- In list action mode, `esc` clears the active filter; a second `esc` quits.
 - Initial CLI arguments act as an initial filter:
   `whop prod` opens with `prod` already applied.
 - If the initial filter matches exactly one host, the user can press `enter`

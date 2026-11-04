@@ -358,6 +358,91 @@ func readVaultKeyFile() (string, bool, error) {
 	return key, true, nil
 }
 
+// saveHostPassword updates one host password without putting the secret in
+// process arguments or plaintext configuration. The vault must already exist;
+// creating one requires an explicit vault init so the user understands the
+// master-password choice.
+func saveHostPassword(deps Deps, alias, password string) error {
+	if strings.TrimSpace(alias) == "" {
+		return errors.New("host alias is empty")
+	}
+	if password == "" {
+		return errors.New("host password is empty")
+	}
+	path, err := vaultPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("vault not initialized: %s (run: whop vault init)", path)
+		}
+		return err
+	}
+	master, err := readVaultMasterPassword(deps, false)
+	if err != nil {
+		return err
+	}
+	vault, err := secrets.Open(path, master)
+	if err != nil {
+		return err
+	}
+	defer vault.Close()
+	if err := vault.Set(alias, password); err != nil {
+		return err
+	}
+	if err := vault.Save(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// renameVaultPassword moves a stored host password when its SSH alias changes.
+// No vault or no entry for oldAlias is a no-op.
+func renameVaultPassword(deps Deps, oldAlias, newAlias string) error {
+	if oldAlias == newAlias {
+		return nil
+	}
+	path, err := vaultPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	master, err := readVaultMasterPassword(deps, false)
+	if err != nil {
+		return err
+	}
+	vault, err := secrets.Open(path, master)
+	if err != nil {
+		return err
+	}
+	defer vault.Close()
+	password, found, err := vault.Get(oldAlias)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if _, targetExists, err := vault.Get(newAlias); err != nil {
+		return err
+	} else if targetExists {
+		return fmt.Errorf("vault already contains a password for %s", newAlias)
+	}
+	if err := vault.Set(newAlias, password); err != nil {
+		return err
+	}
+	if err := vault.Delete(oldAlias); err != nil {
+		return err
+	}
+	return vault.Save()
+}
+
 func openExistingVault(deps Deps) (*secrets.Vault, error) {
 	path, err := vaultPath()
 	if err != nil {

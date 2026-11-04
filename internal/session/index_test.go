@@ -89,7 +89,7 @@ func TestIndexDirectoryUsesWHOPHost(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "filename-host-20261103-100000.000")
 	writeIndexCast(t, base+".cast", v2Header(t, 1762164000, map[string]string{
-		"TERM":         "xterm-256color",
+		"TERM":      "xterm-256color",
 		"WHOP_HOST": "db.example.com",
 	}))
 	writeIndexTranscript(t, base+".txt", "hello\n")

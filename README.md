@@ -6,6 +6,8 @@
 It is designed to be a single pure-Go binary: no CGO, no external `ssh`/`telnet`/`picocom`/`asciinema`
 runtime dependencies.
 
+> 完整中文使用手册（含真实 TUI 截图、ProxyJump 原理、录制/宏/vault/ZMODEM 等高级功能）：[docs/usage.md](docs/usage.md)
+
 ## Why whop
 
 Existing connection managers are good at one or two things, but rarely all of them:
@@ -191,9 +193,49 @@ key file next to the vault and uses it automatically. The vault ciphertext is
 still encrypted, but the key file lowers protection against malware running as
 the same logged-in user. The stronger master-password mode remains the default.
 
-Host edits show a unified diff before writing. Press `enter` or `y` to apply,
-`n`/`esc` to return to the form. The preview carries a content hash so a file
-changed by another process is rejected instead of silently applying a stale diff.
+Press `N` to create a host. The form covers the `Host` name/alias, `HostName`,
+`User`, `Port`, `ProxyJump`, `IdentityFile`, tags, and an optional vault password.
+Creating a host also shows a unified diff before writing. Press `enter` or `y` to
+apply, `n`/`esc` to return to the form. The preview carries a content hash so a
+file changed by another process is rejected instead of silently applying a stale
+diff.
+
+The same form edits existing hosts when you press `e`. Renaming `Name` changes
+the `Host` alias and migrates favorites, notes, tags, and any stored vault password
+to the new alias.
+
+`IdentityFile` may be left blank. For a new host this omits the directive, so
+OpenSSH inheritance applies. To use one default key for all new hosts, add this
+to `~/.ssh/config`:
+
+```sshconfig
+Host *
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+The same form has a masked `Password` field. Leaving it blank keeps the existing
+stored password. A non-empty value is written only to the encrypted local vault;
+it is never added to `~/.ssh/config`, SQLite, or logs. The vault must already be
+initialized (`whop vault init`), and it is opened with `WHOP_VAULT_PASSWORD`, the
+auto-unlock key file, or a hidden master-password prompt.
+
+### Filter mode
+
+Whitespace-separated terms are ANDed, matching is case-insensitive substring
+based. Three prefixes exist:
+
+- `tag:prod` — host tags
+- `user:deploy` — login user
+- `host:db` — alias or hostname
+
+A plain term (no prefix) matches alias, hostname, user, port, kind, tags, and
+notes. Examples: `tag:prod db`, `user:admin 10.1.`.
+
+While the filter input is focused, printable characters are always filter text.
+Press `tab` or `esc` to apply the filter and return to list action mode. The
+query and filtered results remain active, so `e`, `n`, `m`, `f`, and `N` work on
+the selected host. In list action mode, `esc` clears the active filter; press it
+again to quit.
 
 ### Keys
 
@@ -202,16 +244,19 @@ changed by another process is rejected instead of silently applying a stale diff
 | `enter` | connect |
 | `/` | focus filter |
 | `j` / `k` | move |
+| `ctrl+n` / `ctrl+p` | move down / up |
 | `g` / `G` | first / last |
 | `ctrl+d` / `ctrl+u` | page down / up |
 | `r` | reload config |
 | `a` | toggle servers / all |
 | `f` | toggle favorite |
-| `e` | edit host and review the diff |
+| `N` | create a host and review the diff |
+| `e` | edit host name, identity, tags, password, and review the diff |
 | `n` | edit notes |
 | `m` | run an automation macro |
 | `R` | toggle session recording |
 | `?` | help |
+| `tab` / `esc` | apply filter and return to list actions |
 | `q` | quit |
 
 The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides

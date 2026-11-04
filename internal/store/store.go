@@ -246,6 +246,50 @@ func (s *Store) SetNotes(alias, notes string) error {
 	return nil
 }
 
+// RenameHost moves metadata and tags from oldAlias to newAlias.
+//
+// It is a no-op when oldAlias has no metadata. Refusing to overwrite existing
+// metadata prevents a rename from silently merging two hosts.
+func (s *Store) RenameHost(oldAlias, newAlias string) error {
+	oldAlias = strings.TrimSpace(oldAlias)
+	newAlias = strings.TrimSpace(newAlias)
+	if oldAlias == "" || newAlias == "" {
+		return errors.New("store: empty alias")
+	}
+	if oldAlias == newAlias {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: begin rename %s: %w", oldAlias, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var oldExists, newExists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM host_meta WHERE alias = ?`, oldAlias).Scan(&oldExists); err != nil {
+		return fmt.Errorf("store: check old alias %s: %w", oldAlias, err)
+	}
+	if oldExists == 0 {
+		return nil
+	}
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM host_meta WHERE alias = ?`, newAlias).Scan(&newExists); err != nil {
+		return fmt.Errorf("store: check new alias %s: %w", newAlias, err)
+	}
+	if newExists > 0 {
+		return fmt.Errorf("store: rename %s: target metadata already exists for %s", oldAlias, newAlias)
+	}
+	if _, err := tx.Exec(`UPDATE host_meta SET alias = ? WHERE alias = ?`, newAlias, oldAlias); err != nil {
+		return fmt.Errorf("store: rename metadata %s: %w", oldAlias, err)
+	}
+	if _, err := tx.Exec(`UPDATE host_tags SET alias = ? WHERE alias = ?`, newAlias, oldAlias); err != nil {
+		return fmt.Errorf("store: rename tags %s: %w", oldAlias, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit rename %s: %w", oldAlias, err)
+	}
+	return nil
+}
+
 // SetTags replaces all tags for alias.
 func (s *Store) SetTags(alias string, tags []string) error {
 	if strings.TrimSpace(alias) == "" {
