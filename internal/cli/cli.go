@@ -60,6 +60,7 @@ type Deps struct {
 type MetaStore interface {
 	All() (map[string]store.Meta, error)
 	SetFavorite(string, bool) error
+	SetLoginOverride(string, *bool) error
 	SetNotes(string, string) error
 	SetTags(string, []string) error
 	RenameHost(string, string) error
@@ -131,6 +132,8 @@ func Run(args []string, deps Deps) int {
 		return runConnect(args[1:], deps)
 	case "favorite":
 		return runFavorite(args[1:], deps)
+	case "access":
+		return runAccess(args[1:], deps)
 	case "note":
 		return runNote(args[1:], deps)
 	case "tag":
@@ -260,7 +263,7 @@ func normalizeDeps(deps Deps) Deps {
 func runTUI(args []string, deps Deps) int {
 	fs := newFlagSet("whop", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
-	showAll := fs.Bool("all", false, "show Git/Auth hosts too")
+	showAll := fs.Bool("all", false, "show service endpoints too")
 	record := fs.Bool("record", false, "record interactive sessions")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -442,7 +445,7 @@ func runTUIMacro(deps Deps, metaStore MetaStore, configPath string, host sshconf
 func runList(args []string, deps Deps) int {
 	fs := newFlagSet("whop list", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
-	showAll := fs.Bool("all", false, "show Git/Auth hosts too")
+	showAll := fs.Bool("all", false, "show service endpoints too")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -464,7 +467,15 @@ func runList(args []string, deps Deps) int {
 	}
 
 	if *asJSON {
-		encoded, err := json.MarshalIndent(hosts, "", "  ")
+		type listedHost struct {
+			sshconfig.Host
+			Loginable bool `json:"loginable"`
+		}
+		listed := make([]listedHost, 0, len(hosts))
+		for _, host := range hosts {
+			listed = append(listed, listedHost{Host: host, Loginable: host.IsLoginable()})
+		}
+		encoded, err := json.MarshalIndent(listed, "", "  ")
 		if err != nil {
 			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
@@ -477,7 +488,7 @@ func runList(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stdout, "no hosts found")
 		return 0
 	}
-	fmt.Fprintln(deps.Stdout, "NAME\tHOST\tUSER\tPORT\tKIND\tTAGS\tFAV\tLAST")
+	fmt.Fprintln(deps.Stdout, "NAME\tHOST\tUSER\tPORT\tKIND\tACCESS\tTAGS\tFAV\tLAST")
 	for _, host := range hosts {
 		favorite := "-"
 		if host.Favorite {
@@ -487,8 +498,8 @@ func runList(args []string, deps Deps) int {
 		if !host.LastConnectedAt.IsZero() {
 			last = host.LastConnectedAt.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(deps.Stdout, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
-			host.Alias, host.HostName, valueOrDash(host.User), host.Port, host.Kind, strings.Join(host.Tags, ","), favorite, last)
+		fmt.Fprintf(deps.Stdout, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			host.Alias, host.HostName, valueOrDash(host.User), host.Port, host.Kind, host.EffectiveAccess(), strings.Join(host.Tags, ","), favorite, last)
 	}
 	return 0
 }
@@ -529,8 +540,9 @@ func runConnect(args []string, deps Deps) int {
 			return 1
 		}
 		if errors.Is(err, sshconn.ErrInteractiveUnavailable) {
-			fmt.Fprintf(deps.Stderr, "whop: %s is a Git/Auth endpoint; interactive shell is unavailable\n", host.Alias)
+			fmt.Fprintf(deps.Stderr, "whop: %s did not provide an interactive shell\n", host.Alias)
 			fmt.Fprintf(deps.Stderr, "try: whop run %s help\n", host.Alias)
+			fmt.Fprintf(deps.Stderr, "or mark it as a service: whop access %s service\n", host.Alias)
 			return 0
 		}
 		writeDiagnostic(deps, host.Alias, err, false)
@@ -602,6 +614,63 @@ func runFavorite(args []string, deps Deps) int {
 		return 1
 	}
 	fmt.Fprintf(deps.Stdout, "%s favorite=%v\n", alias, favorite)
+	return 0
+}
+
+func runAccess(args []string, deps Deps) int {
+	fs := newFlagSet("whop access", deps)
+	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() < 1 || fs.NArg() > 2 {
+		fmt.Fprintln(deps.Stderr, "usage: whop access [flags] <alias> [auto|login|service]")
+		return 2
+	}
+	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
+		return 1
+	}
+	host, ok := sshconfig.Find(hosts, fs.Arg(0))
+	if !ok {
+		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
+		return 1
+	}
+	if fs.NArg() == 1 {
+		fmt.Fprintf(deps.Stdout, "%s access=%s effective=%s\n", host.Alias, host.AccessMode, host.EffectiveAccess())
+		return 0
+	}
+
+	mode, ok := sshconfig.ParseAccessMode(fs.Arg(1))
+	if !ok {
+		fmt.Fprintln(deps.Stderr, "usage: access must be auto, login, or service")
+		return 2
+	}
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
+		return 1
+	}
+	defer metaStore.Close()
+	var override *bool
+	switch mode {
+	case sshconfig.AccessLogin:
+		value := true
+		override = &value
+	case sshconfig.AccessService:
+		value := false
+		override = &value
+	}
+	if err := metaStore.SetLoginOverride(host.Alias, override); err != nil {
+		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
+		return 1
+	}
+	host.AccessMode = mode
+	fmt.Fprintf(deps.Stdout, "%s access=%s effective=%s\n", host.Alias, host.AccessMode, host.EffectiveAccess())
 	return 0
 }
 
@@ -1288,6 +1357,7 @@ Usage:
   whop list [flags]              list hosts
   whop connect [flags] <alias>   connect to a host
   whop favorite [flags] <alias> <on|off>
+  whop access [flags] <alias> [auto|login|service]
   whop note [flags] <alias> [text...]
   whop tag [flags] <alias> [tag...]
   whop replay [flags] <file.cast>
@@ -1307,14 +1377,14 @@ Usage:
 
 Flags for whop:
   -config path   path to ssh config (default ~/.ssh/config)
-  -all           show Git/Auth hosts too
+  -all           show service endpoints too
   -record        record interactive sessions
   -agent         use ssh-agent (default: off)
   -no-agent      disable ssh-agent
 
 Flags for list:
   -config path   path to ssh config
-  -all           show Git/Auth hosts too
+  -all           show service endpoints too
   -json          emit JSON
 
 Flags for connect:

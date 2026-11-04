@@ -799,3 +799,102 @@ func TestIndexPrunesDeletedTranscripts(t *testing.T) {
 		t.Fatalf("stale transcript still searchable: %q", td.stdout.String())
 	}
 }
+
+func TestAccessOverridesDefaultListFiltering(t *testing.T) {
+	td := newTestDeps()
+
+	if code := Run([]string{"access", "github.com", "login"}, td.deps); code != 0 {
+		t.Fatalf("access login exit = %d: %s", code, td.stderr.String())
+	}
+	if !strings.Contains(td.stdout.String(), "github.com access=login effective=login") {
+		t.Fatalf("unexpected access output: %q", td.stdout.String())
+	}
+
+	td.stdout.Reset()
+	if code := Run([]string{"list"}, td.deps); code != 0 {
+		t.Fatalf("list exit = %d", code)
+	}
+	if !strings.Contains(td.stdout.String(), "github.com") {
+		t.Fatalf("manual login override did not appear in default list: %q", td.stdout.String())
+	}
+
+	if code := Run([]string{"access", "prod-db", "service"}, td.deps); code != 0 {
+		t.Fatalf("access service exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"list"}, td.deps); code != 0 {
+		t.Fatalf("list exit = %d", code)
+	}
+	if strings.Contains(td.stdout.String(), "prod-db") {
+		t.Fatalf("service override remained in default list: %q", td.stdout.String())
+	}
+
+	if code := Run([]string{"access", "prod-db", "auto"}, td.deps); code != 0 {
+		t.Fatalf("access auto exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"list"}, td.deps); code != 0 {
+		t.Fatalf("list exit = %d", code)
+	}
+	if !strings.Contains(td.stdout.String(), "prod-db") {
+		t.Fatalf("auto override did not restore default filtering: %q", td.stdout.String())
+	}
+}
+
+func TestAccessQueryShowsOverrideAndEffectiveMode(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"access", "github.com"}, td.deps); code != 0 {
+		t.Fatalf("access query exit = %d: %s", code, td.stderr.String())
+	}
+	if got := strings.TrimSpace(td.stdout.String()); got != "github.com access=auto effective=service" {
+		t.Fatalf("access query = %q", got)
+	}
+}
+
+func TestListJSONIncludesEffectiveLoginability(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"access", "prod-db", "service"}, td.deps); code != 0 {
+		t.Fatalf("access service exit = %d: %s", code, td.stderr.String())
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"list", "-all", "-json"}, td.deps); code != 0 {
+		t.Fatalf("list json exit = %d", code)
+	}
+	var hosts []struct {
+		Alias      string `json:"Alias"`
+		AccessMode string `json:"access_mode"`
+		Loginable  bool   `json:"loginable"`
+	}
+	if err := json.Unmarshal(td.stdout.Bytes(), &hosts); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, td.stdout.String())
+	}
+	byAlias := make(map[string]struct {
+		AccessMode string
+		Loginable  bool
+	})
+	for _, host := range hosts {
+		byAlias[host.Alias] = struct {
+			AccessMode string
+			Loginable  bool
+		}{host.AccessMode, host.Loginable}
+	}
+	if got := byAlias["prod-db"]; got.AccessMode != "service" || got.Loginable {
+		t.Fatalf("prod-db access = %+v", got)
+	}
+	if got := byAlias["github.com"]; got.AccessMode != "auto" || got.Loginable {
+		t.Fatalf("github.com access = %+v", got)
+	}
+}
+
+func TestAccessRejectsInvalidValueAndMissingHost(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"access", "prod-db", "maybe"}, td.deps); code != 2 {
+		t.Fatalf("invalid value exit = %d, want 2", code)
+	}
+	if code := Run([]string{"access", "missing", "login"}, td.deps); code != 1 {
+		t.Fatalf("missing host exit = %d, want 1", code)
+	}
+	if code := Run([]string{"access"}, td.deps); code != 2 {
+		t.Fatalf("missing args exit = %d, want 2", code)
+	}
+}
