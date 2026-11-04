@@ -35,6 +35,7 @@ type Options struct {
 	LoadMacros     MacroLoader
 	RunMacro       MacroRunner
 	ToggleFavorite func(sshconfig.Host, bool) error
+	PreviewEdit    func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error)
 	EditHost       func(sshconfig.Host, sshconfig.Edit) error
 	SetTags        func(sshconfig.Host, []string) error
 	SaveNotes      func(sshconfig.Host, string) error
@@ -65,6 +66,7 @@ type Model struct {
 	loadMacros     MacroLoader
 	runMacro       MacroRunner
 	toggleFavorite func(sshconfig.Host, bool) error
+	previewEdit    func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error)
 	editHost       func(sshconfig.Host, sshconfig.Edit) error
 	setTags        func(sshconfig.Host, []string) error
 	saveNotes      func(sshconfig.Host, string) error
@@ -91,6 +93,13 @@ type Model struct {
 	editFocus  int
 	editTarget sshconfig.Host
 
+	diffMode    bool
+	diffLines   []string
+	diffOffset  int
+	diffTarget  sshconfig.Host
+	pendingEdit sshconfig.Edit
+	pendingTags []string
+
 	notesMode   bool
 	notesInput  textField
 	notesTarget sshconfig.Host
@@ -110,6 +119,7 @@ func New(opts Options) *Model {
 		loadMacros:     opts.LoadMacros,
 		runMacro:       opts.RunMacro,
 		toggleFavorite: opts.ToggleFavorite,
+		previewEdit:    opts.PreviewEdit,
 		editHost:       opts.EditHost,
 		setTags:        opts.SetTags,
 		saveNotes:      opts.SaveNotes,
@@ -182,6 +192,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.editing {
 		return m.updateEdit(msg)
+	}
+	if m.diffMode {
+		return m.updateDiff(msg)
 	}
 	if m.notesMode {
 		return m.updateNotes(msg)
@@ -441,27 +454,99 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 	user := strings.TrimSpace(m.editFields[1].Value())
 	proxyJump := strings.TrimSpace(m.editFields[3].Value())
 	tags := splitTags(m.editFields[4].Value())
+	edit := sshconfig.Edit{HostName: &hostName, User: &user, Port: &port, ProxyJump: &proxyJump}
+	if m.previewEdit != nil {
+		preview, err := m.previewEdit(m.editTarget, edit)
+		if err != nil {
+			m.err = err
+			m.status = "diff preview failed"
+			return m, nil
+		}
+		if strings.TrimSpace(preview.Diff) != "" {
+			edit.ExpectedHash = preview.Hash
+			m.pendingEdit = edit
+			m.pendingTags = tags
+			m.diffTarget = m.editTarget
+			m.diffLines = strings.Split(strings.TrimRight(preview.Diff, "\n"), "\n")
+			m.diffOffset = 0
+			m.editing = false
+			m.diffMode = true
+			m.err = nil
+			m.status = "review config changes"
+			return m, nil
+		}
+	}
+	return m.commitEdit(m.editTarget, edit, tags)
+}
+
+func (m *Model) commitEdit(host sshconfig.Host, edit sshconfig.Edit, tags []string) (tea.Model, tea.Cmd) {
 	if m.editHost == nil {
 		m.err = fmt.Errorf("edit is not configured")
 		m.status = "edit failed"
 		return m, nil
 	}
-	if err := m.editHost(m.editTarget, sshconfig.Edit{HostName: &hostName, User: &user, Port: &port, ProxyJump: &proxyJump}); err != nil {
+	if err := m.editHost(host, edit); err != nil {
 		m.err = err
 		m.status = "edit failed"
 		return m, nil
 	}
 	if m.setTags != nil {
-		if err := m.setTags(m.editTarget, tags); err != nil {
+		if err := m.setTags(host, tags); err != nil {
 			m.err = err
 			m.status = "tag update failed"
 			return m, nil
 		}
 	}
 	m.editing = false
+	m.diffMode = false
 	m.err = nil
 	m.status = "host updated"
 	return m, m.reload
+}
+
+func (m *Model) updateDiff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "enter":
+		return m.commitEdit(m.diffTarget, m.pendingEdit, m.pendingTags)
+	case "n", "esc", "q":
+		m.diffMode = false
+		m.editing = true
+		m.err = nil
+		m.status = "edit still open"
+		return m, nil
+	case "j", "down":
+		m.diffOffset++
+	case "k", "up":
+		m.diffOffset--
+	case "ctrl+d", "pgdown":
+		m.diffOffset += m.diffPageSize()
+	case "ctrl+u", "pgup":
+		m.diffOffset -= m.diffPageSize()
+	case "g":
+		m.diffOffset = 0
+	case "G":
+		m.diffOffset = max(0, len(m.diffLines)-m.diffPageSize())
+	}
+	m.clampDiffOffset()
+	return m, nil
+}
+
+func (m *Model) diffPageSize() int {
+	size := m.height - 10
+	if size < 1 {
+		return 1
+	}
+	return min(size, 20)
+}
+
+func (m *Model) clampDiffOffset() {
+	maxOffset := max(0, len(m.diffLines)-m.diffPageSize())
+	if m.diffOffset < 0 {
+		m.diffOffset = 0
+	}
+	if m.diffOffset > maxOffset {
+		m.diffOffset = maxOffset
+	}
 }
 
 func splitTags(value string) []string {

@@ -14,6 +14,9 @@ var (
 	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6C6C6C", Dark: "#808080"})
 	styleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#D7EEF7", Dark: "#1F3A46"}).Foreground(lipgloss.AdaptiveColor{Light: "#003B4A", Dark: "#E6FBFF"}).Bold(true)
 	styleError    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#AF0000", Dark: "#FF5F5F"})
+	styleAdded    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#006B2E", Dark: "#5FD787"})
+	styleRemoved  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9B0000", Dark: "#FF6B6B"})
+	styleHunk     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"}).Bold(true)
 )
 
 // View implements tea.Model.
@@ -29,6 +32,9 @@ func (m *Model) View() string {
 
 	header := m.viewHeader(width)
 	filter := m.viewFilter(width)
+	if m.diffMode {
+		return strings.Join([]string{header, filter, m.viewDiff(width, height), m.viewFooter(width), m.viewStatus(width)}, "\n")
+	}
 	if m.editing {
 		return strings.Join([]string{header, filter, m.viewEdit(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
 	}
@@ -198,6 +204,31 @@ func (m *Model) viewDetail(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *Model) viewDiff(width, height int) string {
+	lines := []string{styleAccent.Render(" CONFIG DIFF / " + m.diffTarget.Alias), ""}
+	available := max(1, height-7)
+	m.clampDiffOffset()
+	end := min(len(m.diffLines), m.diffOffset+available)
+	for _, line := range m.diffLines[m.diffOffset:end] {
+		switch {
+		case strings.HasPrefix(line, "+"):
+			line = styleAdded.Render(line)
+		case strings.HasPrefix(line, "-"):
+			line = styleRemoved.Render(line)
+		case strings.HasPrefix(line, "@@"):
+			line = styleHunk.Render(line)
+		default:
+			line = styleDim.Render(line)
+		}
+		lines = append(lines, ansi.Truncate(line, width, "~"))
+	}
+	if len(m.diffLines) == 0 {
+		lines = append(lines, styleDim.Render("  no changes"))
+	}
+	lines = append(lines, "", styleDim.Render(" enter/y apply  n/esc edit  j/k scroll  ctrl+d/u page"))
+	return strings.Join(lines, "\n")
+}
+
 func (m *Model) viewEdit(width int) string {
 	lines := []string{styleAccent.Render(" EDIT " + m.editTarget.Alias), ""}
 	for index, field := range m.editFields {
@@ -274,6 +305,8 @@ func (m *Model) viewFooter(width int) string {
 		hint = " tab next  enter save  esc cancel"
 	} else if m.notesMode {
 		hint = " ctrl+s save  esc cancel"
+	} else if m.diffMode {
+		hint = " enter/y apply  n/esc edit  j/k scroll  ctrl+d/u page"
 	} else if m.macroMode {
 		hint = " enter run  j/k move  esc cancel"
 	} else if m.filterFocused {

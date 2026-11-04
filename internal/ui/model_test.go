@@ -474,3 +474,101 @@ func TestMacroFinishedStatus(t *testing.T) {
 		t.Fatalf("status = %q", m.status)
 	}
 }
+
+func TestEditShowsDiffBeforeApplying(t *testing.T) {
+	hosts := testHosts()
+	var previewed sshconfig.Edit
+	var applied sshconfig.Edit
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		PreviewEdit: func(_ sshconfig.Host, edit sshconfig.Edit) (sshconfig.Preview, error) {
+			previewed = edit
+			return sshconfig.Preview{Diff: "--- a/config\n+++ b/config\n@@ -1,2 +1,2 @@\n-HostName 10.0.0.11\n+HostName 10.0.0.99\n", Hash: "preview-hash"}, nil
+		},
+		EditHost: func(_ sshconfig.Host, edit sshconfig.Edit) error {
+			applied = edit
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("e"))
+	m.editFields[0].SetValue("10.0.0.99")
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.diffMode || m.editing {
+		t.Fatalf("diff mode=%v editing=%v", m.diffMode, m.editing)
+	}
+	if previewed.HostName == nil || *previewed.HostName != "10.0.0.99" {
+		t.Fatalf("preview edit = %+v", previewed)
+	}
+	if applied.HostName != nil {
+		t.Fatal("edit was applied before confirmation")
+	}
+	if view := plainView(m); !strings.Contains(view, "CONFIG DIFF / prod-db") || !strings.Contains(view, "+HostName 10.0.0.99") {
+		t.Fatalf("diff view missing changes:\n%s", view)
+	}
+	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("apply should reload hosts")
+	}
+	if m.diffMode || applied.HostName == nil || *applied.HostName != "10.0.0.99" || applied.ExpectedHash != "preview-hash" {
+		t.Fatalf("diffMode=%v applied=%+v", m.diffMode, applied)
+	}
+}
+
+func TestEditDiffCanReturnToForm(t *testing.T) {
+	hosts := testHosts()
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		PreviewEdit: func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error) {
+			return sshconfig.Preview{Diff: "--- a/config\n+++ b/config\n@@ -1 +1 @@\n-old\n+new\n", Hash: "preview-hash"}, nil
+		},
+		EditHost: func(sshconfig.Host, sshconfig.Edit) error { return nil },
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("e"))
+	m.editFields[1].SetValue("admin")
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.diffMode || !m.editing {
+		t.Fatalf("diffMode=%v editing=%v", m.diffMode, m.editing)
+	}
+	if got := m.editFields[1].Value(); got != "admin" {
+		t.Fatalf("edit field was not preserved: %q", got)
+	}
+}
+
+func TestEditNoDiffAppliesImmediately(t *testing.T) {
+	hosts := testHosts()
+	var applied sshconfig.Edit
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		PreviewEdit: func(sshconfig.Host, sshconfig.Edit) (sshconfig.Preview, error) {
+			return sshconfig.Preview{}, nil
+		},
+		EditHost: func(_ sshconfig.Host, edit sshconfig.Edit) error {
+			applied = edit
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("e"))
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.diffMode || applied.HostName == nil {
+		t.Fatalf("diffMode=%v applied=%+v", m.diffMode, applied)
+	}
+}

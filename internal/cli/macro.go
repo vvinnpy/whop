@@ -264,7 +264,14 @@ func runMacroRun(args []string, deps Deps) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	if err := deps.RunMacro(ctx, host, hosts, macro, deps.Stdout, deps.Stderr, deps.UseAgent); err != nil {
+	collector := newAuditCollector(metaStore)
+	macroAuditStarted(collector, alias, name)
+	err = deps.RunMacro(ctx, host, hosts, macro, deps.Stdout, deps.Stderr, collector.automationEvent(alias, name), deps.UseAgent)
+	if err != nil {
+		macroAuditFailed(collector, alias, name, err)
+	}
+	_ = macroAuditFlush(collector, deps.Stderr)
+	if err != nil {
 		writeDiagnostic(deps, alias, err, *asJSON)
 		return 1
 	}

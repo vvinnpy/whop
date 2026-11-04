@@ -122,6 +122,7 @@ type MacroCommand struct {
 	Connector *Connector
 	Host      sshconfig.Host
 	Macro     automation.Macro
+	OnEvent   automation.EventFunc
 	Timeout   time.Duration
 	Stdin     io.Reader
 	Stdout    io.Writer
@@ -139,7 +140,7 @@ func (c *MacroCommand) Run() error {
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)
 	defer cancel()
 	err := c.Connector.RunInteractive(ctx, c.Host, c.Stdout, c.Stderr, func(stream io.ReadWriter) error {
-		return automation.RunMacro(ctx, stream, c.Macro, automation.Options{CloseStream: true})
+		return automation.RunMacro(ctx, stream, c.Macro, automation.Options{CloseStream: true, OnEvent: c.OnEvent})
 	})
 	if errors.Is(err, context.Canceled) {
 		return errors.New("macro canceled")

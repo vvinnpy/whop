@@ -50,7 +50,7 @@ connector/session abstractions rather than bolted onto the UI.
 - [x] expect rules with timeouts and one-shot semantics
 - [x] macro execution from CLI and TUI
 - [ ] runbook engine
-- [ ] audit log
+- [x] persisted automation audit log
 
 ### M4 — ZMODEM (`rz` / `sz`)
 
@@ -107,7 +107,7 @@ The SSH-first V0.1 scope is functional:
 - optional ssh-agent integration (disabled by default)
 - single-hop ProxyJump
 - structured connection diagnostics (`ttydeck diagnose -json`)
-- safe single-Host config editing
+- safe single-Host config editing with diff preview and stale-preview protection
 - favorites, tags, notes, recents
 - asciicast recording, replay, transcript search
 - ZMODEM `rz`/`sz` over SSH
@@ -117,8 +117,7 @@ The SSH-first V0.1 scope is functional:
 
 Post-V0.1 work:
 
-- diff preview before config save
-- runbooks and persisted automation audit log
+- runbook engine
 - automatic ZMODEM detection and Serial/Telnet transports
 - per-host recording policy
 - distro packaging, signing/notarization, and auto-update

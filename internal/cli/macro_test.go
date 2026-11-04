@@ -60,7 +60,7 @@ func TestMacroLifecycleAndRun(t *testing.T) {
 	}
 
 	var ranMacro automation.Macro
-	td.deps.RunMacro = func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, output, _ io.Writer, useAgent bool) error {
+	td.deps.RunMacro = func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, output, _ io.Writer, onEvent automation.EventFunc, useAgent bool) error {
 		if host.Alias != "prod-db" || len(hosts) != len(cliHosts()) {
 			t.Fatalf("unexpected host context: %+v / %+v", host, hosts)
 		}
@@ -135,7 +135,7 @@ func TestMacroSecretUsesEnvironmentOnly(t *testing.T) {
 		return "", false
 	}
 	var sent automation.Step
-	td.deps.RunMacro = func(_ context.Context, _ sshconfig.Host, _ []sshconfig.Host, macro automation.Macro, _, _ io.Writer, _ bool) error {
+	td.deps.RunMacro = func(_ context.Context, _ sshconfig.Host, _ []sshconfig.Host, macro automation.Macro, _, _ io.Writer, _ automation.EventFunc, _ bool) error {
 		sent = macro.Steps[1]
 		return nil
 	}
@@ -223,7 +223,7 @@ func TestMacroRunJSONDiagnostic(t *testing.T) {
 	}
 	td.stdout.Reset()
 	td.stderr.Reset()
-	td.deps.RunMacro = func(_ context.Context, _ sshconfig.Host, _ []sshconfig.Host, _ automation.Macro, _, _ io.Writer, _ bool) error {
+	td.deps.RunMacro = func(_ context.Context, _ sshconfig.Host, _ []sshconfig.Host, _ automation.Macro, _, _ io.Writer, _ automation.EventFunc, _ bool) error {
 		return &sshconn.StageError{Stage: "automation", Host: "prod-db", Err: automation.ErrTimeout}
 	}
 	if code := Run([]string{"macro", "run", "-json", "timeout", "prod-db"}, td.deps); code != 1 {

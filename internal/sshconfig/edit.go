@@ -30,6 +30,9 @@ type Edit struct {
 	ProxyJump    *string
 	IdentityFile *string
 	Tags         *[]string
+	// ExpectedHash is the concrete source-file hash returned by
+	// PreviewHostChange. When set, EditHost refuses to apply a stale preview.
+	ExpectedHash string
 }
 
 // EditHost edits one Host block in place while preserving unrelated text.
@@ -73,42 +76,17 @@ func EditHost(path, alias string, edit Edit) error {
 	if err != nil {
 		return fmt.Errorf("sshconfig: read %s: %w", target, err)
 	}
+	if edit.ExpectedHash != "" && contentHash(original) != edit.ExpectedHash {
+		return fmt.Errorf("%w: host %s changed since preview", ErrConfigChanged, alias)
+	}
 	info, err := os.Stat(target)
 	if err != nil {
 		return fmt.Errorf("sshconfig: stat %s: %w", target, err)
 	}
 
-	lines := strings.Split(string(original), "\n")
-	start, end, err := findHostBlock(lines, alias)
+	updated, err := applyHostEdit(original, alias, edit)
 	if err != nil {
 		return err
-	}
-
-	if edit.HostName != nil {
-		setKV(&lines, &start, &end, "HostName", *edit.HostName)
-	}
-	if edit.User != nil {
-		setKV(&lines, &start, &end, "User", *edit.User)
-	}
-	if edit.Port != nil {
-		setKV(&lines, &start, &end, "Port", strconv.Itoa(*edit.Port))
-	}
-	if edit.ProxyJump != nil {
-		setKV(&lines, &start, &end, "ProxyJump", *edit.ProxyJump)
-	}
-	if edit.IdentityFile != nil {
-		replaceAllKV(&lines, &start, &end, "IdentityFile", *edit.IdentityFile)
-	}
-	if edit.Tags != nil {
-		applyTags(&lines, &start, &end, *edit.Tags)
-	}
-
-	updated := strings.Join(lines, "\n")
-	if _, err := ssh_config.Decode(strings.NewReader(updated)); err != nil {
-		return fmt.Errorf("sshconfig: edited config is invalid: %w", err)
-	}
-	if _, _, err := findHostBlock(strings.Split(updated, "\n"), alias); err != nil {
-		return fmt.Errorf("sshconfig: edited config lost host %s: %w", alias, err)
 	}
 
 	current, err := os.ReadFile(target)
@@ -139,7 +117,7 @@ func EditHost(path, alias string, edit Edit) error {
 		cleanup()
 		return fmt.Errorf("sshconfig: chmod temporary file: %w", err)
 	}
-	if _, err := tmp.WriteString(updated); err != nil {
+	if _, err := tmp.Write(updated); err != nil {
 		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("sshconfig: write temporary file: %w", err)
@@ -158,6 +136,43 @@ func EditHost(path, alias string, edit Edit) error {
 		return fmt.Errorf("sshconfig: replace %s: %w", target, err)
 	}
 	return nil
+}
+
+// applyHostEdit applies one Edit to raw config bytes. EditHost and PreviewHost
+// share this function so a preview is produced by exactly the same transform
+// that is later persisted.
+func applyHostEdit(original []byte, alias string, edit Edit) ([]byte, error) {
+	lines := strings.Split(string(original), "\n")
+	start, end, err := findHostBlock(lines, alias)
+	if err != nil {
+		return nil, err
+	}
+	if edit.HostName != nil {
+		setKV(&lines, &start, &end, "HostName", *edit.HostName)
+	}
+	if edit.User != nil {
+		setKV(&lines, &start, &end, "User", *edit.User)
+	}
+	if edit.Port != nil {
+		setKV(&lines, &start, &end, "Port", strconv.Itoa(*edit.Port))
+	}
+	if edit.ProxyJump != nil {
+		setKV(&lines, &start, &end, "ProxyJump", *edit.ProxyJump)
+	}
+	if edit.IdentityFile != nil {
+		replaceAllKV(&lines, &start, &end, "IdentityFile", *edit.IdentityFile)
+	}
+	if edit.Tags != nil {
+		applyTags(&lines, &start, &end, *edit.Tags)
+	}
+	updated := strings.Join(lines, "\n")
+	if _, err := ssh_config.Decode(strings.NewReader(updated)); err != nil {
+		return nil, fmt.Errorf("sshconfig: edited config is invalid: %w", err)
+	}
+	if _, _, err := findHostBlock(strings.Split(updated, "\n"), alias); err != nil {
+		return nil, fmt.Errorf("sshconfig: edited config lost host %s: %w", alias, err)
+	}
+	return []byte(updated), nil
 }
 
 func findHostBlock(lines []string, alias string) (start, end int, err error) {

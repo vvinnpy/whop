@@ -105,6 +105,9 @@ ttydeck snippet run disk prod-db prod-cache
 ttydeck snippet list
 ttydeck macro list
 ttydeck macro run login prod-db
+ttydeck audit --limit 50
+ttydeck audit --json
+ttydeck audit clear
 ```
 
 ### Macros
@@ -141,6 +144,12 @@ encrypted vault.
 
 Use `ttydeck macro run -json login prod-db` for a structured failure diagnostic.
 In the TUI, press `m` on a selected host to choose and run a stored macro.
+Macro lifecycle, expect matches, timeouts, retries, and failures are persisted in
+the local audit log without command text or terminal output.
+
+Host edits show a unified diff before writing. Press `enter` or `y` to apply,
+`n`/`esc` to return to the form. The preview carries a content hash so a file
+changed by another process is rejected instead of silently applying a stale diff.
 
 ### Keys
 
@@ -154,7 +163,7 @@ In the TUI, press `m` on a selected host to choose and run a stored macro.
 | `r` | reload config |
 | `a` | toggle servers / all |
 | `f` | toggle favorite |
-| `e` | edit host |
+| `e` | edit host and review the diff |
 | `n` | edit notes |
 | `m` | run an automation macro |
 | `R` | toggle session recording |
@@ -184,8 +193,9 @@ This reports the failing stage (`dial`, `handshake`, `auth`, `host_key`,
 
 Early V0.1 development: the SSH-first TUI, safe config editing, metadata,
 session recording/replay/search, SQLite FTS5 transcript search, default
-plain-text transcript redaction, snippets, expect-style macros, ZMODEM transfer,
-and release packaging are functional. See [docs/plan.md](docs/plan.md) for
+plain-text transcript redaction, snippets, expect-style macros, persisted
+automation audit logs, safe diff-previewed config edits, ZMODEM transfer, and
+release packaging are functional. See [docs/plan.md](docs/plan.md) for
 remaining hardening and future connectors.
 
 Recordings are asciicast v2 files plus a redacted `.txt` transcript. The cast is

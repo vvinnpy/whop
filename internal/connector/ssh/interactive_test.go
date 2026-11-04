@@ -43,14 +43,31 @@ func TestRunInteractiveExecutesMacro(t *testing.T) {
 			{Name: "command", Kind: automation.StepSend, Send: []byte("uptime\n")},
 		},
 	}
+	var events []automation.Event
 	err := connector.RunInteractive(context.Background(), host, &output, nil, func(stream io.ReadWriter) error {
-		return automation.RunMacro(context.Background(), stream, macro, automation.Options{OverallTimeout: 3 * time.Second, CloseStream: true})
+		return automation.RunMacro(context.Background(), stream, macro, automation.Options{
+			OverallTimeout: 3 * time.Second,
+			CloseStream:    true,
+			OnEvent:        func(event automation.Event) { events = append(events, event) },
+		})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "login: ") || !strings.Contains(output.String(), "shell> ") {
 		t.Fatalf("output = %q", output.String())
+	}
+	foundCompleted := false
+	for _, event := range events {
+		if event.Type == automation.EventMacroCompleted {
+			foundCompleted = true
+		}
+		if strings.Contains(event.Message, "admin") || strings.Contains(event.Message, "uptime") {
+			t.Fatalf("audit event leaked send data: %#v", event)
+		}
+	}
+	if !foundCompleted {
+		t.Fatalf("missing completion event: %#v", events)
 	}
 }
 

@@ -42,7 +42,7 @@ type Deps struct {
 	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, bool, io.Writer) error
 	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, bool, io.Writer) error
 	RunCommand   func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
-	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, bool) error
+	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, automation.EventFunc, bool) error
 	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
 	LookupEnv    func(string) (string, bool)
 	UseAgent     bool
@@ -65,6 +65,9 @@ type MetaStore interface {
 	MacroDefinition(string) ([]byte, bool, error)
 	MacroDefinitions() (map[string][]byte, error)
 	DeleteMacroDefinition(string) error
+	AppendAudit(store.AuditEvent) error
+	AuditEvents(int) ([]store.AuditEvent, error)
+	ClearAudit() error
 	Close() error
 }
 
@@ -122,6 +125,8 @@ func Run(args []string, deps Deps) int {
 		return runSnippet(args[1:], deps)
 	case "macro":
 		return runMacro(args[1:], deps)
+	case "audit":
+		return runAudit(args[1:], deps)
 	case "diagnose":
 		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
@@ -238,6 +243,9 @@ func runTUI(args []string, deps Deps) int {
 		ToggleFavorite: func(host sshconfig.Host, favorite bool) error {
 			return metaStore.SetFavorite(host.Alias, favorite)
 		},
+		PreviewEdit: func(host sshconfig.Host, edit sshconfig.Edit) (sshconfig.Preview, error) {
+			return sshconfig.PreviewHostChange(configPathValue, host.Alias, edit)
+		},
 		EditHost: func(host sshconfig.Host, edit sshconfig.Edit) error {
 			return sshconfig.EditHost(configPathValue, host.Alias, edit)
 		},
@@ -272,10 +280,20 @@ func runTUI(args []string, deps Deps) int {
 				}
 			}
 			connector := sshConnectorWithHosts(hosts, deps.UseAgent)
-			return tea.Exec(&sshconn.MacroCommand{Connector: connector, Host: host, Macro: macro}, func(err error) tea.Msg {
-				if err == nil {
+			collector := newAuditCollector(metaStore)
+			macroAuditStarted(collector, host.Alias, name)
+			return tea.Exec(&sshconn.MacroCommand{
+				Connector: connector,
+				Host:      host,
+				Macro:     macro,
+				OnEvent:   collector.automationEvent(host.Alias, name),
+			}, func(err error) tea.Msg {
+				if err != nil {
+					macroAuditFailed(collector, host.Alias, name, err)
+				} else {
 					_ = metaStore.RecordConnect(host.Alias, time.Now())
 				}
+				_ = macroAuditFlush(collector, deps.Stderr)
 				return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
 			})
 		},
@@ -896,10 +914,10 @@ func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command stri
 	return string(output), err
 }
 
-func defaultRunMacro(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, useAgent bool) error {
+func defaultRunMacro(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, onEvent automation.EventFunc, useAgent bool) error {
 	connector := sshConnectorWithHosts(hosts, useAgent)
 	return connector.RunInteractive(ctx, host, stdout, stderr, func(stream io.ReadWriter) error {
-		return automation.RunMacro(ctx, stream, macro, automation.Options{CloseStream: true})
+		return automation.RunMacro(ctx, stream, macro, automation.Options{CloseStream: true, OnEvent: onEvent})
 	})
 }
 
@@ -1142,6 +1160,8 @@ Usage:
   ttydeck run [flags] <alias> <command...>
   ttydeck snippet <set|list|delete|run> ...
   ttydeck macro <set|list|show|delete|run> ...
+  ttydeck audit [flags]             show persisted automation audit events
+  ttydeck audit clear [flags]       clear the audit log
   ttydeck diagnose [flags] <alias>
   ttydeck version                   print version
 
@@ -1178,5 +1198,9 @@ Flags for index:
 Flags for macro run:
   -config path    path to ssh config
   -timeout 30s    overall automation timeout
-  -json           emit a structured failure diagnostic`)
+  -json           emit a structured failure diagnostic
+
+Flags for audit:
+  -limit 100      maximum events to show (max 1000)
+  -json           emit JSON`)
 }
