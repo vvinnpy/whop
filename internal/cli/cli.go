@@ -16,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"ttydeck/internal/automation"
 	sshconn "ttydeck/internal/connector/ssh"
 	"ttydeck/internal/core"
 	"ttydeck/internal/session"
@@ -41,7 +42,9 @@ type Deps struct {
 	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, bool, io.Writer) error
 	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, bool, io.Writer) error
 	RunCommand   func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
+	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, bool) error
 	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
+	LookupEnv    func(string) (string, bool)
 	UseAgent     bool
 }
 
@@ -55,6 +58,13 @@ type MetaStore interface {
 	SetSnippet(string, string) error
 	Snippets() (map[string]string, error)
 	DeleteSnippet(string) error
+	IndexTranscript(store.Transcript) error
+	ReconcileTranscriptRoot(string, []string) (int, error)
+	SearchTranscripts(string) ([]store.TranscriptMatch, error)
+	SetMacroDefinition(string, []byte) error
+	MacroDefinition(string) ([]byte, bool, error)
+	MacroDefinitions() (map[string][]byte, error)
+	DeleteMacroDefinition(string) error
 	Close() error
 }
 
@@ -72,7 +82,9 @@ func NewDeps() Deps {
 		ZmodemPut:    defaultZmodemPut,
 		ZmodemGet:    defaultZmodemGet,
 		RunCommand:   defaultRunCommand,
+		RunMacro:     defaultRunMacro,
 		Diagnose:     defaultDiagnose,
+		LookupEnv:    os.LookupEnv,
 	}
 }
 
@@ -100,12 +112,16 @@ func Run(args []string, deps Deps) int {
 		return runReplay(args[1:], deps)
 	case "search":
 		return runSearch(args[1:], deps)
+	case "index":
+		return runIndex(args[1:], deps)
 	case "zmodem":
 		return runZmodem(args[1:], deps)
 	case "run":
 		return runRemoteCommand(args[1:], deps)
 	case "snippet":
 		return runSnippet(args[1:], deps)
+	case "macro":
+		return runMacro(args[1:], deps)
 	case "diagnose":
 		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
@@ -181,6 +197,12 @@ func normalizeDeps(deps Deps) Deps {
 	if deps.Diagnose == nil {
 		deps.Diagnose = defaultDiagnose
 	}
+	if deps.RunMacro == nil {
+		deps.RunMacro = defaultRunMacro
+	}
+	if deps.LookupEnv == nil {
+		deps.LookupEnv = os.LookupEnv
+	}
 	return deps
 }
 
@@ -231,6 +253,30 @@ func runTUI(args []string, deps Deps) int {
 					_ = metaStore.RecordConnect(host.Alias, time.Now())
 				}
 				return ui.ConnectFinishedMsg{Err: err}
+			})
+		},
+		LoadMacros: func() ([]string, error) {
+			return loadMacroNames(metaStore)
+		},
+		RunMacro: func(host sshconfig.Host, name string) tea.Cmd {
+			macro, err := loadStoredMacro(metaStore, name, deps.LookupEnv)
+			if err != nil {
+				return func() tea.Msg {
+					return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
+				}
+			}
+			hosts, err := sshconfig.Load(configPathValue)
+			if err != nil {
+				return func() tea.Msg {
+					return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
+				}
+			}
+			connector := sshConnectorWithHosts(hosts, deps.UseAgent)
+			return tea.Exec(&sshconn.MacroCommand{Connector: connector, Host: host, Macro: macro}, func(err error) tea.Msg {
+				if err == nil {
+					_ = metaStore.RecordConnect(host.Alias, time.Now())
+				}
+				return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
 			})
 		},
 	})
@@ -514,6 +560,10 @@ func runReplay(args []string, deps Deps) int {
 func runSearch(args []string, deps Deps) int {
 	fs := newFlagSet("ttydeck search", deps)
 	dir := fs.String("dir", deps.RecordingDir, "recording directory")
+	files := fs.Bool("files", false, "scan transcript files instead of the SQLite index")
+	noSync := fs.Bool("no-sync", false, "search the existing index without scanning recordings")
+	skipInvalid := fs.Bool("skip-invalid", false, "skip malformed recordings while syncing the index")
+	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -524,15 +574,49 @@ func runSearch(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: ttydeck search [flags] <query>")
 		return 2
 	}
-	matches, err := session.Search(*dir, strings.Join(fs.Args(), " "))
+	query := strings.Join(fs.Args(), " ")
+	if *files {
+		matches, err := session.Search(*dir, query)
+		if err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
+		if *asJSON {
+			if matches == nil {
+				matches = []session.Match{}
+			}
+			encoded, err := json.MarshalIndent(matches, "", "  ")
+			if err != nil {
+				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				return 1
+			}
+			fmt.Fprintln(deps.Stdout, string(encoded))
+			return 0
+		}
+		for _, match := range matches {
+			fmt.Fprintf(deps.Stdout, "%s:%d: %s\n", match.Path, match.Line, match.Text)
+		}
+		return 0
+	}
+
+	metaStore, err := deps.OpenStore()
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 		return 1
 	}
-	for _, match := range matches {
-		fmt.Fprintf(deps.Stdout, "%s:%d: %s\n", match.Path, match.Line, match.Text)
+	defer metaStore.Close()
+	if !*noSync {
+		if _, _, err := syncTranscriptIndex(metaStore, *dir, *skipInvalid, false); err != nil {
+			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+			return 1
+		}
 	}
-	return 0
+	matches, err := metaStore.SearchTranscripts(query)
+	if err != nil {
+		fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+		return 1
+	}
+	return writeTranscriptMatches(deps, matches, *asJSON)
 }
 
 func runRemoteCommand(args []string, deps Deps) int {
@@ -812,6 +896,13 @@ func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command stri
 	return string(output), err
 }
 
+func defaultRunMacro(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, useAgent bool) error {
+	connector := sshConnectorWithHosts(hosts, useAgent)
+	return connector.RunInteractive(ctx, host, stdout, stderr, func(stream io.ReadWriter) error {
+		return automation.RunMacro(ctx, stream, macro, automation.Options{CloseStream: true})
+	})
+}
+
 func runZmodem(args []string, deps Deps) int {
 	if len(args) == 0 {
 		fmt.Fprintln(deps.Stderr, "usage: ttydeck zmodem <put|get> [flags] <alias> <path...>")
@@ -1045,10 +1136,12 @@ Usage:
   ttydeck tag [flags] <alias> [tag...]
   ttydeck replay [flags] <file.cast>
   ttydeck search [flags] <query>
+  ttydeck index [flags]
   ttydeck zmodem put [flags] <alias> <file...>
   ttydeck zmodem get [flags] <alias> <remote-file...>
   ttydeck run [flags] <alias> <command...>
   ttydeck snippet <set|list|delete|run> ...
+  ttydeck macro <set|list|show|delete|run> ...
   ttydeck diagnose [flags] <alias>
   ttydeck version                   print version
 
@@ -1066,5 +1159,24 @@ Flags for list:
 
 Flags for connect:
   -config path   path to ssh config
-  -record        record the session`)
+  -record        record the session
+  -json          emit a structured connection diagnostic
+
+Flags for search:
+  -dir path       recording directory
+  -files          scan transcript files instead of the SQLite index
+  -no-sync        do not scan recordings before searching
+  -skip-invalid   skip malformed recordings while syncing
+  -json           emit JSON
+
+Flags for index:
+  -dir path       recording directory
+  -skip-invalid   skip malformed recordings
+  -no-prune       keep entries for deleted recordings
+  -json           emit JSON
+
+Flags for macro run:
+  -config path    path to ssh config
+  -timeout 30s    overall automation timeout
+  -json           emit a structured failure diagnostic`)
 }

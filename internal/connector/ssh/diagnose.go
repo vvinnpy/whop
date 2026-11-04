@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"ttydeck/internal/automation"
 )
 
 // StageError adds the failing SSH phase to an error.
@@ -76,6 +78,18 @@ func classifyCategory(err error) string {
 	if errors.Is(err, ErrInteractiveUnavailable) {
 		return "pty_rejected"
 	}
+	if errors.Is(err, automation.ErrTimeout) {
+		return "automation_timeout"
+	}
+	if errors.Is(err, automation.ErrStreamClosed) {
+		return "automation_stream_closed"
+	}
+	if errors.Is(err, automation.ErrBufferLimit) {
+		return "automation_buffer_limit"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "timeout"
@@ -142,6 +156,14 @@ func categoryHint(category, host string) string {
 		return "The remote endpoint does not provide an interactive shell. Use `ttydeck run <alias> <command>` instead."
 	case "connection_reset":
 		return "The connection was reset after TCP establishment. Check server logs, rate limits, and network middleboxes."
+	case "automation_timeout":
+		return "An expect step did not match in time. Check the pattern, device prompt, terminal mode, and per-step timeout."
+	case "automation_stream_closed":
+		return "The remote stream closed before the expect rule matched. Check whether the shell exited or the device rejected the session."
+	case "automation_buffer_limit":
+		return "Unmatched automation output exceeded the safety buffer. Make the expect patterns more specific or increase the buffer limit."
+	case "canceled":
+		return "The operation was canceled by the user or a parent context."
 	default:
 		return "Run with `ssh -vvv` against the same host to compare client and server negotiation."
 	}

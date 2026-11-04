@@ -426,3 +426,51 @@ func TestNotesEditorSave(t *testing.T) {
 		t.Fatalf("saved = %q %q", savedAlias, savedNote)
 	}
 }
+
+func TestMacroPickerRunsSelectedMacro(t *testing.T) {
+	hosts := testHosts()
+	var ranHost, ranName string
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		LoadMacros: func() ([]string, error) {
+			return []string{"collect", "restart"}, nil
+		},
+		RunMacro: func(host sshconfig.Host, name string) tea.Cmd {
+			ranHost, ranName = host.Alias, name
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("m"))
+	if !m.macroMode || len(m.macroNames) != 2 {
+		t.Fatalf("macro mode = %v names=%#v", m.macroMode, m.macroNames)
+	}
+	if !strings.Contains(plainView(m), "MACROS / prod-db") || !strings.Contains(plainView(m), "collect") {
+		t.Fatalf("macro view:\n%s", plainView(m))
+	}
+	sendKey(m, runeKey("j"))
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.macroMode {
+		t.Fatal("macro picker should close after run")
+	}
+	if ranHost != "prod-db" || ranName != "restart" {
+		t.Fatalf("ran macro host=%q name=%q", ranHost, ranName)
+	}
+	if !strings.Contains(m.status, "running macro restart") {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestMacroFinishedStatus(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.Update(MacroFinishedMsg{Host: "prod-db", Name: "collect"})
+	if !strings.Contains(m.status, "macro collect completed on prod-db") {
+		t.Fatalf("status = %q", m.status)
+	}
+}

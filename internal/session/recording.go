@@ -49,14 +49,18 @@ func NewRecordingWithOptions(cast, transcript io.Writer, width, height int, star
 	if err != nil {
 		return nil, err
 	}
+	env := map[string]string{
+		"TERM": "xterm-256color",
+	}
+	if host := strings.TrimSpace(opts.Host); host != "" {
+		env["TTYDECK_HOST"] = host
+	}
 	header, err := json.Marshal(map[string]any{
 		"version":   2,
 		"width":     width,
 		"height":    height,
 		"timestamp": start.Unix(),
-		"env": map[string]string{
-			"TERM": "xterm-256color",
-		},
+		"env":       env,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("session: encode recording header: %w", err)
@@ -140,6 +144,7 @@ func NewFileRecordingWithOptions(dir, alias string, width, height int, start tim
 	if start.IsZero() {
 		start = time.Now()
 	}
+	opts.Host = alias
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", fmt.Errorf("session: create recording directory: %w", err)
 	}

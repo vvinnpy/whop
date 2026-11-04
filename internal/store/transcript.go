@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -95,11 +96,11 @@ func (s *Store) IndexTranscript(transcript Transcript) error {
 		}
 	}
 
-	if _, err := tx.Exec(`DELETE FROM transcript_fts WHERE rowid = ?`, rowID); err != nil {
+	if _, err := tx.Exec(`DELETE FROM transcript_fts_trigram WHERE rowid = ?`, rowID); err != nil {
 		return fmt.Errorf("store: clear transcript fts %s: %w", transcript.SessionID, err)
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO transcript_fts(rowid, text) VALUES(?, ?)`,
+		`INSERT INTO transcript_fts_trigram(rowid, text) VALUES(?, ?)`,
 		rowID, transcript.Text,
 	); err != nil {
 		return fmt.Errorf("store: index transcript %s: %w", transcript.SessionID, err)
@@ -117,15 +118,18 @@ func (s *Store) SearchTranscripts(query string) ([]TranscriptMatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	if utf8.RuneCountInString(strings.Join(strings.Fields(query), " ")) < 3 {
+		return s.searchShortTranscriptQuery(strings.Join(strings.Fields(query), " "))
+	}
 	rows, err := s.db.Query(
 		`SELECT transcript_index.path,
 		        transcript_index.host,
 		        transcript_index.started_at,
-		        snippet(transcript_fts, 0, '>>>', '<<<', ' ... ', 16)
-		   FROM transcript_fts
-		   JOIN transcript_index ON transcript_index.id = transcript_fts.rowid
-		  WHERE transcript_fts MATCH ?
-		  ORDER BY bm25(transcript_fts), transcript_index.started_at DESC
+		        snippet(transcript_fts_trigram, 0, '>>>', '<<<', ' ... ', 16)
+		   FROM transcript_fts_trigram
+		   JOIN transcript_index ON transcript_index.id = transcript_fts_trigram.rowid
+		  WHERE transcript_fts_trigram MATCH ?
+		  ORDER BY bm25(transcript_fts_trigram), transcript_index.started_at DESC
 		  LIMIT ?`,
 		matchQuery, transcriptSearchLimit,
 	)
@@ -182,4 +186,42 @@ func transcriptFTSQuery(query string) (string, error) {
 	// Quoting the whole input prevents FTS5 operators, column filters, and
 	// prefix syntax from changing the meaning of user-provided text.
 	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`, nil
+}
+
+func (s *Store) searchShortTranscriptQuery(query string) ([]TranscriptMatch, error) {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	rows, err := s.db.Query(
+		`SELECT transcript_index.path,
+		        transcript_index.host,
+		        transcript_index.started_at,
+		        substr(transcript_fts_trigram.text,
+		               max(1, instr(lower(transcript_fts_trigram.text), lower(?)) - 24),
+		               80)
+		   FROM transcript_fts_trigram
+		   JOIN transcript_index ON transcript_index.id = transcript_fts_trigram.rowid
+		  WHERE transcript_fts_trigram.text LIKE '%' || ? || '%' ESCAPE '\'
+		  ORDER BY transcript_index.started_at DESC
+		  LIMIT ?`,
+		query, escaped, transcriptSearchLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: search short transcripts: %w", err)
+	}
+	defer rows.Close()
+	var result []TranscriptMatch
+	for rows.Next() {
+		var path, host, startedAt, snippet string
+		if err := rows.Scan(&path, &host, &startedAt, &snippet); err != nil {
+			return nil, fmt.Errorf("store: scan short transcript match: %w", err)
+		}
+		started, err := time.Parse(time.RFC3339Nano, startedAt)
+		if err != nil {
+			return nil, fmt.Errorf("store: parse transcript start time: %w", err)
+		}
+		result = append(result, TranscriptMatch{Path: path, Host: host, StartedAt: started, Snippet: snippet})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate short transcript matches: %w", err)
+	}
+	return result, nil
 }

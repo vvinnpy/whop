@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"ttydeck/internal/automation"
 )
 
 func TestDiagnoseHandshakeEOF(t *testing.T) {
@@ -30,6 +32,8 @@ func TestDiagnoseStages(t *testing.T) {
 		{"refused", errors.New("dial tcp 1.2.3.4:22: connect: connection refused"), "dial", "connection_refused"},
 		{"timeout", context.DeadlineExceeded, "unknown", "timeout"},
 		{"pty", &StageError{Stage: "pty", Host: "host", Err: ErrInteractiveUnavailable}, "pty", "pty_rejected"},
+		{"automation timeout", &StageError{Stage: "automation", Host: "host", Err: automation.ErrTimeout}, "automation", "automation_timeout"},
+		{"automation stream", &StageError{Stage: "automation", Host: "host", Err: automation.ErrStreamClosed}, "automation", "automation_stream_closed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

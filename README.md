@@ -87,7 +87,12 @@ ttydeck note prod-db "primary database"
 ttydeck -record
 ttydeck connect -record prod-db
 ttydeck replay ~/.config/ttydeck/recordings/prod-db-*.cast
-ttydeck search "error"
+ttydeck index                        # rebuild and prune the FTS5 index
+ttydeck index --no-prune             # rebuild without removing stale entries
+ttydeck search "error"               # sync, then search the SQLite index
+ttydeck search --no-sync "error"     # fast search using the existing index
+ttydeck search --files "error"       # compatibility fallback: raw line scan
+ttydeck search --json "error"
 
 # ZMODEM upload/download (remote needs lrzsz: rz/sz)
 ttydeck zmodem put prod-db ./backup.tar
@@ -98,7 +103,44 @@ ttydeck run prod-db uptime
 ttydeck snippet set disk "df -h"
 ttydeck snippet run disk prod-db prod-cache
 ttydeck snippet list
+ttydeck macro list
+ttydeck macro run login prod-db
 ```
+
+### Macros
+
+Macros are portable JSON documents stored in SQLite. They are validated before
+they are saved. A macro contains ordered `send`, `wait`, and `sleep` steps:
+
+```json
+{
+  "version": 1,
+  "steps": [
+    {"kind": "wait", "pattern": "login: ", "timeout": "10s"},
+    {"kind": "send", "send": "deploy", "newline": true},
+    {"kind": "wait", "pattern": "Password: ", "timeout": "10s"},
+    {"kind": "send", "secret_env": "TTYDECK_DEPLOY_PASSWORD", "newline": true},
+    {"kind": "wait", "pattern": "\$ $", "timeout": "10s"},
+    {"kind": "send", "send": "uptime", "newline": true},
+    {"kind": "sleep", "sleep": "500ms"}
+  ]
+}
+```
+
+```bash
+ttydeck macro set login ./login.json
+ttydeck macro show login
+ttydeck macro run --timeout 30s login prod-db
+```
+
+`secret_env` stores only the environment-variable name. The secret value is
+resolved immediately before execution and is never written to SQLite, logs, or
+command arguments. `newline: true` appends a newline unless the value already
+ends with one. Plain `send` steps are for non-secret commands; a macro is not an
+encrypted vault.
+
+Use `ttydeck macro run -json login prod-db` for a structured failure diagnostic.
+In the TUI, press `m` on a selected host to choose and run a stored macro.
 
 ### Keys
 
@@ -114,6 +156,7 @@ ttydeck snippet list
 | `f` | toggle favorite |
 | `e` | edit host |
 | `n` | edit notes |
+| `m` | run an automation macro |
 | `R` | toggle session recording |
 | `?` | help |
 | `q` | quit |
@@ -140,9 +183,18 @@ This reports the failing stage (`dial`, `handshake`, `auth`, `host_key`,
 ## Status
 
 Early V0.1 development: the SSH-first TUI, safe config editing, metadata,
-session recording/replay/search, ZMODEM transfer, snippets, and release
-packaging are functional. See [docs/plan.md](docs/plan.md) for remaining
-hardening and future connectors.
+session recording/replay/search, SQLite FTS5 transcript search, default
+plain-text transcript redaction, snippets, expect-style macros, ZMODEM transfer,
+and release packaging are functional. See [docs/plan.md](docs/plan.md) for
+remaining hardening and future connectors.
+
+Recordings are asciicast v2 files plus a redacted `.txt` transcript. The cast is
+kept for faithful playback; the transcript is the searchable, redacted form.
+The FTS5 index uses the trigram tokenizer, so English and CJK substrings can be
+searched. Indexed transcript IDs are scoped to their recording root, preventing
+same-named files in different directories from overwriting each other.
+Password authentication input is not recorded, but avoid typing secrets into an
+interactive shell when recording is enabled.
 
 ## License
 

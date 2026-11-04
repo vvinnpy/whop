@@ -205,6 +205,9 @@ func (e *Engine) Close() error {
 
 		if pump != nil {
 			pump.stop()
+			if pump.closeOnStop {
+				<-pump.done
+			}
 		} else if e.opts.CloseStream {
 			if closer, ok := e.stream.(io.Closer); ok {
 				e.closeErr = closer.Close()
@@ -429,6 +432,7 @@ type streamPump struct {
 	closeOnStop bool
 	results     chan []byte
 	stopCh      chan struct{}
+	done        chan struct{}
 	stopOnce    sync.Once
 	terminal    error
 }
@@ -439,12 +443,14 @@ func newStreamPump(stream io.ReadWriter, closeOnStop bool) *streamPump {
 		closeOnStop: closeOnStop,
 		results:     make(chan []byte, 16),
 		stopCh:      make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 	go pump.run()
 	return pump
 }
 
 func (p *streamPump) run() {
+	defer close(p.done)
 	defer close(p.results)
 	buf := make([]byte, 4096)
 	for {

@@ -31,6 +31,9 @@ type RedactionRule struct {
 type RecordingOptions struct {
 	DisableRedaction bool
 	RedactionRules   []RedactionRule
+	// Host is written to the asciicast env header as TTYDECK_HOST so transcript
+	// indexes can retain the SSH alias even after files are moved.
+	Host string
 }
 
 // DefaultRedactionRules returns conservative rules for common credential output.

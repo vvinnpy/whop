@@ -37,16 +37,18 @@ connector/session abstractions rather than bolted onto the UI.
 - [x] asciicast v2 writer
 - [x] plain-text transcript search
 - [x] built-in playback with `charmbracelet/x/vt`
-- [ ] SQLite FTS5 transcript index
-- [ ] per-host recording policy and redaction
+- [x] SQLite FTS5 transcript index with stale-entry reconciliation
+- [x] default plain-text transcript redaction
+- [ ] per-host recording policy
 
 ### M3 — automation
 
 - [x] named command snippets
 - [x] direct remote command execution and batch snippet execution
 - [ ] snippet parameters
-- [ ] macros
-- [ ] expect rules with timeouts and one-shot semantics
+- [x] named macros with JSON definitions stored in SQLite
+- [x] expect rules with timeouts and one-shot semantics
+- [x] macro execution from CLI and TUI
 - [ ] runbook engine
 - [ ] audit log
 
@@ -115,11 +117,10 @@ The SSH-first V0.1 scope is functional:
 
 Post-V0.1 work:
 
-- multi-hop ProxyJump and Include-file editing
 - diff preview before config save
-- macros, expect rules, runbooks, audit log
+- runbooks and persisted automation audit log
 - automatic ZMODEM detection and Serial/Telnet transports
-- SQLite FTS5 transcript index and recording redaction
+- per-host recording policy
 - distro packaging, signing/notarization, and auto-update
 
 ## M0 architecture

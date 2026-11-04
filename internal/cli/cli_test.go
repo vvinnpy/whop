@@ -401,8 +401,59 @@ func TestSearchCommand(t *testing.T) {
 	if code := Run([]string{"search", "prod"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
 	}
+	output := td.stdout.String()
+	if !strings.Contains(output, path) || !strings.Contains(output, ">>>prod<<<") {
+		t.Fatalf("search output = %q", output)
+	}
+}
+
+func TestSearchFilesCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.txt")
+	if err := os.WriteFile(path, []byte("line one\nprod database\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	td.deps.RecordingDir = dir
+	if code := Run([]string{"search", "-files", "prod"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
 	if !strings.Contains(td.stdout.String(), path+":2: prod database") {
 		t.Fatalf("search output = %q", td.stdout.String())
+	}
+}
+
+func TestIndexCommand(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "prod-db-20261103-100000.000")
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"TTYDECK_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	td.deps.RecordingDir = dir
+	if code := Run([]string{"index", "-json"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	var result indexResult
+	if err := json.Unmarshal(td.stdout.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, td.stdout.String())
+	}
+	if result.Indexed != 1 || result.Directory != dir {
+		t.Fatalf("result = %+v", result)
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"search", "-json", "backup"}, td.deps); code != 0 {
+		t.Fatalf("search exit = %d: %s", code, td.stderr.String())
+	}
+	var matches []store.TranscriptMatch
+	if err := json.Unmarshal(td.stdout.Bytes(), &matches); err != nil {
+		t.Fatalf("invalid search JSON: %v\n%s", err, td.stdout.String())
+	}
+	if len(matches) != 1 || matches[0].Host != "prod-db" || !strings.Contains(matches[0].Snippet, "backup") {
+		t.Fatalf("matches = %#v", matches)
 	}
 }
 
@@ -616,5 +667,84 @@ func TestAgentEnvAndNoAgent(t *testing.T) {
 	}
 	if td.useAgent {
 		t.Fatal("-no-agent did not override env")
+	}
+}
+
+func TestSearchMissingDirectoryDoesNotPruneIndex(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "prod-db-20261103-100000.000")
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"TTYDECK_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	td.deps.RecordingDir = dir
+	if code := Run([]string{"index"}, td.deps); code != 0 {
+		t.Fatalf("index exit = %d: %s", code, td.stderr.String())
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	td.stderr.Reset()
+	if code := Run([]string{"search", "backup"}, td.deps); code != 1 {
+		t.Fatalf("missing dir search exit = %d", code)
+	}
+	td.stdout.Reset()
+	td.stderr.Reset()
+	if code := Run([]string{"search", "-no-sync", "backup"}, td.deps); code != 0 {
+		t.Fatalf("no-sync search exit = %d: %s", code, td.stderr.String())
+	}
+	if !strings.Contains(td.stdout.String(), "prod-db") {
+		t.Fatalf("existing index was lost: %q", td.stdout.String())
+	}
+}
+
+func TestSearchFilesJSONEmptyIsArray(t *testing.T) {
+	td := newTestDeps()
+	td.deps.RecordingDir = t.TempDir()
+	if code := Run([]string{"search", "-files", "-json", "missing"}, td.deps); code != 0 {
+		t.Fatalf("exit = %d: %s", code, td.stderr.String())
+	}
+	if strings.TrimSpace(td.stdout.String()) != "[]" {
+		t.Fatalf("output = %q", td.stdout.String())
+	}
+}
+
+func TestIndexPrunesDeletedTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "prod-db-20261103-100000.000")
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"TTYDECK_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	td.deps.RecordingDir = dir
+	if code := Run([]string{"index"}, td.deps); code != 0 {
+		t.Fatalf("first index exit = %d: %s", code, td.stderr.String())
+	}
+	if err := os.Remove(base + ".txt"); err != nil {
+		t.Fatal(err)
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"index", "-json"}, td.deps); code != 0 {
+		t.Fatalf("second index exit = %d: %s", code, td.stderr.String())
+	}
+	var result indexResult
+	if err := json.Unmarshal(td.stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Indexed != 0 || result.Removed != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	td.stdout.Reset()
+	if code := Run([]string{"search", "-no-sync", "backup"}, td.deps); code != 0 {
+		t.Fatalf("search exit = %d: %s", code, td.stderr.String())
+	}
+	if strings.TrimSpace(td.stdout.String()) != "" {
+		t.Fatalf("stale transcript still searchable: %q", td.stdout.String())
 	}
 }

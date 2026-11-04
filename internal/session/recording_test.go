@@ -70,6 +70,17 @@ func TestNewFileRecording(t *testing.T) {
 	if !strings.HasSuffix(castPath, ".cast") {
 		t.Fatalf("cast path = %q", castPath)
 	}
+	castData, err := os.ReadFile(castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header castHeaderWithEnv
+	if err := json.Unmarshal(bytes.SplitN(castData, []byte("\n"), 2)[0], &header); err != nil {
+		t.Fatal(err)
+	}
+	if header.Env["TTYDECK_HOST"] != "prod/db" {
+		t.Fatalf("recorded host metadata = %#v", header.Env)
+	}
 	transcriptPath := strings.TrimSuffix(castPath, ".cast") + ".txt"
 	for _, path := range []string{castPath, transcriptPath} {
 		info, err := os.Stat(path)
@@ -267,4 +278,8 @@ func castEventData(t *testing.T, value string) string {
 		result.WriteString(data)
 	}
 	return result.String()
+}
+
+type castHeaderWithEnv struct {
+	Env map[string]string `json:"env"`
 }

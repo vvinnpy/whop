@@ -35,6 +35,9 @@ func (m *Model) View() string {
 	if m.notesMode {
 		return strings.Join([]string{header, filter, m.viewNotes(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
 	}
+	if m.macroMode {
+		return strings.Join([]string{header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
+	}
 	if m.help {
 		return strings.Join([]string{header, filter, m.viewHelp(width), m.viewFooter(width), m.viewStatus(width)}, "\n")
 	}
@@ -219,6 +222,27 @@ func (m *Model) viewNotes(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *Model) viewMacros(width int) string {
+	lines := []string{styleAccent.Render(" MACROS / " + m.macroTarget.Alias), ""}
+	if len(m.macroNames) == 0 {
+		lines = append(lines, styleDim.Render("  no macros"))
+	} else {
+		for index, name := range m.macroNames {
+			prefix := "  "
+			if index == m.macroCursor {
+				prefix = "> "
+			}
+			line := ansi.Truncate(prefix+name, width, "~")
+			if index == m.macroCursor {
+				line = styleSelected.Render(padTo(line, max(1, width-1)))
+			}
+			lines = append(lines, line)
+		}
+	}
+	lines = append(lines, "", styleDim.Render(" enter run  j/k move  esc cancel"))
+	return strings.Join(lines, "\n")
+}
+
 func (m *Model) viewHelp(width int) string {
 	lines := []string{
 		styleAccent.Render(" KEYBOARD"),
@@ -233,6 +257,7 @@ func (m *Model) viewHelp(width int) string {
 		"  f           toggle favorite",
 		"  e           edit host",
 		"  n           edit notes",
+		"  m           run an automation macro",
 		"  R           toggle session recording",
 		"  esc         clear filter or quit",
 		"  ?           close help",
@@ -249,10 +274,12 @@ func (m *Model) viewFooter(width int) string {
 		hint = " tab next  enter save  esc cancel"
 	} else if m.notesMode {
 		hint = " ctrl+s save  esc cancel"
+	} else if m.macroMode {
+		hint = " enter run  j/k move  esc cancel"
 	} else if m.filterFocused {
 		hint = " type filter  enter connect  esc clear  ctrl+u clear"
 	} else {
-		hint = " enter connect  / filter  j/k  f fav  e edit  R rec  ? help  q quit"
+		hint = " enter connect  / filter  j/k  f fav  e edit  m macro  R rec  ? help  q quit"
 	}
 	return styleDim.Render(ansi.Truncate(hint, width, "~"))
 }

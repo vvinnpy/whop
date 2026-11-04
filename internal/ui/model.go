@@ -18,6 +18,12 @@ type HostLoader func() ([]sshconfig.Host, error)
 // ConnectFunc starts a connection and returns a Bubble Tea command.
 type ConnectFunc func(sshconfig.Host, bool) tea.Cmd
 
+// MacroLoader returns the names of stored automation macros.
+type MacroLoader func() ([]string, error)
+
+// MacroRunner starts a named macro against one host.
+type MacroRunner func(sshconfig.Host, string) tea.Cmd
+
 // Options configures the TUI model.
 type Options struct {
 	ConfigPath     string
@@ -26,6 +32,8 @@ type Options struct {
 	Record         bool
 	Load           HostLoader
 	Connect        ConnectFunc
+	LoadMacros     MacroLoader
+	RunMacro       MacroRunner
 	ToggleFavorite func(sshconfig.Host, bool) error
 	EditHost       func(sshconfig.Host, sshconfig.Edit) error
 	SetTags        func(sshconfig.Host, []string) error
@@ -35,6 +43,13 @@ type Options struct {
 // ConnectFinishedMsg is emitted after an interactive session returns.
 type ConnectFinishedMsg struct {
 	Err error
+}
+
+// MacroFinishedMsg is emitted after a named macro run returns.
+type MacroFinishedMsg struct {
+	Host string
+	Name string
+	Err  error
 }
 
 type hostsLoadedMsg struct {
@@ -47,6 +62,8 @@ type Model struct {
 	configPath     string
 	load           HostLoader
 	connect        ConnectFunc
+	loadMacros     MacroLoader
+	runMacro       MacroRunner
 	toggleFavorite func(sshconfig.Host, bool) error
 	editHost       func(sshconfig.Host, sshconfig.Edit) error
 	setTags        func(sshconfig.Host, []string) error
@@ -77,6 +94,11 @@ type Model struct {
 	notesMode   bool
 	notesInput  textField
 	notesTarget sshconfig.Host
+
+	macroMode   bool
+	macroNames  []string
+	macroCursor int
+	macroTarget sshconfig.Host
 }
 
 // New creates a new TUI model.
@@ -85,6 +107,8 @@ func New(opts Options) *Model {
 		configPath:     opts.ConfigPath,
 		load:           opts.Load,
 		connect:        opts.Connect,
+		loadMacros:     opts.LoadMacros,
+		runMacro:       opts.RunMacro,
 		toggleFavorite: opts.ToggleFavorite,
 		editHost:       opts.EditHost,
 		setTags:        opts.SetTags,
@@ -135,6 +159,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case MacroFinishedMsg:
+		if msg.Err != nil {
+			m.err = msg.Err
+			m.status = fmt.Sprintf("macro %s failed on %s", msg.Name, msg.Host)
+		} else {
+			m.err = nil
+			m.status = fmt.Sprintf("macro %s completed on %s", msg.Name, msg.Host)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -151,6 +185,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.notesMode {
 		return m.updateNotes(msg)
+	}
+	if m.macroMode {
+		return m.updateMacros(msg)
 	}
 
 	if m.help {
@@ -234,6 +271,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.startEdit()
 	case "n":
 		m.startNotes()
+	case "m":
+		m.startMacros()
 	case "R":
 		m.record = !m.record
 		if m.record {
@@ -275,6 +314,70 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 	m.err = nil
 	m.status = fmt.Sprintf("connecting to %s...", host.Alias)
 	return m, m.connect(host, m.record)
+}
+
+func (m *Model) startMacros() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	if m.loadMacros == nil {
+		m.err = fmt.Errorf("macros are not configured")
+		m.status = "macro list unavailable"
+		return
+	}
+	names, err := m.loadMacros()
+	if err != nil {
+		m.err = err
+		m.status = "failed to load macros"
+		return
+	}
+	if len(names) == 0 {
+		m.err = nil
+		m.status = "no macros; create one with: ttydeck macro set"
+		return
+	}
+	m.macroNames = names
+	m.macroCursor = 0
+	m.macroTarget = host
+	m.macroMode = true
+	m.err = nil
+	m.status = "macros for " + host.Alias
+}
+
+func (m *Model) updateMacros(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "m":
+		m.macroMode = false
+		m.status = "macro cancelled"
+		return m, nil
+	case "j", "down":
+		if len(m.macroNames) > 0 {
+			m.macroCursor = (m.macroCursor + 1) % len(m.macroNames)
+		}
+		return m, nil
+	case "k", "up":
+		if len(m.macroNames) > 0 {
+			m.macroCursor = (m.macroCursor - 1 + len(m.macroNames)) % len(m.macroNames)
+		}
+		return m, nil
+	case "enter":
+		if len(m.macroNames) == 0 {
+			return m, nil
+		}
+		if m.runMacro == nil {
+			m.err = fmt.Errorf("macro execution is not configured")
+			m.status = "macro failed"
+			return m, nil
+		}
+		name := m.macroNames[m.macroCursor]
+		host := m.macroTarget
+		m.macroMode = false
+		m.err = nil
+		m.status = fmt.Sprintf("running macro %s on %s...", name, host.Alias)
+		return m, m.runMacro(host, name)
+	}
+	return m, nil
 }
 
 func (m *Model) startEdit() {

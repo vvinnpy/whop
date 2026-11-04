@@ -84,9 +84,9 @@ func (s *Store) init() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS transcript_index_started_at
 			ON transcript_index(started_at DESC)`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
+		`CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts_trigram USING fts5(
 			text,
-			tokenize = 'unicode61 remove_diacritics 2'
+			tokenize = 'trigram'
 		)`,
 	}
 	for _, statement := range statements {
