@@ -13,7 +13,7 @@
 ## Main screen
 
 ```text
- whop  12 hosts  ~/.ssh/config                                  servers
+ whop  12 hosts  ~/.ssh/config                              login hosts
 
  / search: prod█
 
@@ -50,7 +50,8 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 | `g` / `G` | first / last host |
 | `ctrl+d` / `ctrl+u` | page down / page up |
 | `r` | reload config |
-| `a` | toggle servers/all hosts |
+| `a` | toggle login hosts/all entries |
+| `L` | set login access |
 | `?` | help overlay |
 | `q` / `ctrl+c` | quit |
 

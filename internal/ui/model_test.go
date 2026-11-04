@@ -89,7 +89,7 @@ func TestInitialViewShowsServers(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	view := plainView(m)
 
-	for _, want := range []string{"whop", "3/4 hosts", "prod-db", "10.0.0.11", "deploy", "servers"} {
+	for _, want := range []string{"whop", "3/4 hosts", "prod-db", "10.0.0.11", "deploy", "login hosts"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -231,9 +231,77 @@ func TestToggleAllIncludesGitAuth(t *testing.T) {
 	if !strings.Contains(plainView(m), "github.com") {
 		t.Fatal("all mode should show git auth host")
 	}
+	if view := plainView(m); !strings.Contains(view, "all entries") || !strings.Contains(view, "ACCESS") {
+		t.Fatalf("all mode should show mode and access column:\n%s", view)
+	}
+	sendKey(m, runeKey("G"))
+	if view := plainView(m); !strings.Contains(view, "service (auto)") {
+		t.Fatalf("all mode should explain automatic service access:\n%s", view)
+	}
 	sendKey(m, runeKey("a"))
 	if m.showAll || len(m.filtered) != 3 {
 		t.Fatalf("showAll=%v filtered=%d", m.showAll, len(m.filtered))
+	}
+}
+
+func TestAccessPickerSetsServiceAndHidesHost(t *testing.T) {
+	hosts := testHosts()
+	var selectedAlias string
+	var selectedMode sshconfig.AccessMode
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		SetLoginMode: func(host sshconfig.Host, mode sshconfig.AccessMode) error {
+			selectedAlias = host.Alias
+			selectedMode = mode
+			for i := range hosts {
+				if hosts[i].Alias == host.Alias {
+					hosts[i].AccessMode = mode
+				}
+			}
+			return nil
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("L"))
+	if !m.accessMode {
+		t.Fatal("access picker should open")
+	}
+	if view := plainView(m); !strings.Contains(view, "ACCESS / prod-db") || !strings.Contains(view, "service endpoint") {
+		t.Fatalf("access picker missing choices:\n%s", view)
+	}
+	sendKey(m, runeKey("j"))
+	sendKey(m, runeKey("j"))
+	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("access selection should reload hosts")
+	}
+	if selectedAlias != "prod-db" || selectedMode != sshconfig.AccessService {
+		t.Fatalf("access callback = %q %q", selectedAlias, selectedMode)
+	}
+	m.Update(cmd())
+	if m.accessMode {
+		t.Fatal("access picker should close after apply")
+	}
+	if len(m.filtered) != 2 {
+		t.Fatalf("service host should leave login list, got %d hosts", len(m.filtered))
+	}
+	if !strings.Contains(m.status, "hidden; press a to show all") {
+		t.Fatalf("status should explain hidden host: %q", m.status)
+	}
+
+	sendKey(m, runeKey("a"))
+	if len(m.filtered) != 4 {
+		t.Fatalf("all entries should include the service host, got %d", len(m.filtered))
+	}
+	sendKey(m, runeKey("g"))
+	if view := plainView(m); !strings.Contains(view, "service (manual)") {
+		t.Fatalf("manual service override should be visible:\n%s", view)
 	}
 }
 

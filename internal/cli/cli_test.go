@@ -235,6 +235,9 @@ func TestTUIOptions(t *testing.T) {
 	if td.tuiOpts.EditHost == nil || td.tuiOpts.SetTags == nil || td.tuiOpts.SaveNotes == nil {
 		t.Fatal("tui metadata callbacks must be configured")
 	}
+	if td.tuiOpts.SetLoginMode == nil {
+		t.Fatal("tui login access callback must be configured")
+	}
 	if td.tuiOpts.PreviewAdd == nil || td.tuiOpts.AddHost == nil || td.tuiOpts.RenameHost == nil || td.tuiOpts.SetHostPassword == nil {
 		t.Fatal("tui host management callbacks must be configured")
 	}

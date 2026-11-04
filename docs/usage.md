@@ -11,7 +11,7 @@
 4. [ProxyJump / host proxy 是什么](#4-proxyjump--host-proxy-是什么)
 5. [默认 SSH 密钥](#5-默认-ssh-密钥)
 6. [加密密码 vault](#6-加密密码-vault)
-7. [收藏、标签、备注](#7-收藏标签备注)
+7. [收藏、标签、备注、登录能力](#7-收藏标签备注登录能力)
 8. [会话录制、回放、全文搜索](#8-会话录制回放全文搜索)
 9. [Snippet 与批量执行](#9-snippet-与批量执行)
 10. [Macro 与 expect 自动化](#10-macro-与-expect-自动化)
@@ -110,7 +110,8 @@ whop prod
 | `g` / `G` | 第一条 / 最后一条 |
 | `ctrl+d` / `ctrl+u` | 翻页 |
 | `r` | 重新读取 SSH 配置 |
-| `a` | 在“服务器”和“全部 Host”之间切换 |
+| `a` | 在“登录主机”和“全部 Host”之间切换 |
+| `L` | 标记自动 / 可登录 / 服务端点 |
 | `f` | 收藏 / 取消收藏 |
 | `N` | 新建 Host |
 | `e` | 编辑 Host |
@@ -119,10 +120,10 @@ whop prod
 | `R` | 为下一次会话切换录制 |
 | `?` | 打开帮助 |
 | `tab` / `esc` | 在过滤输入模式下应用过滤并返回列表操作 |
-| `esc` | 在列表操作模式下清空过滤；没有过滤时退出 |
+| `esc` | 在列表操作模式下清空过滤 |
 | `q` | 退出 |
 
-`a` 很重要：默认列表会隐藏 `Host *`、通配符、`Match` 和 Git/Auth 主机。按 `a` 可以查看全部原始 Host。
+`a` 很重要：默认列表只显示可登录主机，隐藏通配符、`Match` 和自动识别出的 Git/Auth 服务端点。按 `a` 查看全部具体 Host；在全部模式下按 `L` 可以手动纠正某个 Host 的登录能力。
 
 ---
 
@@ -359,7 +360,7 @@ WHOP_VAULT_PASSWORD='master-password' WHOP_HOST_PASSWORD='host-password' whop va
 
 ---
 
-## 7. 收藏、标签、备注
+## 7. 收藏、标签、备注、登录能力
 
 命令行：
 
@@ -367,6 +368,7 @@ WHOP_VAULT_PASSWORD='master-password' WHOP_HOST_PASSWORD='host-password' whop va
 whop favorite prod-db on
 whop tag prod-db prod db
 whop note prod-db "primary database"
+whop access github.com service
 ```
 
 查询：
@@ -375,6 +377,7 @@ whop note prod-db "primary database"
 whop favorite prod-db off
 whop tag prod-db                # 打印当前标签
 whop note prod-db               # 打印当前备注
+whop access github.com          # 查看 access / effective
 ```
 
 TUI：
@@ -382,12 +385,14 @@ TUI：
 - `f`：收藏；
 - `n`：编辑备注；
 - `e` 表单中的 `Tags`：编辑标签。
+- `L`：标记登录能力，可选 automatic / login host / service endpoint。
 
 用途：
 
 - 收藏让常用主机排在前面；
 - 标签参与筛选，例如输入 `prod db`；
 - 备注记录用途、负责人、变更窗口等非敏感信息。
+- 登录能力默认自动判断；手动标记优先于自动判断。`service` 会从默认登录列表隐藏，`auto` 恢复自动判断。
 
 不要在这些字段里保存密码或 token。
 
@@ -742,7 +747,7 @@ README 的 V1 scope 中列出了部分后续目标；以本文“当前已可用
 
 | 现象 | 先检查 |
 |---|---|
-| TUI 看不到某台机器 | 按 `a`；检查是否被识别为 Git/Auth、通配符或 `Match` |
+| TUI 看不到某台机器 | 按 `a` 查看全部；若自动识别错误，按 `L` 标记 login/service |
 | ProxyJump 失败 | 跳板机是否可达；是否允许 TCP forwarding；alias 是否存在；是否循环 |
 | Authentication failed | IdentityFile、agent、vault 密码、用户名、服务器 auth policy |
 | Host key failed | 用可信渠道核对 key 后更新 `~/.ssh/known_hosts` |
@@ -751,7 +756,7 @@ README 的 V1 scope 中列出了部分后续目标；以本文“当前已可用
 | 搜不到会话 | 是否录过会话；`whop index`；查询在 `.txt` 中是否存在 |
 | 宏超时 | 用 `whop macro show` 检查 pattern；设备 prompt 是否变化 |
 | ZMODEM 失败 | 远端是否有 `rz`/`sz`；权限、磁盘空间、目标目录 |
-| Git/Auth 主机无法交互 | 用 `whop run github.com help` 这类非交互命令 |
+| Git/Auth 主机无法交互 | 用 `whop run github.com help`，或 `whop access github.com service` 标记为服务端点 |
 
 ---
 

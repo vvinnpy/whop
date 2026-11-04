@@ -84,6 +84,8 @@ whop connect prod-db
 whop favorite prod-db on
 whop tag prod-db prod db
 whop note prod-db "primary database"
+whop access github.com service
+whop access prod-db auto
 
 # Record, replay, and search sessions
 whop -record
@@ -250,7 +252,8 @@ to quit.
 | `g` / `G` | first / last |
 | `ctrl+d` / `ctrl+u` | page down / up |
 | `r` | reload config |
-| `a` | toggle servers / all |
+| `a` | toggle login hosts / all entries |
+| `L` | set login access |
 | `f` | toggle favorite |
 | `N` | create a host and review the diff |
 | `e` | edit host name, identity, tags, password, and review the diff |
@@ -262,13 +265,15 @@ to quit.
 | `q` | quit |
 
 The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides
-Git/Auth entries (`github.com`, `gitlab.com`, `aur.archlinux.org`, wildcard
-blocks, `Match` blocks) from the default server list. Use `-all` to inspect them.
+service endpoints inferred from known Git/Auth hosts, wildcard blocks, and
+`Match` blocks from the default login list. Use `-all` to inspect them. Press
+`L`, or run `whop access <alias> auto|login|service`, to correct the inference.
 
 `aur.archlinux.org` is a Git/Auth endpoint, not an interactive shell. Use:
 
 ```bash
 whop run aur.archlinux.org help
+whop access aur.archlinux.org service
 ```
 
 For machine-readable connection diagnostics:

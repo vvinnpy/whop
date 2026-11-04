@@ -331,6 +331,18 @@ func runTUI(args []string, deps Deps) int {
 			SaveNotes: func(host sshconfig.Host, note string) error {
 				return metaStore.SetNotes(host.Alias, note)
 			},
+			SetLoginMode: func(host sshconfig.Host, mode sshconfig.AccessMode) error {
+				switch mode {
+				case sshconfig.AccessLogin:
+					value := true
+					return metaStore.SetLoginOverride(host.Alias, &value)
+				case sshconfig.AccessService:
+					value := false
+					return metaStore.SetLoginOverride(host.Alias, &value)
+				default:
+					return metaStore.SetLoginOverride(host.Alias, nil)
+				}
+			},
 			Connect: func(host sshconfig.Host, record bool) tea.Cmd {
 				pendingConnect = &connectRequest{host: host, record: record}
 				return tea.Quit

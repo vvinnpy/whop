@@ -105,7 +105,7 @@ func TestEmptyListStatesExplainNextAction(t *testing.T) {
 			Alias: "github.com", HostName: "github.com", Kind: sshconfig.KindGitAuth,
 		}})
 		view := plainView(m)
-		if !strings.Contains(view, "no servers found") || !strings.Contains(view, "a show all hosts") {
+		if !strings.Contains(view, "no login hosts found") || !strings.Contains(view, "a show all entries") {
 			t.Fatalf("hidden-server state lacks next action:\n%s", view)
 		}
 	})
@@ -231,7 +231,7 @@ func TestHelpGroupsActionsAndExplainsFavorite(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	sendKey(m, runeKey("?"))
 	view := plainView(m)
-	for _, want := range []string{"NAVIGATION", "HOSTS", "SESSIONS", "favorite (*)", "up/down"} {
+	for _, want := range []string{"NAVIGATION", "HOSTS", "SESSIONS", "favorite (*)", "up/down", "set login access"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("help missing %q:\n%s", want, view)
 		}

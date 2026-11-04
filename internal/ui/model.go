@@ -56,6 +56,7 @@ type Options struct {
 	SetHostPassword func(sshconfig.Host, string) error
 	SetTags         func(sshconfig.Host, []string) error
 	SaveNotes       func(sshconfig.Host, string) error
+	SetLoginMode    func(sshconfig.Host, sshconfig.AccessMode) error
 }
 
 // ConnectFinishedMsg is emitted after an interactive session returns.
@@ -91,6 +92,7 @@ type Model struct {
 	setHostPassword func(sshconfig.Host, string) error
 	setTags         func(sshconfig.Host, []string) error
 	saveNotes       func(sshconfig.Host, string) error
+	setLoginMode    func(sshconfig.Host, sshconfig.AccessMode) error
 
 	allHosts []sshconfig.Host
 	filtered []sshconfig.Host
@@ -140,6 +142,11 @@ type Model struct {
 	macroNames  []string
 	macroCursor int
 	macroTarget sshconfig.Host
+
+	accessMode    bool
+	accessTarget  sshconfig.Host
+	accessOptions []sshconfig.AccessMode
+	accessCursor  int
 }
 
 // New creates a new TUI model.
@@ -159,6 +166,7 @@ func New(opts Options) *Model {
 		setHostPassword: opts.SetHostPassword,
 		setTags:         opts.SetTags,
 		saveNotes:       opts.SaveNotes,
+		setLoginMode:    opts.SetLoginMode,
 		filter:          opts.InitialFilter,
 		initialStatus:   opts.InitialStatus,
 		showAll:         opts.ShowAll,
@@ -242,6 +250,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.macroMode {
 		return m.updateMacros(msg)
 	}
+	if m.accessMode {
+		return m.updateAccess(msg)
+	}
 
 	if m.help {
 		switch msg.String() {
@@ -312,9 +323,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showAll = !m.showAll
 		m.applyFilter()
 		if m.showAll {
-			m.status = "showing all hosts"
+			m.status = "showing all entries"
 		} else {
-			m.status = "showing servers only"
+			m.status = "showing login hosts"
 		}
 	case "f":
 		m.toggleSelectedFavorite()
@@ -326,6 +337,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.startNotes()
 	case "m":
 		m.startMacros()
+	case "L":
+		m.startAccess()
 	case "R":
 		m.record = !m.record
 		if m.record {
@@ -428,6 +441,70 @@ func (m *Model) updateMacros(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.status = fmt.Sprintf("running macro %s on %s...", name, host.Alias)
 		return m, m.runMacro(host, name)
+	}
+	return m, nil
+}
+
+func (m *Model) startAccess() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	if m.setLoginMode == nil {
+		m.err = fmt.Errorf("access changes are not configured")
+		m.status = "access unavailable"
+		return
+	}
+	m.accessOptions = []sshconfig.AccessMode{
+		sshconfig.AccessAuto,
+		sshconfig.AccessLogin,
+		sshconfig.AccessService,
+	}
+	m.accessCursor = 0
+	switch host.AccessMode {
+	case sshconfig.AccessLogin:
+		m.accessCursor = 1
+	case sshconfig.AccessService:
+		m.accessCursor = 2
+	}
+	m.accessTarget = host
+	m.accessMode = true
+	m.err = nil
+	m.status = ""
+}
+
+func (m *Model) updateAccess(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.accessMode = false
+		m.status = "access cancelled"
+		return m, nil
+	case "j", "down", "ctrl+n":
+		m.accessCursor = (m.accessCursor + 1) % len(m.accessOptions)
+		return m, nil
+	case "k", "up", "ctrl+p":
+		m.accessCursor = (m.accessCursor - 1 + len(m.accessOptions)) % len(m.accessOptions)
+		return m, nil
+	case "enter":
+		mode := m.accessOptions[m.accessCursor]
+		if err := m.setLoginMode(m.accessTarget, mode); err != nil {
+			m.err = err
+			m.status = "access update failed"
+			return m, nil
+		}
+		host := m.accessTarget
+		host.AccessMode = mode
+		m.accessMode = false
+		m.err = nil
+		if mode == sshconfig.AccessAuto {
+			m.status = fmt.Sprintf("%s: %s (automatic)", host.Alias, host.EffectiveAccess())
+		} else {
+			m.status = fmt.Sprintf("%s: %s (manual)", host.Alias, host.EffectiveAccess())
+		}
+		if !m.showAll && host.EffectiveAccess() == sshconfig.AccessService {
+			m.status += " · hidden; press a to show all"
+		}
+		return m, m.reload
 	}
 	return m, nil
 }
@@ -988,9 +1065,9 @@ func (m *Model) removeLastFilterRune() {
 
 func (m *Model) modeLabel() string {
 	if m.showAll {
-		return "all hosts"
+		return "all entries"
 	}
-	return "servers"
+	return "login hosts"
 }
 
 func (m *Model) selectedSummary() string {
@@ -1002,8 +1079,19 @@ func (m *Model) selectedSummary() string {
 	if host.User != "" {
 		parts = append(parts, "user "+host.User)
 	}
+	if m.showAll {
+		parts = append(parts, "access "+hostAccessDescription(host))
+	}
 	if len(host.Tags) > 0 {
 		parts = append(parts, "tags "+strings.Join(host.Tags, ","))
 	}
 	return strings.Join(parts, "  ")
+}
+
+func hostAccessDescription(host sshconfig.Host) string {
+	source := "auto"
+	if host.AccessMode == sshconfig.AccessLogin || host.AccessMode == sshconfig.AccessService {
+		source = "manual"
+	}
+	return fmt.Sprintf("%s (%s)", host.EffectiveAccess(), source)
 }

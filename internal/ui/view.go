@@ -7,6 +7,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"whop/internal/sshconfig"
 )
 
 var (
@@ -45,6 +47,9 @@ func (m *Model) View() string {
 	}
 	if m.macroMode {
 		return joinView(header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width))
+	}
+	if m.accessMode {
+		return joinView(header, filter, m.viewAccess(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.help {
 		return joinView(header, filter, m.viewHelp(width), m.viewFooter(width))
@@ -119,15 +124,23 @@ func (m *Model) viewList(width, height int) []string {
 		}
 	}
 
-	cols := listColumns(listWidth)
+	cols := listColumnsFor(listWidth, m.showAll)
 	if detailVisible {
 		// User and port remain visible in the detail pane, so the list
 		// prefers tags in split view.
 		available := max(22, listWidth-26)
 		hostWidth := max(14, available*3/5)
-		cols = columns{name: 20, host: hostWidth, tags: max(8, available-hostWidth), showTags: true}
+		if m.showAll {
+			cols = columns{name: 20, host: hostWidth, access: 8, showAccess: true}
+		} else {
+			cols = columns{name: 20, host: hostWidth, tags: max(8, available-hostWidth), showTags: true}
+		}
 	}
-	lines := []string{styleDim.Render(padTo(rowLine(cols, "NAME", "HOST", "USER", "PORT", "TAGS"), listWidth))}
+	accessHeader := ""
+	if cols.showAccess {
+		accessHeader = "ACCESS"
+	}
+	lines := []string{styleDim.Render(padTo(rowLine(cols, "NAME", "HOST", "USER", "PORT", accessHeader, "TAGS"), listWidth))}
 
 	available := height - 7
 	if available < 3 {
@@ -162,7 +175,8 @@ func (m *Model) viewList(width, height int) []string {
 		if tags == "" {
 			tags = "-"
 		}
-		line := padTo(rowLine(cols, prefix+name, host.HostName, host.User, fmt.Sprintf("%d", host.Port), tags), listWidth)
+		access := string(host.EffectiveAccess())
+		line := padTo(rowLine(cols, prefix+name, host.HostName, host.User, fmt.Sprintf("%d", host.Port), access, tags), listWidth)
 		if selected {
 			line = styleSelected.Render(padTo(line, listWidth))
 		}
@@ -185,8 +199,8 @@ func (m *Model) emptyListLines(width int) []string {
 			hint = "esc clear search"
 		}
 	default:
-		message = "no servers found"
-		hint = "a show all hosts"
+		message = "no login hosts found"
+		hint = "a show all entries"
 	}
 	return []string{
 		styleDim.Render(ansi.Truncate("  "+message, width, "~")),
@@ -228,6 +242,9 @@ func (m *Model) viewDetail(width int) string {
 	}
 	if host.Notes != "" {
 		lines = append(lines, detailLine("notes", host.Notes, detailWidth))
+	}
+	if m.showAll {
+		lines = append(lines, detailLine("access", hostAccessDescription(host), detailWidth))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -311,6 +328,38 @@ func (m *Model) viewMacros(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *Model) viewAccess(width int) string {
+	lines := []string{
+		styleAccent.Render(" ACCESS / " + m.accessTarget.Alias),
+		"",
+		styleDim.Render(ansi.Truncate("  current: "+hostAccessDescription(m.accessTarget), width, "~")),
+		"",
+	}
+	for index, mode := range m.accessOptions {
+		prefix := "  "
+		if index == m.accessCursor {
+			prefix = "> "
+		}
+		line := ansi.Truncate(prefix+accessChoiceLabel(mode), width, "~")
+		if index == m.accessCursor {
+			line = styleSelected.Render(padTo(line, max(1, width-1)))
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func accessChoiceLabel(mode sshconfig.AccessMode) string {
+	switch mode {
+	case sshconfig.AccessLogin:
+		return "login host"
+	case sshconfig.AccessService:
+		return "service endpoint"
+	default:
+		return "automatic"
+	}
+}
+
 func (m *Model) viewHelp(width int) string {
 	lines := []string{
 		styleAccent.Render(" KEYBOARD"),
@@ -325,7 +374,8 @@ func (m *Model) viewHelp(width int) string {
 		"  ctrl+d/u      page down / up",
 		"  q             quit",
 		styleAccent.Render(" HOSTS"),
-		"  a             servers / all hosts",
+		"  a             login hosts / all entries",
+		"  L             set login access",
 		"  f             toggle favorite (*)",
 		"  N             new connection",
 		"  e             edit connection",
@@ -373,6 +423,12 @@ func (m *Model) viewFooter(width int) string {
 			{key: "j/k", action: "move"},
 			{key: "esc", action: "cancel"},
 		}
+	} else if m.accessMode {
+		hints = []footerHint{
+			{key: "j/k", action: "choose"},
+			{key: "enter", action: "apply"},
+			{key: "esc", action: "cancel"},
+		}
 	} else if m.help {
 		hints = []footerHint{{key: "?/esc", action: "close help"}}
 	} else if m.filterFocused {
@@ -392,12 +448,24 @@ func (m *Model) viewFooter(width int) string {
 			{key: "q", action: "quit"},
 		}
 	} else {
-		hints = []footerHint{
-			{key: "enter", action: "connect"},
-			{key: "/", action: "search"},
-			{key: "j/k", action: "move"},
-			{key: "?", action: "help"},
-			{key: "q", action: "quit"},
+		if m.showAll {
+			hints = []footerHint{
+				{key: "enter", action: "connect"},
+				{key: "/", action: "search"},
+				{key: "L", action: "access"},
+				{key: "a", action: "login hosts"},
+				{key: "?", action: "help"},
+				{key: "q", action: "quit"},
+			}
+		} else {
+			hints = []footerHint{
+				{key: "enter", action: "connect"},
+				{key: "/", action: "search"},
+				{key: "j/k", action: "move"},
+				{key: "a", action: "all entries"},
+				{key: "?", action: "help"},
+				{key: "q", action: "quit"},
+			}
 		}
 	}
 	return renderFooterHints(width, hints)
@@ -455,15 +523,25 @@ func (m *Model) viewStatus(width int) string {
 }
 
 type columns struct {
-	name, host, user, port, tags int
-	showUser, showPort, showTags bool
+	name, host, user, port, tags, access     int
+	showUser, showPort, showTags, showAccess bool
 }
 
 func listColumns(width int) columns {
+	return listColumnsFor(width, false)
+}
+
+func listColumnsFor(width int, showAll bool) columns {
 	switch {
 	case width >= 100:
+		if showAll {
+			return columns{name: 24, host: 30, user: 12, port: 5, access: 8, tags: max(6, width-86), showUser: true, showPort: true, showAccess: true, showTags: true}
+		}
 		return columns{name: 24, host: 30, user: 12, port: 5, tags: max(8, width-24-30-12-5-6), showUser: true, showPort: true, showTags: true}
 	case width >= 72:
+		if showAll {
+			return columns{name: 20, host: max(14, width-49), user: 10, port: 5, access: 8, showUser: true, showPort: true, showAccess: true}
+		}
 		return columns{name: 20, host: max(16, width-49), user: 10, port: 5, tags: 8, showUser: true, showPort: true, showTags: true}
 	case width >= 52:
 		hostWidth := max(12, (width-18-8)/2)
@@ -474,13 +552,16 @@ func listColumns(width int) columns {
 	}
 }
 
-func rowLine(columns columns, name, host, user, port, tags string) string {
+func rowLine(columns columns, name, host, user, port, access, tags string) string {
 	line := "  " + fit(name, columns.name) + " " + fit(host, columns.host)
 	if columns.showUser {
 		line += " " + fit(user, columns.user)
 	}
 	if columns.showPort {
 		line += " " + fit(port, columns.port)
+	}
+	if columns.showAccess {
+		line += " " + fit(access, columns.access)
 	}
 	if columns.showTags {
 		line += " " + fit(tags, columns.tags)
