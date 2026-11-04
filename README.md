@@ -98,10 +98,16 @@ ttydeck search --json "error"
 ttydeck zmodem put prod-db ./backup.tar
 ttydeck zmodem get prod-db /var/log/syslog
 
+# Encrypted host-password vault
+ttydeck vault init
+ttydeck vault set 232
+ttydeck vault list
+ttydeck vault status
+
 # Migrate an existing nccm YAML configuration
 ttydeck import nccm --json              # dry-run: preview additions and warnings
 ttydeck import nccm --only 10.215.211.232 --apply
-ttydeck import nccm --apply             # import everything that is safe
+ttydeck import nccm --apply             # import hosts and available passwords
 
 # Automation
 ttydeck run prod-db uptime
@@ -157,9 +163,22 @@ the local audit log without command text or terminal output.
 `ttydeck import nccm` auto-detects the normal nccm config locations and is
 dry-run by default. It imports connection fields, keepalive, identity files,
 comments, `-z ssh-rsa` compatibility, and safe custom arguments. Existing aliases
-and identical endpoints are skipped. nccm password arguments are never copied:
-password-mode hosts are imported for interactive login with a warning. Use
-`--only name1,name2` to migrate selected connections and `--apply` to write.
+and identical endpoints are skipped. Use `--only name1,name2` to migrate selected
+connections and `--apply` to write.
+
+When applying, nccm `-P` password values are stored in the encrypted vault, not
+in `~/.ssh/config` or SQLite. The vault master password is requested once per
+process, after which ttydeck can authenticate to all stored hosts without asking
+for their individual passwords.
+
+```bash
+TTYDECK_VAULT_PASSWORD='...' ttydeck connect 232
+TTYDECK_VAULT_PASSWORD='...' TTYDECK_HOST_PASSWORD='...' ttydeck vault set 232
+```
+
+Environment variables are intended for automation. Interactive use prompts with
+hidden input. The master password is never persisted; losing it makes the vault
+unrecoverable.
 
 Host edits show a unified diff before writing. Press `enter` or `y` to apply,
 `n`/`esc` to return to the form. The preview carries a content hash so a file
@@ -211,6 +230,12 @@ plain-text transcript redaction, snippets, expect-style macros, persisted
 automation audit logs, safe diff-previewed config edits, nccm migration,
 ZMODEM transfer, and release packaging are functional. See [docs/plan.md](docs/plan.md) for
 remaining hardening and future connectors.
+
+Host passwords are stored only as authenticated ciphertext in the local vault,
+using Argon2id and AES-256-GCM. They are never written to SSH config, SQLite,
+audit events, JSON output, or command-line arguments. The vault protects data at
+rest; it cannot protect an unlocked process from malware running as the same
+user.
 
 Recordings are asciicast v2 files plus a redacted `.txt` transcript. The cast is
 kept for faithful playback; the transcript is the searchable, redacted form.

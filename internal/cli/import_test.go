@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"ttydeck/internal/secrets"
 	"ttydeck/internal/sshconfig"
 )
 
@@ -46,6 +47,9 @@ password-host:
 	if err := os.WriteFile(nccmPath, []byte(nccmData), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	vaultPath := filepath.Join(dir, "secrets.vault")
+	t.Setenv("TTYDECK_VAULT_PATH", vaultPath)
+	t.Setenv("TTYDECK_VAULT_PASSWORD", "import-master")
 	td := newTestDeps()
 	td.deps.LoadConfig = sshconfig.Load
 	td.deps.RecordingDir = dir
@@ -67,6 +71,9 @@ password-host:
 	if strings.Contains(out, "SuperSecretValue") {
 		t.Fatalf("password leaked in output: %q", out)
 	}
+	if _, err := os.Stat(vaultPath); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created vault: %v", err)
+	}
 
 	td.stdout.Reset()
 	td.stderr.Reset()
@@ -77,7 +84,7 @@ password-host:
 	if err := json.Unmarshal(td.stdout.Bytes(), &report); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, td.stdout.String())
 	}
-	if len(report.Added) != 2 || report.Backup == "" {
+	if len(report.Added) != 2 || report.Backup == "" || report.PasswordsAvailable != 1 || len(report.PasswordsStored) != 1 {
 		t.Fatalf("report = %+v", report)
 	}
 	content, _ = os.ReadFile(configPath)
@@ -98,6 +105,14 @@ password-host:
 	}
 	if strings.Contains(text, "SuperSecretValue") {
 		t.Fatalf("password leaked into ssh config:\n%s", text)
+	}
+	vault, err := secrets.Open(vaultPath, "import-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vault.Close()
+	if got, ok, err := vault.Get("password-host"); err != nil || !ok || got != "SuperSecretValue" {
+		t.Fatalf("vault password = %q, %v, %v", got, ok, err)
 	}
 }
 

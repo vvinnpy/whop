@@ -30,7 +30,8 @@ connector/session abstractions rather than bolted onto the UI.
 - SQLite metadata store
 - password/keyboard-interactive prompts
 - ProxyJump support
-- dry-run-first nccm YAML migration with password-safe import
+- dry-run-first nccm YAML migration with encrypted password vault import
+- Argon2id + AES-256-GCM local host-password vault
 
 ### M2 — sessions and recording
 
@@ -113,6 +114,7 @@ The SSH-first V0.1 scope is functional:
 - asciicast recording, replay, transcript search
 - ZMODEM `rz`/`sz` over SSH
 - snippets and batch command execution
+- encrypted local host-password vault with automatic SSH password auth
 - pure-Go/CGO-free cross-platform builds
 - CI, race tests, goreleaser, and release workflow
 

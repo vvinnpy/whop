@@ -44,6 +44,7 @@ type Deps struct {
 	RunCommand   func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
 	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, automation.EventFunc, bool) error
 	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
+	Password     sshconn.PasswordProvider
 	LookupEnv    func(string) (string, bool)
 	UseAgent     bool
 }
@@ -73,21 +74,35 @@ type MetaStore interface {
 
 // NewDeps returns OS-backed dependencies.
 func NewDeps() Deps {
+	password := defaultPasswordProvider()
 	return Deps{
-		Stdin:        os.Stdin,
-		Stdout:       os.Stdout,
-		Stderr:       os.Stderr,
-		LoadConfig:   sshconfig.Load,
-		Connect:      defaultConnect,
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
+		LoadConfig: sshconfig.Load,
+		Connect: func(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record, useAgent bool) error {
+			return defaultConnect(host, hosts, stdin, stdout, stderr, record, useAgent, password)
+		},
 		RunTUI:       defaultRunTUI,
 		OpenStore:    defaultOpenStore,
 		RecordingDir: defaultRecordingDir(),
-		ZmodemPut:    defaultZmodemPut,
-		ZmodemGet:    defaultZmodemGet,
-		RunCommand:   defaultRunCommand,
-		RunMacro:     defaultRunMacro,
-		Diagnose:     defaultDiagnose,
-		LookupEnv:    os.LookupEnv,
+		ZmodemPut: func(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite, useAgent bool, out io.Writer) error {
+			return defaultZmodemPut(host, hosts, files, overwrite, useAgent, out, password)
+		},
+		ZmodemGet: func(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite, useAgent bool, out io.Writer) error {
+			return defaultZmodemGet(host, hosts, remoteFiles, dest, maxSize, overwrite, useAgent, out, password)
+		},
+		RunCommand: func(host sshconfig.Host, hosts []sshconfig.Host, command string, useAgent bool) (string, error) {
+			return defaultRunCommand(host, hosts, command, useAgent, password)
+		},
+		RunMacro: func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, onEvent automation.EventFunc, useAgent bool) error {
+			return defaultRunMacro(ctx, host, hosts, macro, stdout, stderr, onEvent, useAgent, password)
+		},
+		Diagnose: func(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
+			return defaultDiagnose(host, hosts, useAgent, password)
+		},
+		Password:  password,
+		LookupEnv: os.LookupEnv,
 	}
 }
 
@@ -129,6 +144,8 @@ func Run(args []string, deps Deps) int {
 		return runAudit(args[1:], deps)
 	case "import":
 		return runImport(args[1:], deps)
+	case "vault":
+		return runVault(args[1:], deps)
 	case "diagnose":
 		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
@@ -180,8 +197,13 @@ func normalizeDeps(deps Deps) Deps {
 	if deps.LoadConfig == nil {
 		deps.LoadConfig = sshconfig.Load
 	}
+	if deps.Password == nil {
+		deps.Password = defaultPasswordProvider()
+	}
 	if deps.Connect == nil {
-		deps.Connect = defaultConnect
+		deps.Connect = func(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record, useAgent bool) error {
+			return defaultConnect(host, hosts, stdin, stdout, stderr, record, useAgent, deps.Password)
+		}
 	}
 	if deps.RunTUI == nil {
 		deps.RunTUI = defaultRunTUI
@@ -193,19 +215,29 @@ func normalizeDeps(deps Deps) Deps {
 		deps.RecordingDir = defaultRecordingDir()
 	}
 	if deps.ZmodemPut == nil {
-		deps.ZmodemPut = defaultZmodemPut
+		deps.ZmodemPut = func(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite, useAgent bool, out io.Writer) error {
+			return defaultZmodemPut(host, hosts, files, overwrite, useAgent, out, deps.Password)
+		}
 	}
 	if deps.ZmodemGet == nil {
-		deps.ZmodemGet = defaultZmodemGet
+		deps.ZmodemGet = func(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite, useAgent bool, out io.Writer) error {
+			return defaultZmodemGet(host, hosts, remoteFiles, dest, maxSize, overwrite, useAgent, out, deps.Password)
+		}
 	}
 	if deps.RunCommand == nil {
-		deps.RunCommand = defaultRunCommand
+		deps.RunCommand = func(host sshconfig.Host, hosts []sshconfig.Host, command string, useAgent bool) (string, error) {
+			return defaultRunCommand(host, hosts, command, useAgent, deps.Password)
+		}
 	}
 	if deps.Diagnose == nil {
-		deps.Diagnose = defaultDiagnose
+		deps.Diagnose = func(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
+			return defaultDiagnose(host, hosts, useAgent, deps.Password)
+		}
 	}
 	if deps.RunMacro == nil {
-		deps.RunMacro = defaultRunMacro
+		deps.RunMacro = func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, onEvent automation.EventFunc, useAgent bool) error {
+			return defaultRunMacro(ctx, host, hosts, macro, stdout, stderr, onEvent, useAgent, deps.Password)
+		}
 	}
 	if deps.LookupEnv == nil {
 		deps.LookupEnv = os.LookupEnv
@@ -258,7 +290,7 @@ func runTUI(args []string, deps Deps) int {
 			return metaStore.SetNotes(host.Alias, note)
 		},
 		Connect: func(host sshconfig.Host, record bool) tea.Cmd {
-			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir, deps.UseAgent), Host: host}, func(err error) tea.Msg {
+			return tea.Exec(&sshconn.ExecCommand{Runner: sshRunnerForConfig(configPathValue, record, deps.RecordingDir, deps.UseAgent, deps.Password), Host: host}, func(err error) tea.Msg {
 				if err == nil {
 					_ = metaStore.RecordConnect(host.Alias, time.Now())
 				}
@@ -281,7 +313,7 @@ func runTUI(args []string, deps Deps) int {
 					return ui.MacroFinishedMsg{Host: host.Alias, Name: name, Err: err}
 				}
 			}
-			connector := sshConnectorWithHosts(hosts, deps.UseAgent)
+			connector := sshConnectorWithHosts(hosts, deps.UseAgent, deps.Password)
 			collector := newAuditCollector(metaStore)
 			macroAuditStarted(collector, host.Alias, name)
 			return tea.Exec(&sshconn.MacroCommand{
@@ -901,8 +933,8 @@ func runDiagnose(args []string, deps Deps) int {
 	return 0
 }
 
-func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
-	connector := sshConnectorWithHosts(hosts, useAgent)
+func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool, password sshconn.PasswordProvider) error {
+	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	client, err := connector.Dial(context.Background(), host)
 	if err != nil {
 		return err
@@ -910,14 +942,14 @@ func defaultDiagnose(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool)
 	return client.Close()
 }
 
-func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command string, useAgent bool) (string, error) {
-	connector := sshConnectorWithHosts(hosts, useAgent)
+func defaultRunCommand(host sshconfig.Host, hosts []sshconfig.Host, command string, useAgent bool, password sshconn.PasswordProvider) (string, error) {
+	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	output, err := connector.RunCommand(context.Background(), host, command)
 	return string(output), err
 }
 
-func defaultRunMacro(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, onEvent automation.EventFunc, useAgent bool) error {
-	connector := sshConnectorWithHosts(hosts, useAgent)
+func defaultRunMacro(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, onEvent automation.EventFunc, useAgent bool, password sshconn.PasswordProvider) error {
+	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	return connector.RunInteractive(ctx, host, stdout, stderr, func(stream io.ReadWriter) error {
 		return automation.RunMacro(ctx, stream, macro, automation.Options{CloseStream: true, OnEvent: onEvent})
 	})
@@ -1007,8 +1039,8 @@ func runZmodemGet(args []string, deps Deps) int {
 	return 0
 }
 
-func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite bool, useAgent bool, out io.Writer) error {
-	connector := sshConnectorWithHosts(hosts, useAgent)
+func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []string, overwrite bool, useAgent bool, out io.Writer, password sshconn.PasswordProvider) error {
+	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	command := "rz"
 	if overwrite {
 		command = "rz -y"
@@ -1019,8 +1051,8 @@ func defaultZmodemPut(host sshconfig.Host, hosts []sshconfig.Host, files []strin
 	})
 }
 
-func defaultZmodemGet(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite bool, useAgent bool, out io.Writer) error {
-	connector := sshConnectorWithHosts(hosts, useAgent)
+func defaultZmodemGet(host sshconfig.Host, hosts []sshconfig.Host, remoteFiles []string, dest string, maxSize int64, overwrite bool, useAgent bool, out io.Writer, password sshconn.PasswordProvider) error {
+	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	quoted := make([]string, len(remoteFiles))
 	for i, file := range remoteFiles {
 		quoted[i] = sshconn.ShellQuote(file)
@@ -1047,23 +1079,26 @@ func defaultDownloadDir(alias string) string {
 	return filepath.Join(home, "Downloads", "ttydeck", name)
 }
 
-func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool, useAgent bool) error {
-	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir(), useAgent)
+func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool, useAgent bool, password sshconn.PasswordProvider) error {
+	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir(), useAgent, password)
 	return runner.Run(context.Background(), host, stdin, stdout, stderr)
 }
 
-func sshRunnerForConfig(path string, record bool, recordingDir string, useAgent bool) *sshconn.Runner {
+func sshRunnerForConfig(path string, record bool, recordingDir string, useAgent bool, password sshconn.PasswordProvider) *sshconn.Runner {
 	hosts, _ := sshconfig.Load(path)
-	return sshRunnerWithHosts(hosts, record, recordingDir, useAgent)
+	return sshRunnerWithHosts(hosts, record, recordingDir, useAgent, password)
 }
 
-func sshConnectorWithHosts(hosts []sshconfig.Host, useAgent bool) *sshconn.Connector {
+func sshConnectorWithHosts(hosts []sshconfig.Host, useAgent bool, password sshconn.PasswordProvider) *sshconn.Connector {
 	byAlias := make(map[string]sshconfig.Host, len(hosts))
 	for _, host := range hosts {
 		byAlias[host.Alias] = host
 	}
+	if password == nil {
+		password = sshconn.TerminalPasswordProvider{In: os.Stdin, Out: os.Stderr}
+	}
 	return sshconn.New(sshconn.Options{
-		Password:     sshconn.TerminalPasswordProvider{In: os.Stdin, Out: os.Stderr},
+		Password:     password,
 		DisableAgent: !useAgent,
 		ResolveHost: func(alias string) (sshconfig.Host, bool) {
 			host, ok := byAlias[alias]
@@ -1072,8 +1107,8 @@ func sshConnectorWithHosts(hosts []sshconfig.Host, useAgent bool) *sshconn.Conne
 	})
 }
 
-func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string, useAgent bool) *sshconn.Runner {
-	connector := sshConnectorWithHosts(hosts, useAgent)
+func sshRunnerWithHosts(hosts []sshconfig.Host, record bool, recordingDir string, useAgent bool, password sshconn.PasswordProvider) *sshconn.Runner {
+	connector := sshConnectorWithHosts(hosts, useAgent, password)
 	runner := sshconn.NewRunner(connector, nil)
 	if record {
 		runner.RecordingFactory = func(host sshconfig.Host, width, height int) (io.WriteCloser, error) {
@@ -1165,6 +1200,7 @@ Usage:
   ttydeck audit [flags]             show persisted automation audit events
   ttydeck audit clear [flags]       clear the audit log
   ttydeck import nccm [flags]       preview or apply nccm.yml migration
+  ttydeck vault <init|set|list|delete|status> ...
   ttydeck diagnose [flags] <alias>
   ttydeck version                   print version
 
@@ -1212,5 +1248,10 @@ Flags for import nccm:
   -config path    destination ssh config
   -only names     comma-separated nccm connection names
   -apply          write changes (default: dry-run)
-  -json           emit JSON`)
+  -json           emit JSON
+
+Vault environment:
+  TTYDECK_VAULT_PATH       override vault file path
+  TTYDECK_VAULT_PASSWORD   master password for automation
+  TTYDECK_HOST_PASSWORD    host password for 'vault set' automation`)
 }

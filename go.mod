@@ -3,6 +3,7 @@ module ttydeck
 go 1.27.1
 
 require (
+	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.9
@@ -21,7 +22,6 @@ require (
 )
 
 require (
-	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymanbagabas/go-udiff v0.3.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect

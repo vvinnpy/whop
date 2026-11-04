@@ -2,25 +2,30 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"ttydeck/internal/nccm"
+	"ttydeck/internal/secrets"
 	"ttydeck/internal/sshconfig"
 )
 
 type importReport struct {
-	Source   string   `json:"source"`
-	Config   string   `json:"config"`
-	Applied  bool     `json:"applied"`
-	Added    []string `json:"added"`
-	Skipped  []string `json:"skipped"`
-	Warnings []string `json:"warnings"`
-	Backup   string   `json:"backup,omitempty"`
+	Source             string   `json:"source"`
+	Config             string   `json:"config"`
+	Applied            bool     `json:"applied"`
+	Added              []string `json:"added"`
+	Skipped            []string `json:"skipped"`
+	Warnings           []string `json:"warnings"`
+	PasswordsAvailable int      `json:"passwords_available"`
+	PasswordsStored    []string `json:"passwords_stored"`
+	Backup             string   `json:"backup,omitempty"`
 }
 
 func runImport(args []string, deps Deps) int {
@@ -59,7 +64,7 @@ func runImport(args []string, deps Deps) int {
 		return 1
 	}
 	selected := parseOnlyNames(*only)
-	imports, warnings := convertNCCMConnections(cfg.Connections, selected)
+	imports, passwords, warnings := convertNCCMConnections(cfg.Connections, selected)
 	if len(imports) == 0 && len(warnings) == 0 && len(selected) > 0 {
 		warnings = append(warnings, "no nccm connections matched --only")
 	}
@@ -70,19 +75,66 @@ func runImport(args []string, deps Deps) int {
 		return 1
 	}
 	imports, skipped := filterExistingImports(existing, imports)
+	keptAliases := make(map[string]bool, len(imports))
+	for _, item := range imports {
+		keptAliases[item.Alias] = true
+	}
+	keptPasswords := make(map[string]string)
+	for alias, password := range passwords {
+		if keptAliases[alias] {
+			keptPasswords[alias] = password
+		}
+	}
 	report := importReport{
-		Source:   sourcePath,
-		Config:   cfgPath,
-		Applied:  *apply,
-		Added:    []string{},
-		Skipped:  append([]string{}, skipped...),
-		Warnings: append([]string{}, warnings...),
+		Source:             sourcePath,
+		Config:             cfgPath,
+		Applied:            *apply,
+		Added:              []string{},
+		Skipped:            append([]string{}, skipped...),
+		Warnings:           append([]string{}, warnings...),
+		PasswordsAvailable: len(keptPasswords),
+		PasswordsStored:    []string{},
 	}
 	if *apply {
+		var vault *secrets.Vault
+		if len(keptPasswords) > 0 {
+			path, err := vaultPath()
+			if err != nil {
+				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				return 1
+			}
+			_, statErr := os.Stat(path)
+			master, err := readVaultMasterPassword(deps, errors.Is(statErr, os.ErrNotExist))
+			if err != nil {
+				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				return 1
+			}
+			vault, err = openOrCreateVault(path, master)
+			if err != nil {
+				fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+				return 1
+			}
+			defer vault.Close()
+			for alias, password := range keptPasswords {
+				if err := vault.Set(alias, password); err != nil {
+					fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
+					return 1
+				}
+			}
+		}
 		result, err := sshconfig.AddHosts(cfgPath, imports)
 		if err != nil {
 			fmt.Fprintf(deps.Stderr, "ttydeck: %v\n", err)
 			return 1
+		}
+		if vault != nil {
+			if err := vault.Save(); err != nil {
+				fmt.Fprintf(deps.Stderr, "ttydeck: save vault: %v\n", err)
+				return 1
+			}
+			for alias := range keptPasswords {
+				report.PasswordsStored = append(report.PasswordsStored, alias)
+			}
 		}
 		report.Added = append(report.Added, result.Added...)
 		report.Skipped = append(report.Skipped, result.Skipped...)
@@ -95,6 +147,7 @@ func runImport(args []string, deps Deps) int {
 	sort.Strings(report.Added)
 	sort.Strings(report.Skipped)
 	sort.Strings(report.Warnings)
+	sort.Strings(report.PasswordsStored)
 	if *asJSON {
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
@@ -116,6 +169,13 @@ func runImport(args []string, deps Deps) int {
 	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(deps.Stderr, "warning: %s\n", warning)
+	}
+	if report.PasswordsAvailable > 0 {
+		if *apply {
+			fmt.Fprintf(deps.Stdout, "passwords stored in vault: %d\n", report.PasswordsAvailable)
+		} else {
+			fmt.Fprintf(deps.Stdout, "passwords available for encrypted vault: %d\n", report.PasswordsAvailable)
+		}
 	}
 	if report.Backup != "" {
 		fmt.Fprintf(deps.Stdout, "backup\t%s\n", report.Backup)
@@ -161,8 +221,9 @@ func normalizeNCCMAlias(name string) (string, string, bool) {
 	return alias, "", true
 }
 
-func convertNCCMConnections(connections []nccm.Connection, selected map[string]bool) ([]sshconfig.HostImport, []string) {
+func convertNCCMConnections(connections []nccm.Connection, selected map[string]bool) ([]sshconfig.HostImport, map[string]string, []string) {
 	var imports []sshconfig.HostImport
+	passwords := make(map[string]string)
 	var warnings []string
 	for _, connection := range connections {
 		name := strings.TrimSpace(connection.Name)
@@ -197,89 +258,39 @@ func convertNCCMConnections(connections []nccm.Connection, selected map[string]b
 		if port == 0 {
 			port = 22
 		}
-		analysis := analyzeNCCMCustomArgs(connection.CustomArgs)
-		if analysis.port > 0 {
-			port = analysis.port
+		custom, err := nccm.ParseCustomArgs(connection.CustomArgs)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: customargs ignored: %v", name, err))
 		}
-		if analysis.passwordMode {
-			warnings = append(warnings, fmt.Sprintf("%s: nccm password was not imported; ttydeck will prompt interactively", name))
+		if custom.Port > 0 {
+			port = custom.Port
 		}
-		if len(analysis.unsupported) > 0 {
-			warnings = append(warnings, fmt.Sprintf("%s: unsupported customargs ignored: %s", name, strings.Join(analysis.unsupported, ", ")))
+		identity := strings.TrimSpace(connection.Identity)
+		if custom.Identity != "" {
+			identity = custom.Identity
+		}
+		if custom.PasswordSet && custom.Password != "" && (custom.Mode == "expect" || custom.Mode == "expect-ssh-rsa") {
+			passwords[alias] = custom.Password
+			warnings = append(warnings, fmt.Sprintf("%s: password available for encrypted vault", name))
+		} else if custom.PasswordSet {
+			warnings = append(warnings, fmt.Sprintf("%s: -P password ignored because -z expect mode is not configured", name))
+		}
+		if len(custom.Unsupported) > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s: unsupported customargs ignored: %s", name, strings.Join(custom.Unsupported, ", ")))
 		}
 		imports = append(imports, sshconfig.HostImport{
 			Alias:               alias,
 			HostName:            address,
 			User:                user,
-			IdentityFile:        strings.TrimSpace(connection.Identity),
+			IdentityFile:        identity,
 			Comment:             strings.TrimSpace(connection.Comment),
 			Port:                port,
 			ServerAliveInterval: connection.Keepalive,
-			Compression:         analysis.compression,
-			LegacySSHRSA:        analysis.legacySSHRSA,
+			Compression:         custom.Compression,
+			LegacySSHRSA:        custom.Mode == "ssh-rsa" || custom.Mode == "expect-ssh-rsa",
 		})
 	}
-	return imports, warnings
-}
-
-type nccmCustomArgs struct {
-	port         int
-	compression  bool
-	legacySSHRSA bool
-	passwordMode bool
-	unsupported  []string
-}
-
-func analyzeNCCMCustomArgs(raw string) nccmCustomArgs {
-	var result nccmCustomArgs
-	fields := strings.Fields(raw)
-	for index := 0; index < len(fields); index++ {
-		switch fields[index] {
-		case "-P":
-			result.passwordMode = true
-			if index+1 < len(fields) {
-				index++
-			}
-		case "-z":
-			if index+1 >= len(fields) {
-				result.unsupported = append(result.unsupported, "-z")
-				continue
-			}
-			index++
-			switch fields[index] {
-			case "ssh":
-			case "ssh-rsa":
-				result.legacySSHRSA = true
-			case "expect":
-				result.passwordMode = true
-			case "expect-ssh-rsa":
-				result.passwordMode = true
-				result.legacySSHRSA = true
-			default:
-				result.unsupported = append(result.unsupported, "-z")
-			}
-		case "-C":
-			result.compression = true
-		case "-p":
-			if index+1 < len(fields) {
-				index++
-				port, err := strconv.Atoi(fields[index])
-				if err == nil && port > 0 && port <= 65535 {
-					result.port = port
-				} else {
-					result.unsupported = append(result.unsupported, "-p")
-				}
-			} else {
-				result.unsupported = append(result.unsupported, "-p")
-			}
-		default:
-			flagValue := fields[index]
-			if strings.HasPrefix(flagValue, "-") {
-				result.unsupported = append(result.unsupported, flagValue)
-			}
-		}
-	}
-	return result
+	return imports, passwords, warnings
 }
 
 func filterExistingImports(existing []sshconfig.Host, imports []sshconfig.HostImport) ([]sshconfig.HostImport, []string) {
