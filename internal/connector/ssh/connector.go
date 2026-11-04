@@ -288,11 +288,34 @@ func (c *Connector) newClientConfig(host sshconfig.Host) (*ssh.ClientConfig, fun
 		return nil, func() {}, err
 	}
 	return &ssh.ClientConfig{
-		User:            c.username(host),
-		Auth:            methods,
-		HostKeyCallback: c.hostKeyCallback(),
-		Timeout:         c.opts.Timeout,
+		User:              c.username(host),
+		Auth:              methods,
+		HostKeyCallback:   c.hostKeyCallback(),
+		HostKeyAlgorithms: defaultHostKeyAlgorithms(),
+		Timeout:           c.opts.Timeout,
 	}, cleanup, nil
+}
+
+// defaultHostKeyAlgorithms prefers modern keys in the same practical order as
+// OpenSSH, with ED25519 first. x/crypto's historical default prefers ECDSA
+// ahead of ED25519, which can select a key type absent from an existing
+// known_hosts file even though that file already trusts the host's ED25519 key.
+func defaultHostKeyAlgorithms() []string {
+	return []string{
+		ssh.CertAlgoED25519v01,
+		ssh.CertAlgoECDSA256v01,
+		ssh.CertAlgoECDSA384v01,
+		ssh.CertAlgoECDSA521v01,
+		ssh.CertAlgoRSASHA256v01,
+		ssh.CertAlgoRSASHA512v01,
+		ssh.KeyAlgoED25519,
+		ssh.KeyAlgoECDSA256,
+		ssh.KeyAlgoECDSA384,
+		ssh.KeyAlgoECDSA521,
+		ssh.KeyAlgoRSASHA256,
+		ssh.KeyAlgoRSASHA512,
+		ssh.KeyAlgoRSA,
+	}
 }
 
 func (c *Connector) resolveJumpHost(alias, user string, port int) (sshconfig.Host, error) {

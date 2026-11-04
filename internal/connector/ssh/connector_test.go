@@ -659,3 +659,22 @@ func TestInteractiveSessionFallsBackWhenPTYRejected(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
+
+func TestDefaultHostKeyAlgorithmsPreferED25519(t *testing.T) {
+	algorithms := defaultHostKeyAlgorithms()
+	if len(algorithms) < 3 {
+		t.Fatalf("algorithms = %#v", algorithms)
+	}
+	if algorithms[0] != cryptossh.CertAlgoED25519v01 || algorithms[6] != cryptossh.KeyAlgoED25519 {
+		t.Fatalf("unexpected preference order: %#v", algorithms)
+	}
+	foundLegacyRSA := false
+	for _, algorithm := range algorithms {
+		if algorithm == cryptossh.KeyAlgoRSA {
+			foundLegacyRSA = true
+		}
+	}
+	if !foundLegacyRSA {
+		t.Fatalf("legacy RSA compatibility missing: %#v", algorithms)
+	}
+}
