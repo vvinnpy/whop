@@ -348,6 +348,16 @@ func routeLocalInput(input <-chan []byte, writer *serializedRemoteWriter, paused
 				if setter, ok := writer.writer.(readDeadlineSetter); ok {
 					_ = setter.SetReadDeadline(time.Now())
 				}
+				// Reads are interrupted by the deadline above. If the transfer
+				// is instead blocked writing to a stalled peer, give it a short
+				// grace period and then close the stream to unblock the write.
+				if closer, ok := writer.writer.(io.Closer); ok {
+					time.AfterFunc(time.Second, func() {
+						if paused.Load() {
+							_ = closer.Close()
+						}
+					})
+				}
 			}
 			continue
 		}

@@ -651,6 +651,9 @@ whop zmodem get -dest ./downloads prod-db /var/log/syslog
 whop zmodem get -max-size 104857600 prod-db /var/log/big.log
 ```
 
+远端路径相对于 SSH 用户的 home 目录；建议直接使用完整路径。远端命令失败时，
+错误信息会随 whop 的错误一起显示。
+
 默认下载到：
 
 ```text
@@ -668,7 +671,7 @@ whop zmodem get -max-size 104857600 prod-db /var/log/big.log
 
 - 远端必须有 `rz`/`sz`；
 - ZMODEM 是可选能力，不是所有 SSH 主机都支持；
-- 超过 `-max-size` 的文件会拒绝接收；
+- 交互式下载当前不限制文件大小；手动下载可用 `-max-size` 限制；
 - 交互式下载默认不覆盖同名文件，重试前先移走旧文件；手动下载可用
   `whop zmodem get --overwrite`。
 

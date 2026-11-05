@@ -476,3 +476,18 @@ func TestPrintableTailDropsZmodemControlBytes(t *testing.T) {
 		t.Fatalf("control bytes leaked: %q", got)
 	}
 }
+
+func TestWaitForZmodemExit(t *testing.T) {
+	waitCh := make(chan error, 1)
+	waitCh <- errors.New("exit status 1")
+	err, timedOut := waitForZmodemExit(waitCh, time.Second)
+	if timedOut || err == nil || !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("err=%v timedOut=%v", err, timedOut)
+	}
+
+	blocked := make(chan error)
+	_, timedOut = waitForZmodemExit(blocked, 10*time.Millisecond)
+	if !timedOut {
+		t.Fatal("expected timeout")
+	}
+}

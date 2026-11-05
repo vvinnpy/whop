@@ -14,6 +14,8 @@ import (
 	"whop/internal/sshconfig"
 )
 
+const zmodemExitTimeout = 5 * time.Second
+
 // RunZmodem starts command on host and hands its terminal stream to transfer.
 // It is used for remote rz/sz and keeps the ZMODEM protocol in-process.
 func (c *Connector) RunZmodem(ctx context.Context, host sshconfig.Host, command string, transfer func(io.ReadWriter) error) error {
@@ -69,10 +71,8 @@ func (c *Connector) RunZmodem(ctx context.Context, host sshconfig.Host, command 
 		if ctx.Err() != nil {
 			transferErr = ctx.Err()
 		}
-		var waitErr error
-		select {
-		case waitErr = <-waitCh:
-		case <-time.After(2 * time.Second):
+		waitErr, timedOut := waitForZmodemExit(waitCh, 2*time.Second)
+		if timedOut {
 			_ = session.Close()
 			waitErr = <-waitCh
 		}
@@ -86,7 +86,14 @@ func (c *Connector) RunZmodem(ctx context.Context, host sshconfig.Host, command 
 		return zmodemTransferError(transferErr, waitErr, remoteMessage)
 	}
 
-	waitErr := <-waitCh
+	waitErr, timedOut := waitForZmodemExit(waitCh, zmodemExitTimeout)
+	if timedOut {
+		// The transfer is complete; do not leave the CLI blocked on a sender
+		// that failed to exit after the ZMODEM session.
+		_ = session.Close()
+		<-waitCh
+		return nil
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -109,6 +116,17 @@ func zmodemTransferError(transferErr, waitErr error, stderr string) error {
 		return fmt.Errorf("zmodem: transfer failed: %w (remote: %w)", transferErr, waitErr)
 	default:
 		return transferErr
+	}
+}
+
+func waitForZmodemExit(waitCh <-chan error, timeout time.Duration) (error, bool) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-waitCh:
+		return err, false
+	case <-timer.C:
+		return nil, true
 	}
 }
 
