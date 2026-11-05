@@ -340,6 +340,8 @@ user.
 
 Recordings are asciicast v2 files plus a redacted `.txt` transcript. The cast is
 kept for faithful playback; the transcript is the searchable, redacted form.
+The transcript applies backspace/delete line editing so deleted input is not
+concatenated, while the cast retains the original terminal stream.
 The FTS5 index uses the trigram tokenizer, so English and CJK substrings can be
 searched. Indexed transcript IDs are scoped to their recording root, preventing
 same-named files in different directories from overwriting each other.

@@ -64,19 +64,19 @@ type transcriptRedactor struct {
 }
 
 func newTranscriptRedactor(dst io.Writer, opts RecordingOptions) (*transcriptRedactor, error) {
-	if opts.DisableRedaction {
+	if dst == nil {
 		return nil, nil
 	}
-	rules := opts.RedactionRules
-	if rules == nil {
-		rules = DefaultRedactionRules()
+	var rules []RedactionRule
+	if !opts.DisableRedaction {
+		rules = opts.RedactionRules
+		if rules == nil {
+			rules = DefaultRedactionRules()
+		}
 	}
 	compiled, err := compileRedactionRules(rules)
 	if err != nil {
 		return nil, err
-	}
-	if dst == nil || len(compiled) == 0 {
-		return nil, nil
 	}
 	return &transcriptRedactor{dst: dst, rules: compiled}, nil
 }
@@ -142,8 +142,27 @@ func (r *transcriptRedactor) flush() error {
 	return r.writeSegment(segment)
 }
 
+// applyTranscriptEdits applies terminal erase characters before redaction so
+// deleted input does not get concatenated into the searchable transcript.
+// ANSI cursor movement remains out of scope; shell line editing uses backspace.
+func applyTranscriptEdits(value string) string {
+	runes := make([]rune, 0, len(value))
+	for _, r := range value {
+		switch {
+		case r == '\b' || r == '\x7f':
+			if len(runes) > 0 {
+				runes = runes[:len(runes)-1]
+			}
+		case unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t':
+		default:
+			runes = append(runes, r)
+		}
+	}
+	return string(runes)
+}
+
 func (r *transcriptRedactor) writeSegment(segment []byte) error {
-	text := string(segment)
+	text := applyTranscriptEdits(string(segment))
 	for _, rule := range r.rules {
 		text = rule.pattern.ReplaceAllString(text, rule.replacement)
 	}

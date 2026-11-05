@@ -195,6 +195,42 @@ func TestRecordingRedactsTranscriptByDefault(t *testing.T) {
 	}
 }
 
+func TestRecordingAppliesBackspaceToTranscript(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts RecordingOptions
+	}{
+		{name: "redacted"},
+		{name: "unredacted", opts: RecordingOptions{DisableRedaction: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cast, transcript bytes.Buffer
+			rec, err := NewRecordingWithOptions(&cast, &transcript, 80, 24, time.Now(), tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, chunk := range []string{
+				"$ hello",
+				"\b \b\b \b\b \b\b \b\b \b",
+				"ls\n",
+			} {
+				if _, err := rec.Write([]byte(chunk)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := rec.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got := transcript.String(); got != "$ ls\n" {
+				t.Fatalf("transcript = %q", got)
+			}
+			if raw := castEventData(t, cast.String()); !strings.Contains(raw, "hello\b") {
+				t.Fatalf("cast should retain terminal erase sequences: %q", raw)
+			}
+		})
+	}
+}
+
 func TestRecordingCustomRedactionRules(t *testing.T) {
 	var transcript bytes.Buffer
 	rec, err := NewRecordingWithOptions(nil, &transcript, 80, 24, time.Now(), RecordingOptions{

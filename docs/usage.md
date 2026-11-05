@@ -447,7 +447,7 @@ whop connect -record prod-db
 - `<alias>-YYYYMMDD-HHMMSS.mmm.cast`：asciicast v2，保留终端控制序列；
 - `<alias>-YYYYMMDD-HHMMSS.mmm.txt`：去掉 ANSI 的纯文本 transcript。
 
-默认只记录远端输出，不单独记录输入。transcript 默认会脱敏常见的 password/token/API key 赋值和 Authorization 头。`.cast` 为忠实回放不会改写。
+默认只记录远端输出，不单独记录输入。transcript 会应用退格和删除字符的行编辑语义，避免 `hello` 删除后继续输入 `ls` 被拼成 `hellols`；它默认还会脱敏常见的 password/token/API key 赋值和 Authorization 头。`.cast` 保留原始终端流，不做改写，回放效果以 `.cast` 为准。
 
 > 重要：即使不录输入，远端 shell 回显的命令也可能出现在输出里。录制期间不要输入不必要的密钥。
 
