@@ -2,10 +2,6 @@ version: 2
 
 project_name: whop
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: whop
     main: ./cmd/whop

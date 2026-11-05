@@ -60,6 +60,31 @@ Existing connection managers are good at one or two things, but rarely all of th
 Read [AGENTS.md](AGENTS.md) before contributing. It defines the hard constraints for
 pure-Go, cross-platform, config-safe development.
 
+## Releasing
+
+Releases are tag-driven and gated by CI. A release tag must be valid SemVer
+(for example `v0.1.0`) and must point to a commit on `main`.
+
+1. Wait for CI on `main` to pass.
+2. Create and push the release tag:
+
+   ```bash
+   git tag -a v0.1.0 -m "whop v0.1.0"
+   git push origin v0.1.0
+   ```
+
+The `release` workflow then runs the full CI suite, verifies that the tag is on
+`main`, and only after those checks pass runs GoReleaser. GoReleaser publishes
+Linux, macOS, and Windows archives for `amd64` and `arm64`, plus
+`checksums.txt`.
+
+To validate release packaging locally without publishing:
+
+```bash
+goreleaser check
+goreleaser release --snapshot --clean
+```
+
 ## Usage
 
 ```bash
