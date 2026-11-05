@@ -1,7 +1,7 @@
 .PHONY: build test vet race cross clean
 
 BINARY := whop
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
 LDFLAGS ?= -X whop/internal/cli.Version=$(VERSION)
 
 build:

@@ -16,7 +16,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X whop/internal/cli.Version={{ .Version }}
+      - -s -w -X whop/internal/cli.Version={{ .Tag }}
 
 archives:
   - id: whop

@@ -62,7 +62,7 @@ pure-Go, cross-platform, config-safe development.
 
 ```bash
 make build
-./bin/whop version   # nearest tag plus commit state, e.g. 0.2.1 or 0.2.1-3-gabc1234
+./bin/whop version   # nearest release tag, e.g. v0.2.1
 ```
 
 ## Releasing

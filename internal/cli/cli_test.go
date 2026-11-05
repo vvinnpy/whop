@@ -147,7 +147,7 @@ func TestVersion(t *testing.T) {
 	if code := Run([]string{"version"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if got := td.stdout.String(); got != "whop 9.9.9\n" {
+	if got := td.stdout.String(); got != "whop v9.9.9\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -413,7 +413,7 @@ func TestVersionAliases(t *testing.T) {
 		if code := Run([]string{arg}, td.deps); code != 0 {
 			t.Fatalf("%s exit code = %d", arg, code)
 		}
-		if !strings.Contains(td.stdout.String(), "whop 9.9.9") {
+		if !strings.Contains(td.stdout.String(), "whop v9.9.9") {
 			t.Fatalf("%s stdout = %q", arg, td.stdout.String())
 		}
 	}

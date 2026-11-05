@@ -7,14 +7,14 @@ import (
 
 func versionString() string {
 	if version := strings.TrimSpace(Version); version != "" {
-		return strings.TrimPrefix(version, "v")
+		return version
 	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"
 	}
 	if version := strings.TrimSpace(info.Main.Version); version != "" && version != "(devel)" {
-		return strings.TrimPrefix(version, "v")
+		return version
 	}
 	var revision string
 	var modified bool
