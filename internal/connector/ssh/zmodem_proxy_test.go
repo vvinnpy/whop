@@ -3,6 +3,7 @@ package sshconn
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -410,5 +411,39 @@ func TestRunZmodemAwareShellDetectsZeroCRCHeader(t *testing.T) {
 	}
 	if !strings.Contains(debug.String(), "ZRQINIT") {
 		t.Fatalf("debug = %q", debug.String())
+	}
+}
+
+func TestRunZmodemAwareShellReturnsErrorOnTransferFailure(t *testing.T) {
+	reader, writer := io.Pipe()
+	remote := &testRemote{reader: reader}
+	done := make(chan struct{})
+	options := &ZmodemOptions{
+		DownloadDir: func(sshconfig.Host) string { return "/tmp/downloads" },
+		receive: func(_ context.Context, transport io.ReadWriter, _ string, _ int64, _ bool, _ zmodem.ProgressFunc) ([]string, error) {
+			defer close(done)
+			header := make([]byte, len("**\x18B00"))
+			_, err := io.ReadFull(transport, header)
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.New("transfer failed")
+		},
+	}
+	go func() {
+		_, _ = writer.Write([]byte("**\x18B00payload"))
+		<-done
+		_ = writer.Close()
+	}()
+	var stdout, stderr bytes.Buffer
+	err := runZmodemAwareShell(context.Background(), sshconfig.Host{Alias: "host"}, strings.NewReader(""), &stdout, &stderr, remote, nil, options)
+	if err == nil || !strings.Contains(err.Error(), "transfer aborted") {
+		t.Fatalf("error = %v, want transfer aborted", err)
+	}
+	if !strings.HasSuffix(remote.written(), string(zmodemCancel)) {
+		t.Fatalf("remote writes = %q, want cancel suffix", remote.written())
+	}
+	if !strings.Contains(stderr.String(), "transfer failed") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
