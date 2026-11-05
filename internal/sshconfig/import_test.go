@@ -198,7 +198,7 @@ func TestAddHostsPreservesSymlinkModeAndBackup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation and Unix mode assertions are not portable")
 	}
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	target := filepath.Join(dir, "real-config")
 	link := filepath.Join(dir, "config")
 	original := "Host existing\n  HostName 10.0.0.1\n"
