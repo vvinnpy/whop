@@ -618,8 +618,14 @@ func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, 
 		if err := session.Shell(); err != nil {
 			return &StageError{Stage: "shell", Host: host.Alias, Err: fmt.Errorf("start shell: %w", err)}
 		}
-		remote := &sessionStream{Reader: stdoutPipe, Writer: stdinPipe}
+		remote := newRemoteStream(stdoutPipe, stdinPipe, session.Close)
+		defer func() { _ = remote.Close() }()
+		stopCancel := context.AfterFunc(ctx, func() { _ = remote.Close() })
+		defer stopCancel()
 		proxyErr := runZmodemAwareShell(ctx, host, rawStdin, stdoutWriter, stderr, remote, terminal, r.Zmodem)
+		if proxyErr != nil {
+			_ = remote.Close()
+		}
 		_ = stdinPipe.Close()
 		waitErr := session.Wait()
 		if proxyErr != nil {
@@ -649,11 +655,6 @@ func shellWaitError(host string, ptyRejected bool, err error) error {
 		return &StageError{Stage: "session", Host: host, Err: fmt.Errorf("remote shell exited with status %d", exit.ExitStatus())}
 	}
 	return &StageError{Stage: "session", Host: host, Err: fmt.Errorf("wait for shell: %w", err)}
-}
-
-type sessionStream struct {
-	io.Reader
-	io.Writer
 }
 
 func isPTYRejected(err error) bool {

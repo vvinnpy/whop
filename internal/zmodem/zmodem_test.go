@@ -2,6 +2,7 @@ package zmodem
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	zm "github.com/xx25/go-zmodem"
 )
 
 type chanReader struct {
@@ -193,8 +196,10 @@ func TestSafeJoinSanitizesTraversal(t *testing.T) {
 }
 
 func TestWaitForHeader(t *testing.T) {
-	if !WaitForHeader([]byte("prefix **\x18B00")) {
-		t.Fatal("expected header")
+	for _, data := range []string{"prefix **\x18B00", "prefix *\x18A01", "prefix *\x18C04", "prefix *\x18D0a"} {
+		if !WaitForHeader([]byte(data)) {
+			t.Fatalf("expected header in %q", data)
+		}
 	}
 	if WaitForHeader([]byte("no header")) {
 		t.Fatal("unexpected header")
@@ -207,5 +212,137 @@ func TestSendRequiresFiles(t *testing.T) {
 	defer c2.Close()
 	if err := Send(context.Background(), c1, nil, nil); err == nil || !strings.Contains(err.Error(), "no files") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestReceiverFailureRemovesTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	r := &receiver{destDir: dir, overwrite: true}
+	info := zm.FileInfo{Name: "partial.bin", Size: 10}
+	writer, _, err := r.AcceptFile(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("partial")); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	r.FileCompleted(info, 7, errors.New("transfer failed"))
+	if _, err := os.Stat(filepath.Join(dir, "partial.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("final file exists after failure: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("temporary files left behind: %v", entries)
+	}
+}
+
+func TestReceiverOverwriteKeepsExistingFileOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "keep.bin")
+	if err := os.WriteFile(target, []byte("old content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &receiver{destDir: dir, overwrite: true}
+	info := zm.FileInfo{Name: "keep.bin", Size: 10}
+	writer, _, err := r.AcceptFile(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("new partial")); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	r.FileCompleted(info, 11, errors.New("transfer failed"))
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old content" {
+		t.Fatalf("existing file changed: %q", got)
+	}
+}
+
+func TestReceiverAtomicallyReplacesExistingFileOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "replace.bin")
+	if err := os.WriteFile(target, []byte("old content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &receiver{destDir: dir, overwrite: true}
+	info := zm.FileInfo{Name: "replace.bin", Size: 11}
+	writer, _, err := r.AcceptFile(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("new content")); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	r.FileCompleted(info, 11, nil)
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new content" {
+		t.Fatalf("replace failed: %q", got)
+	}
+	if len(r.completed) != 1 || r.completed[0] != target {
+		t.Fatalf("completed = %#v", r.completed)
+	}
+}
+
+func TestReceiverCleanupRemovesPendingTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	r := &receiver{destDir: dir}
+	if _, _, err := r.AcceptFile(zm.FileInfo{Name: "pending.bin", Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+	r.cleanup()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("temporary files left behind: %v", entries)
+	}
+}
+
+func TestReceiverDoesNotOverwriteFileCreatedDuringTransfer(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "race.bin")
+	r := &receiver{destDir: dir}
+	info := zm.FileInfo{Name: "race.bin", Size: 10}
+	writer, _, err := r.AcceptFile(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("other writer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("our data")); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	r.FileCompleted(info, 8, nil)
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "other writer" {
+		t.Fatalf("file created during transfer was overwritten: %q", got)
+	}
+	if len(r.completed) != 0 {
+		t.Fatalf("completed = %#v", r.completed)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "race.bin" {
+		t.Fatalf("unexpected files: %v", entries)
 	}
 }

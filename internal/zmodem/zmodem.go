@@ -2,6 +2,7 @@
 package zmodem
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/natefinch/atomic"
 	zm "github.com/xx25/go-zmodem"
 )
 
@@ -37,11 +39,12 @@ func Send(ctx context.Context, transport io.ReadWriter, files []string, progress
 	}
 	defer handler.Close()
 	session := zm.NewSession(transport, handler, &zm.Config{
-		Use32BitCRC:     true,
-		MaxBlockSize:    8192,
-		MaxRetries:      10,
-		RecvTimeout:     DefaultTimeout,
-		DataRecvTimeout: 2 * DefaultTimeout,
+		Use32BitCRC:      true,
+		MaxBlockSize:     8192,
+		MaxRetries:       10,
+		RecvTimeout:      DefaultTimeout,
+		DataRecvTimeout:  2 * DefaultTimeout,
+		DataStallTimeout: 2 * DefaultTimeout,
 	})
 	return session.Send(ctx)
 }
@@ -61,13 +64,15 @@ func Receive(ctx context.Context, transport io.ReadWriter, destDir string, maxFi
 		overwrite:   overwrite,
 		progress:    progress,
 	}
+	defer handler.cleanup()
 	session := zm.NewSession(transport, handler, &zm.Config{
-		Use32BitCRC:     true,
-		MaxBlockSize:    8192,
-		MaxFileSize:     maxFileSize,
-		MaxRetries:      10,
-		RecvTimeout:     DefaultTimeout,
-		DataRecvTimeout: 2 * DefaultTimeout,
+		Use32BitCRC:      true,
+		MaxBlockSize:     8192,
+		MaxFileSize:      maxFileSize,
+		MaxRetries:       10,
+		RecvTimeout:      DefaultTimeout,
+		DataRecvTimeout:  2 * DefaultTimeout,
+		DataStallTimeout: 2 * DefaultTimeout,
 	})
 	err := session.Receive(ctx)
 	return handler.completed, err
@@ -149,6 +154,13 @@ type receiver struct {
 	overwrite   bool
 	progress    ProgressFunc
 	completed   []string
+	pending     map[string]*pendingReceive
+}
+
+type pendingReceive struct {
+	finalPath string
+	tempPath  string
+	file      *os.File
 }
 
 func (r *receiver) NextFile() *zm.FileOffer { return nil }
@@ -166,10 +178,14 @@ func (r *receiver) AcceptFile(info zm.FileInfo) (io.WriteCloser, int64, error) {
 			return nil, 0, zm.ErrSkip
 		}
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	file, err := os.CreateTemp(r.destDir, ".whop-zmodem-*")
 	if err != nil {
-		return nil, 0, fmt.Errorf("zmodem: create %s: %w", path, err)
+		return nil, 0, fmt.Errorf("zmodem: create temp file for %s: %w", path, err)
 	}
+	if r.pending == nil {
+		r.pending = make(map[string]*pendingReceive)
+	}
+	r.pending[info.Name] = &pendingReceive{finalPath: path, tempPath: file.Name(), file: file}
 	return file, 0, nil
 }
 
@@ -180,20 +196,44 @@ func (r *receiver) FileProgress(info zm.FileInfo, transferred int64) {
 }
 
 func (r *receiver) FileCompleted(info zm.FileInfo, transferred int64, err error) {
-	if err == nil {
-		path, joinErr := safeJoin(r.destDir, info.Name)
-		if joinErr == nil {
-			r.completed = append(r.completed, path)
+	pending := r.pending[info.Name]
+	if pending != nil {
+		delete(r.pending, info.Name)
+		_ = pending.file.Close()
+		if err == nil {
+			if !r.overwrite {
+				if _, statErr := os.Stat(pending.finalPath); statErr == nil {
+					err = zm.ErrSkip
+				}
+			}
+		}
+		if err == nil {
 			if !info.ModTime.IsZero() {
-				_ = os.Chtimes(path, info.ModTime, info.ModTime)
+				_ = os.Chtimes(pending.tempPath, info.ModTime, info.ModTime)
 			}
 			if info.Mode != 0 {
-				_ = os.Chmod(path, os.FileMode(info.Mode).Perm())
+				_ = os.Chmod(pending.tempPath, os.FileMode(info.Mode).Perm())
 			}
+			if replaceErr := atomic.ReplaceFile(pending.tempPath, pending.finalPath); replaceErr != nil {
+				err = fmt.Errorf("zmodem: finalize %s: %w", pending.finalPath, replaceErr)
+			} else {
+				r.completed = append(r.completed, pending.finalPath)
+			}
+		}
+		if err != nil {
+			_ = os.Remove(pending.tempPath)
 		}
 	}
 	if r.progress != nil {
 		r.progress(Progress{Name: info.Name, Transferred: transferred, Total: info.Size, Done: true, Err: err})
+	}
+}
+
+func (r *receiver) cleanup() {
+	for name, pending := range r.pending {
+		_ = pending.file.Close()
+		_ = os.Remove(pending.tempPath)
+		delete(r.pending, name)
 	}
 }
 
@@ -211,9 +251,13 @@ func safeJoin(dir, name string) (string, error) {
 	return path, nil
 }
 
-// WaitForHeader reports whether data contains a ZMODEM header prefix.
+// WaitForHeader reports whether data contains a hexadecimal or binary ZMODEM
+// header prefix.
 func WaitForHeader(data []byte) bool {
-	return strings.Contains(string(data), "**\x18B")
+	return bytes.Contains(data, []byte("**\x18B")) ||
+		bytes.Contains(data, []byte("*\x18A")) ||
+		bytes.Contains(data, []byte("*\x18C")) ||
+		bytes.Contains(data, []byte("*\x18D"))
 }
 
 // ProgressPrinter returns a simple human-readable progress callback.

@@ -52,13 +52,25 @@ func (c *Connector) RunZmodem(ctx context.Context, host sshconfig.Host, command 
 		return fmt.Errorf("zmodem: start %q on %s: %w", command, host.Alias, err)
 	}
 
-	stream := &readWriteCloser{Reader: stdout, Writer: stdin}
+	stream := newRemoteStream(stdout, stdin, session.Close)
+	defer func() { _ = stream.Close() }()
+	stopCancel := context.AfterFunc(ctx, func() { _ = stream.Close() })
+	defer stopCancel()
 	transferErr := transfer(stream)
-	_ = stdin.Close()
 	if transferErr != nil {
-		_ = session.Close()
+		if ctx.Err() != nil {
+			transferErr = ctx.Err()
+		}
+		_ = stream.Close()
+		_ = stdin.Close()
 		return transferErr
 	}
+	if err := ctx.Err(); err != nil {
+		_ = stream.Close()
+		_ = stdin.Close()
+		return err
+	}
+	_ = stdin.Close()
 	if err := session.Wait(); err != nil {
 		message := strings.TrimSpace(stderr.String())
 		if message != "" {
@@ -67,12 +79,6 @@ func (c *Connector) RunZmodem(ctx context.Context, host sshconfig.Host, command 
 		return fmt.Errorf("zmodem: remote command on %s failed: %w", host.Alias, err)
 	}
 	return nil
-}
-
-type readWriteCloser struct {
-	io.Reader
-	io.Writer
-	io.Closer
 }
 
 // ShellQuote quotes one POSIX shell argument for the remote exec request.

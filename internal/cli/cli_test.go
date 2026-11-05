@@ -901,3 +901,14 @@ func TestAccessRejectsInvalidValueAndMissingHost(t *testing.T) {
 		t.Fatalf("missing args exit = %d, want 2", code)
 	}
 }
+
+func TestDefaultZmodemOptionsDebugEnv(t *testing.T) {
+	t.Setenv("WHOP_ZMODEM_DEBUG", "1")
+	options := defaultZmodemOptions()
+	if options.Debug == nil {
+		t.Fatal("debug writer was not enabled")
+	}
+	if options.Progress == nil {
+		t.Fatal("progress writer is nil")
+	}
+}

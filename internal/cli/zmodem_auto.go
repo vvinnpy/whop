@@ -14,13 +14,17 @@ import (
 )
 
 func defaultZmodemOptions() *sshconn.ZmodemOptions {
-	return &sshconn.ZmodemOptions{
+	options := &sshconn.ZmodemOptions{
 		UploadFiles: promptZmodemFiles,
 		DownloadDir: func(host sshconfig.Host) string {
 			return defaultDownloadDir(host.Alias)
 		},
 		Progress: os.Stderr,
 	}
+	if envBool("WHOP_ZMODEM_DEBUG") {
+		options.Debug = os.Stderr
+	}
+	return options
 }
 
 func promptZmodemFiles(host sshconfig.Host, stdin io.Reader, stderr io.Writer) ([]string, error) {

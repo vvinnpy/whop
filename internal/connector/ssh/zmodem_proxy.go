@@ -8,23 +8,40 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"whop/internal/sshconfig"
 	"whop/internal/zmodem"
 )
 
-var zmodemHeaderMarker = []byte("**\x18B")
+var zmodemHeaderPrefixes = [][]byte{
+	[]byte("**\x18B"),
+	[]byte("*\x18A"),
+	[]byte("*\x18C"),
+	[]byte("*\x18D"),
+}
+
+type zmodemHeader struct {
+	start int
+	typ   byte
+	hex   bool
+}
+
+type readDeadlineSetter interface {
+	SetReadDeadline(time.Time) error
+}
 
 // ZmodemOptions configures automatic ZMODEM interception during an interactive
 // SSH shell. UploadFiles is called when the remote runs rz; it should return
 // local files or an empty list to cancel. DownloadDir selects the destination
-// for files sent by remote sz.
+// for files sent by remote sz. Debug is optional and should be opt-in.
 type ZmodemOptions struct {
 	UploadFiles func(host sshconfig.Host, stdin io.Reader, stderr io.Writer) ([]string, error)
 	DownloadDir func(host sshconfig.Host) string
 	MaxFileSize int64
 	Overwrite   bool
 	Progress    io.Writer
+	Debug       io.Writer
 
 	send    func(context.Context, io.ReadWriter, []string, zmodem.ProgressFunc) error
 	receive func(context.Context, io.ReadWriter, string, int64, bool, zmodem.ProgressFunc) ([]string, error)
@@ -68,11 +85,13 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 	}
 
 	var paused atomic.Bool
+	var cancelRequested atomic.Bool
+	var transferCancel atomic.Pointer[context.CancelFunc]
 	writer := &serializedRemoteWriter{writer: remote, paused: &paused, mu: &sync.Mutex{}}
 	inputCh := make(chan []byte, 64)
 	gate := &promptGate{}
 	go readLocalInput(stdin, inputCh)
-	go routeLocalInput(inputCh, writer, &paused, gate)
+	go routeLocalInput(inputCh, writer, &paused, gate, &transferCancel, &cancelRequested)
 
 	pending := make([]byte, 0, 32*1024)
 	buffer := make([]byte, 32*1024)
@@ -81,9 +100,18 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 		if n > 0 {
 			pending = append(pending, buffer[:n]...)
 			for {
-				index := bytes.Index(pending, zmodemHeaderMarker)
-				if index < 0 {
-					flush := zmodemPreviewFlushLen(pending, zmodemHeaderMarker)
+				headerInfo, found, needMore := findZmodemHeader(pending)
+				if !found {
+					if needMore {
+						if headerInfo.start > 0 {
+							if _, err := stdout.Write(pending[:headerInfo.start]); err != nil {
+								return err
+							}
+							pending = append(pending[:0], pending[headerInfo.start:]...)
+						}
+						break
+					}
+					flush := zmodemPreviewFlushLen(pending)
 					if flush > 0 {
 						if _, err := stdout.Write(pending[:flush]); err != nil {
 							return err
@@ -92,27 +120,38 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 					}
 					break
 				}
-				if len(pending) < index+len(zmodemHeaderMarker)+2 {
-					// Wait for the ZMODEM frame type bytes to arrive.
-					break
-				}
-				if index > 0 {
-					if _, err := stdout.Write(pending[:index]); err != nil {
+				if headerInfo.start > 0 {
+					if _, err := stdout.Write(pending[:headerInfo.start]); err != nil {
 						return err
 					}
 				}
-				header := append([]byte(nil), pending[index:]...)
+				header := append([]byte(nil), pending[headerInfo.start:]...)
 				pending = pending[:0]
+				if options.Debug != nil {
+					logZmodemHeader(options.Debug, headerInfo, header)
+				}
+
+				cancelRequested.Store(false)
+				transferCtx, cancel := context.WithCancel(ctx)
+				transferCancel.Store(&cancel)
 				paused.Store(true)
 				var transferErr error
-				if header[len(zmodemHeaderMarker)+1] == '1' {
-					transferErr = handleZmodemUpload(ctx, host, stderr, remote, writer, terminal, gate, options, header)
+				if headerInfo.typ == 0x01 { // ZRINIT: remote is waiting to upload.
+					transferErr = handleZmodemUpload(transferCtx, host, stderr, remote, writer, terminal, gate, options, header)
 				} else {
-					transferErr = handleZmodemDownload(ctx, host, stderr, remote, writer, terminal, options, header)
+					transferErr = handleZmodemDownload(transferCtx, host, remote, writer, options, header)
+				}
+				cancel()
+				transferCancel.Store(nil)
+				if setter, ok := remote.(readDeadlineSetter); ok {
+					_ = setter.SetReadDeadline(time.Time{})
 				}
 				paused.Store(false)
 				_ = writer.writeProtocol([]byte("\n"))
 				if transferErr != nil {
+					if ctx.Err() != nil {
+						transferErr = ctx.Err()
+					}
 					fmt.Fprintf(stderr, "\r\nwhop zmodem: %v\r\n", transferErr)
 					_ = writer.writeProtocol(zmodemCancel)
 				} else {
@@ -122,6 +161,9 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 			}
 		}
 		if readErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if errors.Is(readErr, io.EOF) {
 				if len(pending) > 0 {
 					if _, err := stdout.Write(pending); err != nil {
@@ -135,21 +177,141 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 	}
 }
 
+// findZmodemHeader locates a complete hexadecimal or binary ZMODEM header.
+// needMore reports that a header prefix was found but its frame-type bytes have
+// not arrived yet.
+func findZmodemHeader(data []byte) (zmodemHeader, bool, bool) {
+	for i := 0; i+2 < len(data); i++ {
+		if data[i] != '*' || data[i+1] != 0x18 {
+			continue
+		}
+		encoding := data[i+2]
+		start := i
+		hex := false
+		switch encoding {
+		case 'A', 'C', 'D':
+		case 'B':
+			if i == 0 || data[i-1] != '*' {
+				continue
+			}
+			start = i - 1
+			hex = true
+		default:
+			continue
+		}
+
+		typePos := i + 3
+		if hex {
+			if len(data) < typePos+2 {
+				return zmodemHeader{start: start, hex: true}, false, true
+			}
+			typ, ok := parseHexByte(data[typePos], data[typePos+1])
+			if !ok {
+				continue
+			}
+			return zmodemHeader{start: start, typ: typ, hex: true}, true, false
+		}
+		if len(data) < typePos+1 {
+			return zmodemHeader{start: start}, false, true
+		}
+		return zmodemHeader{start: start, typ: data[typePos]}, true, false
+	}
+	return zmodemHeader{}, false, false
+}
+
+func parseHexByte(high, low byte) (byte, bool) {
+	h, ok := hexNibble(high)
+	if !ok {
+		return 0, false
+	}
+	l, ok := hexNibble(low)
+	if !ok {
+		return 0, false
+	}
+	return h<<4 | l, true
+}
+
+func hexNibble(value byte) (byte, bool) {
+	switch {
+	case value >= '0' && value <= '9':
+		return value - '0', true
+	case value >= 'a' && value <= 'f':
+		return value - 'a' + 10, true
+	case value >= 'A' && value <= 'F':
+		return value - 'A' + 10, true
+	default:
+		return 0, false
+	}
+}
+
 // zmodemPreviewFlushLen returns how many bytes can be emitted immediately
 // without losing a split ZMODEM header. Ordinary terminal output must never be
-// delayed by the marker length; only a suffix that is actually a marker prefix
+// delayed by the marker length; only a suffix that is actually a header prefix
 // needs to remain buffered.
-func zmodemPreviewFlushLen(pending, marker []byte) int {
-	maxHold := len(marker) - 1
+func zmodemPreviewFlushLen(pending []byte) int {
+	maxHold := 0
+	for _, prefix := range zmodemHeaderPrefixes {
+		if len(prefix) > maxHold {
+			maxHold = len(prefix)
+		}
+	}
+	maxHold--
 	if len(pending) < maxHold {
 		maxHold = len(pending)
 	}
 	for hold := maxHold; hold > 0; hold-- {
-		if bytes.Equal(pending[len(pending)-hold:], marker[:hold]) {
-			return len(pending) - hold
+		suffix := pending[len(pending)-hold:]
+		for _, prefix := range zmodemHeaderPrefixes {
+			if hold < len(prefix) && bytes.Equal(suffix, prefix[:hold]) {
+				return len(pending) - hold
+			}
 		}
 	}
 	return len(pending)
+}
+
+func logZmodemHeader(out io.Writer, header zmodemHeader, data []byte) {
+	sample := data
+	if len(sample) > 64 {
+		sample = sample[:64]
+	}
+	encoding := "binary"
+	if header.hex {
+		encoding = "hex"
+	}
+	fmt.Fprintf(out, "\r\nwhop zmodem: detected %s header type=0x%02x (%s) sample=% x\r\n",
+		encoding, header.typ, zmodemFrameTypeName(header.typ), sample)
+}
+
+func zmodemFrameTypeName(typ byte) string {
+	switch typ {
+	case 0x00:
+		return "ZRQINIT"
+	case 0x01:
+		return "ZRINIT"
+	case 0x02:
+		return "ZSINIT"
+	case 0x03:
+		return "ZACK"
+	case 0x04:
+		return "ZFILE"
+	case 0x05:
+		return "ZSKIP"
+	case 0x06:
+		return "ZNAK"
+	case 0x07:
+		return "ZABORT"
+	case 0x08:
+		return "ZFIN"
+	case 0x09:
+		return "ZRPOS"
+	case 0x0a:
+		return "ZDATA"
+	case 0x0b:
+		return "ZEOF"
+	default:
+		return "unknown"
+	}
 }
 
 func readLocalInput(stdin io.Reader, output chan<- []byte) {
@@ -171,12 +333,20 @@ func readLocalInput(stdin io.Reader, output chan<- []byte) {
 	}
 }
 
-func routeLocalInput(input <-chan []byte, writer *serializedRemoteWriter, paused *atomic.Bool, gate *promptGate) {
+func routeLocalInput(input <-chan []byte, writer *serializedRemoteWriter, paused *atomic.Bool, gate *promptGate, transferCancel *atomic.Pointer[context.CancelFunc], cancelRequested *atomic.Bool) {
 	for data := range input {
 		if gate.write(data) {
 			continue
 		}
 		if paused.Load() {
+			if bytes.IndexByte(data, 0x03) >= 0 && cancelRequested.CompareAndSwap(false, true) {
+				if cancel := transferCancel.Load(); cancel != nil {
+					(*cancel)()
+				}
+				if setter, ok := writer.writer.(readDeadlineSetter); ok {
+					_ = setter.SetReadDeadline(time.Now())
+				}
+			}
 			continue
 		}
 		if err := writer.writeInteractive(data); err != nil {
@@ -210,10 +380,14 @@ func handleZmodemUpload(ctx context.Context, host sshconfig.Host, stderr io.Writ
 		Reader: &prefixReader{prefix: header, reader: remote},
 		writer: writer,
 	}
-	return options.send(ctx, transport, files, zmodem.ProgressPrinter(options.Progress))
+	err = options.send(ctx, transport, files, zmodem.ProgressPrinter(options.Progress))
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
-func handleZmodemDownload(ctx context.Context, host sshconfig.Host, stderr io.Writer, remote io.Reader, writer *serializedRemoteWriter, terminal *terminalMode, options *ZmodemOptions, header []byte) error {
+func handleZmodemDownload(ctx context.Context, host sshconfig.Host, remote io.Reader, writer *serializedRemoteWriter, options *ZmodemOptions, header []byte) error {
 	dir := options.DownloadDir(host)
 	if dir == "" {
 		return errors.New("download directory is empty")
@@ -223,6 +397,9 @@ func handleZmodemDownload(ctx context.Context, host sshconfig.Host, stderr io.Wr
 		writer: writer,
 	}
 	_, err := options.receive(ctx, transport, dir, options.MaxFileSize, options.Overwrite, zmodem.ProgressPrinter(options.Progress))
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return err
 }
 
@@ -312,6 +489,13 @@ func (r *prefixReader) Read(data []byte) (int, error) {
 	return r.reader.Read(data)
 }
 
+func (r *prefixReader) SetReadDeadline(deadline time.Time) error {
+	if setter, ok := r.reader.(readDeadlineSetter); ok {
+		return setter.SetReadDeadline(deadline)
+	}
+	return nil
+}
+
 type zmodemTransport struct {
 	io.Reader
 	writer *serializedRemoteWriter
@@ -322,6 +506,13 @@ func (t *zmodemTransport) Write(data []byte) (int, error) {
 		return 0, err
 	}
 	return len(data), nil
+}
+
+func (t *zmodemTransport) SetReadDeadline(deadline time.Time) error {
+	if setter, ok := t.Reader.(readDeadlineSetter); ok {
+		return setter.SetReadDeadline(deadline)
+	}
+	return nil
 }
 
 var zmodemCancel = []byte{0x18, 0x18, 0x18, 0x18, 0x18}

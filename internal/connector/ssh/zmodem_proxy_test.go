@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,7 +46,7 @@ func TestRunZmodemAwareShellDetectsUpload(t *testing.T) {
 		send: func(_ context.Context, transport io.ReadWriter, files []string, _ zmodem.ProgressFunc) error {
 			defer close(done)
 			uploaded = append([]string(nil), files...)
-			header := make([]byte, len(zmodemHeaderMarker)+2)
+			header := make([]byte, len("**\x18B")+2)
 			if _, err := io.ReadFull(transport, header); err != nil {
 				return err
 			}
@@ -89,7 +90,7 @@ func TestRunZmodemAwareShellDetectsDownload(t *testing.T) {
 		receive: func(_ context.Context, transport io.ReadWriter, dir string, _ int64, _ bool, _ zmodem.ProgressFunc) ([]string, error) {
 			defer close(done)
 			destination = dir
-			header := make([]byte, len(zmodemHeaderMarker)+2)
+			header := make([]byte, len("**\x18B")+2)
 			if _, err := io.ReadFull(transport, header); err != nil {
 				return nil, err
 			}
@@ -125,7 +126,7 @@ func TestZmodemHeaderSplitAcrossReads(t *testing.T) {
 		DownloadDir: func(sshconfig.Host) string { return "/tmp" },
 		receive: func(_ context.Context, transport io.ReadWriter, _ string, _ int64, _ bool, _ zmodem.ProgressFunc) ([]string, error) {
 			defer close(done)
-			header := make([]byte, len(zmodemHeaderMarker)+2)
+			header := make([]byte, len("**\x18B")+2)
 			_, err := io.ReadFull(transport, header)
 			if err != nil {
 				return nil, err
@@ -219,5 +220,195 @@ func TestRunZmodemAwareShellFlushesMarkerPrefixAtEOF(t *testing.T) {
 	}
 	if stdout.String() != "*" {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestFindZmodemHeaderHexAndBinary(t *testing.T) {
+	tests := []struct {
+		name  string
+		data  []byte
+		start int
+		typ   byte
+		hex   bool
+	}{
+		{name: "hex ZRQINIT", data: []byte("prefix**\x18B00rest"), start: 6, typ: 0x00, hex: true},
+		{name: "binary ZFILE", data: []byte("*\x18C\x04rest"), start: 0, typ: 0x04},
+		{name: "binary ZRINIT", data: []byte("*\x18A\x01rest"), start: 0, typ: 0x01},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header, found, needMore := findZmodemHeader(tt.data)
+			if !found || needMore {
+				t.Fatalf("found=%v needMore=%v", found, needMore)
+			}
+			if header.start != tt.start || header.typ != tt.typ || header.hex != tt.hex {
+				t.Fatalf("header = %#v", header)
+			}
+		})
+	}
+}
+
+func TestFindZmodemHeaderWaitsForFrameType(t *testing.T) {
+	header, found, needMore := findZmodemHeader([]byte("**\x18B0"))
+	if found || !needMore {
+		t.Fatalf("found=%v needMore=%v", found, needMore)
+	}
+	if header.start != 0 {
+		t.Fatalf("start = %d", header.start)
+	}
+}
+
+func TestZmodemPreviewFlushLen(t *testing.T) {
+	tests := []struct {
+		pending string
+		want    int
+	}{
+		{pending: "plain text", want: 10},
+		{pending: "plain*", want: 5},
+		{pending: "plain**", want: 5},
+		{pending: "plain**\x18", want: 5},
+		{pending: "plain*\x18", want: 5},
+		{pending: "plain\x18", want: 6},
+	}
+	for _, tt := range tests {
+		if got := zmodemPreviewFlushLen([]byte(tt.pending)); got != tt.want {
+			t.Errorf("zmodemPreviewFlushLen(%q) = %d, want %d", tt.pending, got, tt.want)
+		}
+	}
+}
+
+func TestRunZmodemAwareShellDetectsBinaryHeader(t *testing.T) {
+	reader, writer := io.Pipe()
+	remote := &testRemote{reader: reader}
+	done := make(chan struct{})
+	options := &ZmodemOptions{
+		DownloadDir: func(sshconfig.Host) string { return "/tmp/downloads" },
+		receive: func(_ context.Context, transport io.ReadWriter, _ string, _ int64, _ bool, _ zmodem.ProgressFunc) ([]string, error) {
+			defer close(done)
+			header := make([]byte, len("*\x18C\x04"))
+			if _, err := io.ReadFull(transport, header); err != nil {
+				return nil, err
+			}
+			if string(header) != "*\x18C\x04" {
+				t.Fatalf("prefix = %q", header)
+			}
+			return nil, nil
+		},
+	}
+	go func() {
+		_, _ = writer.Write([]byte("*\x18C\x04payload"))
+		<-done
+		_ = writer.Close()
+	}()
+	var stdout, stderr bytes.Buffer
+	if err := runZmodemAwareShell(context.Background(), sshconfig.Host{Alias: "host"}, strings.NewReader(""), &stdout, &stderr, remote, nil, options); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunZmodemAwareShellDebugLogsHeader(t *testing.T) {
+	reader, writer := io.Pipe()
+	remote := &testRemote{reader: reader}
+	done := make(chan struct{})
+	var debug bytes.Buffer
+	options := &ZmodemOptions{
+		DownloadDir: func(sshconfig.Host) string { return "/tmp/downloads" },
+		Debug:       &debug,
+		receive: func(_ context.Context, transport io.ReadWriter, _ string, _ int64, _ bool, _ zmodem.ProgressFunc) ([]string, error) {
+			defer close(done)
+			header := make([]byte, len("**\x18B00"))
+			_, err := io.ReadFull(transport, header)
+			return nil, err
+		},
+	}
+	go func() {
+		_, _ = writer.Write([]byte("**\x18B00payload"))
+		<-done
+		_ = writer.Close()
+	}()
+	var stdout, stderr bytes.Buffer
+	if err := runZmodemAwareShell(context.Background(), sshconfig.Host{Alias: "host"}, strings.NewReader(""), &stdout, &stderr, remote, nil, options); err != nil {
+		t.Fatal(err)
+	}
+	want := "detected hex header type=0x00 (ZRQINIT)"
+	if !strings.Contains(debug.String(), want) || !strings.Contains(debug.String(), "sample=") {
+		t.Fatalf("debug log = %q", debug.String())
+	}
+}
+
+type deadlineWriter struct {
+	mu       sync.Mutex
+	deadline time.Time
+}
+
+func (w *deadlineWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (w *deadlineWriter) SetReadDeadline(deadline time.Time) error {
+	w.mu.Lock()
+	w.deadline = deadline
+	w.mu.Unlock()
+	return nil
+}
+
+func TestRouteLocalInputCtrlCCancelsTransfer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var transferCancel atomic.Pointer[context.CancelFunc]
+	transferCancel.Store(&cancel)
+	var requested atomic.Bool
+	paused := atomic.Bool{}
+	paused.Store(true)
+	input := make(chan []byte, 1)
+	input <- []byte{0x03}
+	close(input)
+	deadline := &deadlineWriter{}
+	writer := &serializedRemoteWriter{writer: deadline, paused: &paused, mu: &sync.Mutex{}}
+	routeLocalInput(input, writer, &paused, &promptGate{}, &transferCancel, &requested)
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("context error = %v", ctx.Err())
+	}
+	if !requested.Load() {
+		t.Fatal("cancel was not marked as requested")
+	}
+	deadline.mu.Lock()
+	defer deadline.mu.Unlock()
+	if deadline.deadline.IsZero() {
+		t.Fatal("read deadline was not set to unblock the transfer")
+	}
+}
+
+func TestRunZmodemAwareShellDetectsZeroCRCHeader(t *testing.T) {
+	reader, writer := io.Pipe()
+	remote := &testRemote{reader: reader}
+	done := make(chan struct{})
+	var debug bytes.Buffer
+	options := &ZmodemOptions{
+		DownloadDir: func(sshconfig.Host) string { return "/tmp/downloads" },
+		Debug:       &debug,
+		receive: func(_ context.Context, transport io.ReadWriter, _ string, _ int64, _ bool, _ zmodem.ProgressFunc) ([]string, error) {
+			defer close(done)
+			header := make([]byte, len("**\x18B00"))
+			_, err := io.ReadFull(transport, header)
+			return nil, err
+		},
+	}
+	payload := "rz\r**\x18B" + strings.Repeat("0", 14) + "\r\nwaiting for cancel\r\n"
+	go func() {
+		_, _ = writer.Write([]byte(payload))
+		<-done
+		_ = writer.Close()
+	}()
+	var stdout, stderr bytes.Buffer
+	if err := runZmodemAwareShell(context.Background(), sshconfig.Host{Alias: "host"}, strings.NewReader(""), &stdout, &stderr, remote, nil, options); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "rz\r" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if !strings.Contains(debug.String(), "ZRQINIT") {
+		t.Fatalf("debug = %q", debug.String())
 	}
 }

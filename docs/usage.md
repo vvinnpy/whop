@@ -668,7 +668,24 @@ whop zmodem get -max-size 104857600 prod-db /var/log/big.log
 
 - 远端必须有 `rz`/`sz`；
 - ZMODEM 是可选能力，不是所有 SSH 主机都支持；
-- 超过 `-max-size` 的文件会拒绝接收。
+- 超过 `-max-size` 的文件会拒绝接收；
+- 交互式下载默认不覆盖同名文件，重试前先移走旧文件；手动下载可用
+  `whop zmodem get --overwrite`。
+
+交互式传输期间按 `Ctrl-C` 会发送 ZMODEM 取消并返回 shell。握手阶段单次
+读取超过 30 秒会重试，达到重试上限后中止；数据传输阶段 60 秒没有进展会
+中止，不会永久挂起。
+
+### 调试
+
+自动识别失败时，可以开启 ZMODEM 调试日志：
+
+```bash
+WHOP_ZMODEM_DEBUG=1 whop connect prod-db
+```
+
+日志会输出检测到的帧类型、十六进制头和头部前 64 字节，便于判断远端
+`sz` 使用的是十六进制头还是二进制头。头部可能包含远端文件名。
 
 ---
 
