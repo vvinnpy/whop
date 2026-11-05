@@ -25,11 +25,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gofmt
-        if: runner.os == 'Linux'
         shell: bash
         run: test -z "$(gofmt -l .)"
       - name: mod tidy
-        if: runner.os == 'Linux'
         shell: bash
         run: test -z "$(go mod tidy -diff)"
       - name: vet
@@ -46,7 +44,7 @@ jobs:
           if [ ! -f gotest.jsonl ]; then
             exit 0
           fi
-          { (grep '"Action":"output"' gotest.jsonl || true) | grep -E '"_test\.go:[0-9]+:' | tail -20 | while IFS= read -r line; do
+          { (grep '"Action":"output"' gotest.jsonl || true) | grep -E '_test\.go:[0-9]+:' | tail -20 | while IFS= read -r line; do
               echo "::error title=go test failure::$line"
             done; } || true
           { (grep '"Action":"fail"' gotest.jsonl || true) | tail -10 | while IFS= read -r line; do
