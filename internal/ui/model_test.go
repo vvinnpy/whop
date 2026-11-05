@@ -79,7 +79,22 @@ func plainView(m *Model) string {
 
 func sendKey(m *Model, key tea.KeyMsg) tea.Cmd {
 	_, cmd := m.Update(key)
-	return cmd
+	return firstCommand(cmd)
+}
+
+// firstCommand unwraps the first command in a batch. Status result notices are
+// batched with their expiry timer; tests need the action command, not the timer.
+func firstCommand(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		if batch, ok := msg.(tea.BatchMsg); ok && len(batch) > 0 {
+			return batch[0]()
+		}
+		return msg
+	}
 }
 
 func runeKey(value string) tea.KeyMsg {
@@ -227,8 +242,8 @@ func TestEnterConnectsSelectedHost(t *testing.T) {
 	if *connected != "prod-cache" {
 		t.Fatalf("connected = %q", *connected)
 	}
-	if !strings.Contains(m.status, "connecting to prod-cache") {
-		t.Fatalf("status = %q", m.status)
+	if !strings.Contains(m.status.text(), "connecting · prod-cache") || m.status.current.Level != StatusProgress {
+		t.Fatalf("status = %q (%v)", m.status.text(), m.status.current.Level)
 	}
 }
 
@@ -301,8 +316,8 @@ func TestAccessPickerSetsServiceAndHidesHost(t *testing.T) {
 	if len(m.filtered) != 2 {
 		t.Fatalf("service host should leave login list, got %d hosts", len(m.filtered))
 	}
-	if !strings.Contains(m.status, "hidden; press a to show all") {
-		t.Fatalf("status should explain hidden host: %q", m.status)
+	if !strings.Contains(m.status.text(), "hidden; press a to show all") {
+		t.Fatalf("status should explain hidden host: %q", m.status.text())
 	}
 
 	sendKey(m, runeKey("a"))
@@ -372,8 +387,8 @@ func TestReload(t *testing.T) {
 	if len(m.allHosts) != 4 {
 		t.Fatalf("hosts after reload = %d", len(m.allHosts))
 	}
-	if m.status != "config reloaded" {
-		t.Fatalf("status after reload = %q", m.status)
+	if m.status.text() != "config reloaded" || m.status.current.Level != StatusResult {
+		t.Fatalf("status after reload = %q (%v)", m.status.text(), m.status.current.Level)
 	}
 	if view := plainView(m); strings.Contains(view, "reloading") {
 		t.Fatalf("view still shows reloading:\n%s", view)
@@ -729,16 +744,16 @@ func TestMacroPickerRunsSelectedMacro(t *testing.T) {
 	if ranHost != "prod-db" || ranName != "restart" {
 		t.Fatalf("ran macro host=%q name=%q", ranHost, ranName)
 	}
-	if !strings.Contains(m.status, "running macro restart") {
-		t.Fatalf("status = %q", m.status)
+	if !strings.Contains(m.status.text(), "running macro restart") || m.status.current.Level != StatusProgress {
+		t.Fatalf("status = %q (%v)", m.status.text(), m.status.current.Level)
 	}
 }
 
 func TestMacroFinishedStatus(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	m.Update(MacroFinishedMsg{Host: "prod-db", Name: "collect"})
-	if !strings.Contains(m.status, "macro collect completed on prod-db") {
-		t.Fatalf("status = %q", m.status)
+	if m.status.text() != "macro collect completed · prod-db" || m.status.current.Level != StatusResult {
+		t.Fatalf("status = %q (%v)", m.status.text(), m.status.current.Level)
 	}
 }
 
@@ -842,8 +857,12 @@ func TestEditNoDiffAppliesImmediately(t *testing.T) {
 
 func TestInitialStatusSurvivesHostLoad(t *testing.T) {
 	m := New(Options{
-		ConfigPath:    "~/.ssh/config",
-		InitialStatus: "session ended",
+		ConfigPath: "~/.ssh/config",
+		InitialNotice: Notice{
+			Text:  "session ended · prod-db",
+			Level: StatusResult,
+			Scope: "prod-db",
+		},
 		Load: func() ([]sshconfig.Host, error) {
 			return testHosts(), nil
 		},
@@ -851,10 +870,10 @@ func TestInitialStatusSurvivesHostLoad(t *testing.T) {
 	})
 	msg := m.Init()()
 	m.Update(msg)
-	if m.status != "session ended" {
-		t.Fatalf("status = %q", m.status)
+	if m.status.text() != "session ended · prod-db" {
+		t.Fatalf("status = %q", m.status.text())
 	}
-	if !strings.Contains(plainView(m), "session ended") {
+	if !strings.Contains(plainView(m), "session ended · prod-db") {
 		t.Fatalf("status not rendered:\n%s", plainView(m))
 	}
 }
@@ -1053,8 +1072,8 @@ func TestCopyHostFlow(t *testing.T) {
 	if strings.Join(tagged, ",") != "prod,db" {
 		t.Fatalf("tags = %#v", tagged)
 	}
-	if m.copying || m.creating || m.editing || m.status != "host copied" {
-		t.Fatalf("copy state not cleared: copying=%v creating=%v editing=%v status=%q", m.copying, m.creating, m.editing, m.status)
+	if m.copying || m.creating || m.editing || m.status.text() != "host copied" {
+		t.Fatalf("copy state not cleared: copying=%v creating=%v editing=%v status=%q", m.copying, m.creating, m.editing, m.status.text())
 	}
 }
 
@@ -1071,15 +1090,15 @@ func TestCopyHostWarnsForMultipleIdentityFiles(t *testing.T) {
 	if got := m.editFields[editFieldIdentityFile].Value(); got != "" {
 		t.Fatalf("ambiguous identities should not be copied, got %q", got)
 	}
-	if !strings.Contains(m.status, "multiple identity files need manual review") {
-		t.Fatalf("warning missing: %q", m.status)
+	if !strings.Contains(m.status.text(), "multiple identity files need manual review") {
+		t.Fatalf("warning missing: %q", m.status.text())
 	}
 }
 
 func TestLoadedStateHasNoDuplicateHostCount(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
-	if m.status != "" {
-		t.Fatalf("default status should be empty, got %q", m.status)
+	if m.status.text() != "" {
+		t.Fatalf("default status should be empty, got %q", m.status.text())
 	}
 	if view := plainView(m); strings.Contains(view, "servers / 4 total") {
 		t.Fatalf("host count is duplicated in the status line:\n%s", view)
@@ -1088,23 +1107,23 @@ func TestLoadedStateHasNoDuplicateHostCount(t *testing.T) {
 
 func TestFilterChangesClearTransientStatus(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
-	m.status = "session ended"
+	m.status.result("session ended", "")
 	sendKey(m, runeKey("/"))
 	sendKey(m, runeKey("p"))
-	if m.status != "" {
-		t.Fatalf("typing in search left stale status %q", m.status)
+	if m.status.text() != "" {
+		t.Fatalf("typing in search left stale status %q", m.status.text())
 	}
 
-	m.status = "session ended"
+	m.status.result("session ended", "")
 	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.status != "" {
-		t.Fatalf("applying search left stale status %q", m.status)
+	if m.status.text() != "" {
+		t.Fatalf("applying search left stale status %q", m.status.text())
 	}
 
-	m.status = "session ended"
+	m.status.result("session ended", "")
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.filter != "" || m.status != "" {
-		t.Fatalf("clearing search filter=%q status=%q", m.filter, m.status)
+	if m.filter != "" || m.status.text() != "" {
+		t.Fatalf("clearing search filter=%q status=%q", m.filter, m.status.text())
 	}
 }
 

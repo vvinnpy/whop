@@ -41,7 +41,7 @@ type MacroRunner func(sshconfig.Host, string) tea.Cmd
 type Options struct {
 	ConfigPath      string
 	InitialFilter   string
-	InitialStatus   string
+	InitialNotice   Notice
 	ShowAll         bool
 	Record          bool
 	Load            HostLoader
@@ -65,7 +65,8 @@ type Options struct {
 
 // ConnectFinishedMsg is emitted after an interactive session returns.
 type ConnectFinishedMsg struct {
-	Err error
+	Host string
+	Err  error
 }
 
 // MacroFinishedMsg is emitted after a named macro run returns.
@@ -107,7 +108,7 @@ type Model struct {
 
 	filter        string
 	filterFocused bool
-	initialStatus string
+	initialNotice Notice
 	showAll       bool
 	record        bool
 	help          bool
@@ -116,8 +117,7 @@ type Model struct {
 	height int
 
 	loaded bool
-	status string
-	err    error
+	status statusState
 
 	editing              bool
 	creating             bool
@@ -187,7 +187,7 @@ func New(opts Options) *Model {
 		setRecord:       opts.SetRecord,
 		setLoginMode:    opts.SetLoginMode,
 		filter:          opts.InitialFilter,
-		initialStatus:   opts.InitialStatus,
+		initialNotice:   opts.InitialNotice,
 		showAll:         opts.ShowAll,
 		record:          opts.Record,
 		width:           100,
@@ -203,6 +203,11 @@ func (m *Model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	return model, m.status.arm(cmd)
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -213,40 +218,53 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hostsLoadedMsg:
 		m.loaded = true
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = "failed to load hosts"
+			m.status.fail(fmt.Sprintf("load hosts: %v", msg.err), "")
 			return m, nil
 		}
-		m.err = nil
 		m.allHosts = msg.hosts
 		m.applyFilter()
-		if m.status == "reloading..." {
-			m.status = "config reloaded"
+		if m.status.is(StatusProgress, "reloading config...") {
+			m.status.result("config reloaded", "")
 		}
-		if m.initialStatus != "" {
-			m.status = m.initialStatus
-			m.initialStatus = ""
+		if m.initialNotice.Text != "" {
+			// The relaunched TUI starts at the top of the list, which may not be
+			// the host the notice refers to. Keep it visible until the first
+			// navigation; the text itself names the host.
+			notice := m.initialNotice
+			notice.Scope = ""
+			m.status.set(notice)
+			m.initialNotice = Notice{}
 		}
 		return m, nil
 
 	case ConnectFinishedMsg:
+		scope := msg.Host
 		if msg.Err != nil {
-			m.err = msg.Err
-			m.status = "connection failed"
+			text := "connection failed"
+			if scope != "" {
+				text += " · " + scope
+			}
+			text += ": " + msg.Err.Error()
+			m.status.fail(text, scope)
 		} else {
-			m.err = nil
-			m.status = "session ended"
+			text := "session ended"
+			if scope != "" {
+				text += " · " + scope
+			}
+			m.status.result(text, scope)
 		}
 		return m, nil
 
 	case MacroFinishedMsg:
 		if msg.Err != nil {
-			m.err = msg.Err
-			m.status = fmt.Sprintf("macro %s failed on %s", msg.Name, msg.Host)
+			m.status.fail(fmt.Sprintf("macro %s failed · %s: %v", msg.Name, msg.Host, msg.Err), msg.Host)
 		} else {
-			m.err = nil
-			m.status = fmt.Sprintf("macro %s completed on %s", msg.Name, msg.Host)
+			m.status.result(fmt.Sprintf("macro %s completed · %s", msg.Name, msg.Host), msg.Host)
 		}
+		return m, nil
+
+	case statusExpiredMsg:
+		m.status.expire(msg.id)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -297,24 +315,26 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.connectSelected()
 		case "backspace":
 			m.removeLastFilterRune()
-			m.status = ""
+			m.status.clear()
 			return m, nil
 		case "ctrl+u":
 			m.filter = ""
 			m.applyFilter()
-			m.status = ""
+			m.status.clear()
 			return m, nil
 		case "up", "ctrl+p":
+			m.status.clearResult()
 			m.move(-1)
 			return m, nil
 		case "down", "ctrl+n":
+			m.status.clearResult()
 			m.move(1)
 			return m, nil
 		}
 		if len(msg.Runes) > 0 {
 			m.filter += string(msg.Runes)
 			m.applyFilter()
-			m.status = ""
+			m.status.clear()
 		}
 		return m, nil
 	}
@@ -323,35 +343,38 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, tea.Quit
 	case "/":
+		m.status.clear()
 		m.filterFocused = true
 		return m, nil
 	case "enter":
 		return m.connectSelected()
 	case "j", "down", "ctrl+n":
+		m.status.clearResult()
 		m.move(1)
 	case "k", "up", "ctrl+p":
+		m.status.clearResult()
 		m.move(-1)
 	case "g":
+		m.status.clearResult()
 		m.cursor = 0
 	case "G":
+		m.status.clearResult()
 		if len(m.filtered) > 0 {
 			m.cursor = len(m.filtered) - 1
 		}
 	case "ctrl+d":
+		m.status.clearResult()
 		m.move(m.pageSize())
 	case "ctrl+u":
+		m.status.clearResult()
 		m.move(-m.pageSize())
 	case "r":
-		m.status = "reloading..."
+		m.status.progress("reloading config...", "")
 		return m, m.reload
 	case "a":
+		m.status.clear()
 		m.showAll = !m.showAll
 		m.applyFilter()
-		if m.showAll {
-			m.status = "showing all entries"
-		} else {
-			m.status = "showing login hosts"
-		}
 	case "f":
 		m.toggleSelectedFavorite()
 	case "N":
@@ -373,13 +396,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "R":
 		m.toggleSelectedRecording()
 	case "?":
+		m.status.clear()
 		m.help = true
 	case "esc":
 		if m.filter != "" {
 			m.filter = ""
 			m.applyFilter()
-			m.status = ""
 		}
+		m.status.clear()
 	}
 	return m, nil
 }
@@ -398,16 +422,14 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.connect == nil {
-		m.err = fmt.Errorf("connect is not configured")
-		m.status = "connection failed"
+		m.status.fail("connection failed: connect is not configured", host.Alias)
 		return m, nil
 	}
-	m.err = nil
 	record := host.Record || m.record
 	if record {
-		m.status = fmt.Sprintf("connecting to %s with recording...", host.Alias)
+		m.status.progress(fmt.Sprintf("connecting · %s (recording)...", host.Alias), host.Alias)
 	} else {
-		m.status = fmt.Sprintf("connecting to %s...", host.Alias)
+		m.status.progress(fmt.Sprintf("connecting · %s...", host.Alias), host.Alias)
 	}
 	return m, m.connect(host, record)
 }
@@ -418,22 +440,19 @@ func (m *Model) toggleSelectedRecording() {
 		return
 	}
 	if m.setRecord == nil {
-		m.err = fmt.Errorf("recording policy is not configured")
-		m.status = "recording unavailable"
+		m.status.fail("recording policy update failed: recording policy is not configured", host.Alias)
 		return
 	}
 	enabled := !host.Record
 	if err := m.setRecord(host, enabled); err != nil {
-		m.err = err
-		m.status = "recording policy update failed"
+		m.status.fail(fmt.Sprintf("recording policy update failed · %s: %v", host.Alias, err), host.Alias)
 		return
 	}
 	m.updateHostRecording(host.Alias, enabled)
-	m.err = nil
 	if enabled {
-		m.status = fmt.Sprintf("recording enabled for %s", host.Alias)
+		m.status.result(fmt.Sprintf("REC on · %s (next session)", host.Alias), host.Alias)
 	} else {
-		m.status = fmt.Sprintf("recording disabled for %s", host.Alias)
+		m.status.result(fmt.Sprintf("REC off · %s", host.Alias), host.Alias)
 	}
 }
 
@@ -456,12 +475,10 @@ func (m *Model) startSFTP() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.openSFTP == nil {
-		m.err = fmt.Errorf("SFTP is not configured")
-		m.status = "SFTP unavailable"
+		m.status.fail("SFTP unavailable: SFTP is not configured", host.Alias)
 		return m, nil
 	}
-	m.err = nil
-	m.status = fmt.Sprintf("opening SFTP for %s...", host.Alias)
+	m.status.progress(fmt.Sprintf("opening SFTP · %s...", host.Alias), host.Alias)
 	return m, m.openSFTP(host)
 }
 
@@ -471,8 +488,7 @@ func (m *Model) startForwardForm() {
 		return
 	}
 	if m.startForward == nil {
-		m.err = fmt.Errorf("port forwarding is not configured")
-		m.status = "forwarding unavailable"
+		m.status.fail("forwarding unavailable: port forwarding is not configured", host.Alias)
 		return
 	}
 	width := m.width - 20
@@ -488,15 +504,14 @@ func (m *Model) startForwardForm() {
 	m.forwardType.Focus()
 	m.forwardTarget = host
 	m.forwardMode = true
-	m.err = nil
-	m.status = "choose local, remote, or dynamic"
+	m.status.clear()
 }
 
 func (m *Model) updateForward(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.forwardMode = false
-		m.status = "forwarding cancelled"
+		m.status.clear()
 		return m, nil
 	case "tab":
 		m.focusForwardField(1)
@@ -571,8 +586,7 @@ func (m *Model) setForwardFocus(index int) {
 
 func (m *Model) submitForward() (tea.Model, tea.Cmd) {
 	if m.startForward == nil {
-		m.err = fmt.Errorf("port forwarding is not configured")
-		m.status = "forwarding failed"
+		m.status.fail("forwarding failed: port forwarding is not configured", m.forwardTarget.Alias)
 		return m, nil
 	}
 	kind := m.forwardKind()
@@ -584,13 +598,11 @@ func (m *Model) submitForward() (tea.Model, tea.Cmd) {
 	}
 	spec, err := coreconnector.ParseForwardSpec(kind, raw)
 	if err != nil {
-		m.err = err
-		m.status = "invalid forwarding rule"
+		m.status.fail(fmt.Sprintf("invalid forwarding rule: %v", err), m.forwardTarget.Alias)
 		return m, nil
 	}
-	m.err = nil
 	m.forwardMode = false
-	m.status = fmt.Sprintf("starting %s forwarding on %s", spec.Kind, spec.BindAddress())
+	m.status.progress(fmt.Sprintf("starting %s forward · %s · %s...", spec.Kind, spec.BindAddress(), m.forwardTarget.Alias), m.forwardTarget.Alias)
 	return m, m.startForward(m.forwardTarget, spec)
 }
 
@@ -600,34 +612,30 @@ func (m *Model) startMacros() {
 		return
 	}
 	if m.loadMacros == nil {
-		m.err = fmt.Errorf("macros are not configured")
-		m.status = "macro list unavailable"
+		m.status.fail("macro list unavailable: macros are not configured", host.Alias)
 		return
 	}
 	names, err := m.loadMacros()
 	if err != nil {
-		m.err = err
-		m.status = "failed to load macros"
+		m.status.fail(fmt.Sprintf("failed to load macros · %s: %v", host.Alias, err), host.Alias)
 		return
 	}
 	if len(names) == 0 {
-		m.err = nil
-		m.status = "no macros; create one with: whop macro set"
+		m.status.result("no macros · create one with: whop macro set", host.Alias)
 		return
 	}
 	m.macroNames = names
 	m.macroCursor = 0
 	m.macroTarget = host
 	m.macroMode = true
-	m.err = nil
-	m.status = ""
+	m.status.clear()
 }
 
 func (m *Model) updateMacros(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "m":
 		m.macroMode = false
-		m.status = "macro cancelled"
+		m.status.clear()
 		return m, nil
 	case "j", "down", "ctrl+n":
 		if len(m.macroNames) > 0 {
@@ -644,15 +652,13 @@ func (m *Model) updateMacros(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.runMacro == nil {
-			m.err = fmt.Errorf("macro execution is not configured")
-			m.status = "macro failed"
+			m.status.fail("macro failed: macro execution is not configured", m.macroTarget.Alias)
 			return m, nil
 		}
 		name := m.macroNames[m.macroCursor]
 		host := m.macroTarget
 		m.macroMode = false
-		m.err = nil
-		m.status = fmt.Sprintf("running macro %s on %s...", name, host.Alias)
+		m.status.progress(fmt.Sprintf("running macro %s · %s...", name, host.Alias), host.Alias)
 		return m, m.runMacro(host, name)
 	}
 	return m, nil
@@ -664,8 +670,7 @@ func (m *Model) startAccess() {
 		return
 	}
 	if m.setLoginMode == nil {
-		m.err = fmt.Errorf("access changes are not configured")
-		m.status = "access unavailable"
+		m.status.fail("access unavailable: access changes are not configured", host.Alias)
 		return
 	}
 	m.accessOptions = []sshconfig.AccessMode{
@@ -682,15 +687,14 @@ func (m *Model) startAccess() {
 	}
 	m.accessTarget = host
 	m.accessMode = true
-	m.err = nil
-	m.status = ""
+	m.status.clear()
 }
 
 func (m *Model) updateAccess(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.accessMode = false
-		m.status = "access cancelled"
+		m.status.clear()
 		return m, nil
 	case "j", "down", "ctrl+n":
 		m.accessCursor = (m.accessCursor + 1) % len(m.accessOptions)
@@ -701,22 +705,21 @@ func (m *Model) updateAccess(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		mode := m.accessOptions[m.accessCursor]
 		if err := m.setLoginMode(m.accessTarget, mode); err != nil {
-			m.err = err
-			m.status = "access update failed"
+			m.status.fail(fmt.Sprintf("access update failed · %s: %v", m.accessTarget.Alias, err), m.accessTarget.Alias)
 			return m, nil
 		}
 		host := m.accessTarget
 		host.AccessMode = mode
 		m.accessMode = false
-		m.err = nil
+		source := "manual"
 		if mode == sshconfig.AccessAuto {
-			m.status = fmt.Sprintf("%s: %s (automatic)", host.Alias, host.EffectiveAccess())
-		} else {
-			m.status = fmt.Sprintf("%s: %s (manual)", host.Alias, host.EffectiveAccess())
+			source = "automatic"
 		}
+		text := fmt.Sprintf("access %s · %s (%s)", host.EffectiveAccess(), host.Alias, source)
 		if !m.showAll && host.EffectiveAccess() == sshconfig.AccessService {
-			m.status += " · hidden; press a to show all"
+			text += " · hidden; press a to show all"
 		}
+		m.status.result(text, host.Alias)
 		return m, m.reload
 	}
 	return m, nil
@@ -763,8 +766,7 @@ func (m *Model) startEdit() {
 	m.pendingAdd = nil
 	m.pendingAddHash = ""
 	m.editing = true
-	m.err = nil
-	m.status = ""
+	m.status.clear()
 }
 
 func (m *Model) startCreate() {
@@ -793,7 +795,7 @@ func (m *Model) startCreateFrom(source sshconfig.Host, copying bool) {
 	proxyJump := ""
 	identityFile := ""
 	tags := ""
-	status := ""
+	noticeText := ""
 	identityNote := ""
 	if copying {
 		alias = m.nextCopyAlias(source.Alias)
@@ -809,9 +811,9 @@ func (m *Model) startCreateFrom(source sshconfig.Host, copying bool) {
 			identityNote = "multiple identity files need manual review"
 		}
 		tags = strings.Join(source.Tags, ",")
-		status = "copying " + source.Alias + "; edit Name and HostName"
+		noticeText = "copying · " + source.Alias + ": edit Name and HostName"
 		if identityNote != "" {
-			status += " · " + identityNote
+			noticeText += " · " + identityNote
 		}
 	}
 	fields := []textField{
@@ -845,8 +847,10 @@ func (m *Model) startCreateFrom(source sshconfig.Host, copying bool) {
 	m.pendingAdd = nil
 	m.pendingAddHash = ""
 	m.editing = true
-	m.err = nil
-	m.status = status
+	m.status.clear()
+	if noticeText != "" {
+		m.status.result(noticeText, "")
+	}
 }
 
 func (m *Model) nextCopyAlias(alias string) string {
@@ -882,7 +886,7 @@ func (m *Model) updateEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectOnFocus = false
 		m.pendingAdd = nil
 		m.pendingAddHash = ""
-		m.status = "edit cancelled"
+		m.status.clear()
 		return m, nil
 	case "tab":
 		m.focusEditField(1)
@@ -924,15 +928,13 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 	port, err := strconv.Atoi(strings.TrimSpace(m.editFields[editFieldPort].Value()))
 	if err != nil || port < 1 || port > 65535 {
 		m.focusEditFieldIndex(editFieldPort)
-		m.err = fmt.Errorf("invalid port: enter a number from 1 to 65535")
-		m.status = "invalid port"
+		m.status.fail("invalid port: enter a number from 1 to 65535", "")
 		return m, nil
 	}
 	alias := strings.TrimSpace(m.editFields[editFieldAlias].Value())
 	if alias == "" {
 		m.focusEditFieldIndex(editFieldAlias)
-		m.err = fmt.Errorf("name is required")
-		m.status = "invalid host name"
+		m.status.fail("invalid host name: name is required", "")
 		return m, nil
 	}
 	hostName := strings.TrimSpace(m.editFields[editFieldHostName].Value())
@@ -943,16 +945,14 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 	password := m.editFields[editFieldPassword].Value()
 	if password != m.editFields[editFieldPasswordConfirm].Value() {
 		m.focusEditFieldIndex(editFieldPasswordConfirm)
-		m.err = fmt.Errorf("passwords do not match")
-		m.status = "password confirmation does not match"
+		m.status.fail("passwords do not match", "")
 		return m, nil
 	}
 
 	if m.creating {
 		if hostName == "" {
 			m.focusEditFieldIndex(editFieldHostName)
-			m.err = fmt.Errorf("HostName is required")
-			m.status = "invalid hostname"
+			m.status.fail("invalid hostname: HostName is required", "")
 			return m, nil
 		}
 		imp := sshconfig.HostImport{
@@ -966,8 +966,7 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 		if m.previewAdd != nil {
 			preview, err := m.previewAdd(imp)
 			if err != nil {
-				m.err = err
-				m.status = "diff preview failed"
+				m.status.fail(fmt.Sprintf("diff preview failed: %v", err), "")
 				return m, nil
 			}
 			if strings.TrimSpace(preview.Diff) != "" {
@@ -980,8 +979,7 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 				m.diffOffset = 0
 				m.editing = false
 				m.diffMode = true
-				m.err = nil
-				m.status = "review new host"
+				m.status.clear()
 				return m, nil
 			}
 		}
@@ -1010,8 +1008,7 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 	if m.previewEdit != nil {
 		preview, err := m.previewEdit(m.editTarget, edit)
 		if err != nil {
-			m.err = err
-			m.status = "diff preview failed"
+			m.status.fail(fmt.Sprintf("diff preview failed: %v", err), m.editTarget.Alias)
 			return m, nil
 		}
 		if strings.TrimSpace(preview.Diff) != "" {
@@ -1025,8 +1022,7 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 			m.diffOffset = 0
 			m.editing = false
 			m.diffMode = true
-			m.err = nil
-			m.status = "review config changes"
+			m.status.clear()
 			return m, nil
 		}
 	}
@@ -1036,25 +1032,21 @@ func (m *Model) saveEdit() (tea.Model, tea.Cmd) {
 func (m *Model) commitEdit(host sshconfig.Host, edit sshconfig.Edit, tags []string, password string) (tea.Model, tea.Cmd) {
 	if password != "" {
 		if m.setHostPassword == nil {
-			m.err = fmt.Errorf("password storage is not configured")
-			m.status = "password not saved"
+			m.status.fail("password not saved: password storage is not configured", host.Alias)
 			return m, nil
 		}
 		if err := m.setHostPassword(host, password); err != nil {
-			m.err = err
-			m.status = "password not saved"
+			m.status.fail(fmt.Sprintf("password not saved · %s: %v", host.Alias, err), host.Alias)
 			return m, nil
 		}
 		m.clearEditPassword()
 	}
 	if m.editHost == nil {
-		m.err = fmt.Errorf("edit is not configured")
-		m.status = "edit failed"
+		m.status.fail("edit failed: edit is not configured", host.Alias)
 		return m, nil
 	}
 	if err := m.editHost(host, edit); err != nil {
-		m.err = err
-		m.status = "edit failed"
+		m.status.fail(fmt.Sprintf("edit failed · %s: %v", host.Alias, err), host.Alias)
 		return m, nil
 	}
 
@@ -1079,13 +1071,11 @@ func (m *Model) commitEdit(host sshconfig.Host, edit sshconfig.Edit, tags []stri
 
 func (m *Model) commitCreate(imp sshconfig.HostImport, tags []string, password, expectedHash string) (tea.Model, tea.Cmd) {
 	if m.addHost == nil {
-		m.err = fmt.Errorf("create is not configured")
-		m.status = "create failed"
+		m.status.fail("create failed: create is not configured", "")
 		return m, nil
 	}
 	if err := m.addHost(imp, expectedHash); err != nil {
-		m.err = err
-		m.status = "create failed"
+		m.status.fail(fmt.Sprintf("create failed · %s: %v", imp.Alias, err), imp.Alias)
 		return m, nil
 	}
 	host := sshconfig.Host{Alias: imp.Alias, HostName: imp.HostName, User: imp.User, Port: imp.Port, ProxyJump: imp.ProxyJump}
@@ -1115,11 +1105,10 @@ func (m *Model) finishEdit(err error) (tea.Model, tea.Cmd) {
 	m.copySource = ""
 	m.selectOnFocus = false
 	m.diffMode = false
-	m.err = err
 	if err != nil {
-		m.status = "host updated with errors"
+		m.status.fail(fmt.Sprintf("host updated with errors: %v", err), "")
 	} else {
-		m.status = "host updated"
+		m.status.result("host updated", "")
 	}
 	return m, m.reload
 }
@@ -1135,13 +1124,12 @@ func (m *Model) finishCreate(err error) (tea.Model, tea.Cmd) {
 	m.copySource = ""
 	m.selectOnFocus = false
 	m.diffMode = false
-	m.err = err
 	if err != nil {
-		m.status = "host created with errors"
+		m.status.fail(fmt.Sprintf("host created with errors: %v", err), "")
 	} else if wasCopy {
-		m.status = "host copied"
+		m.status.result("host copied", "")
 	} else {
-		m.status = "host created"
+		m.status.result("host created", "")
 	}
 	return m, m.reload
 }
@@ -1164,12 +1152,7 @@ func (m *Model) updateDiff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "n", "esc", "q":
 		m.diffMode = false
 		m.editing = true
-		m.err = nil
-		if m.creating {
-			m.status = "new host still open"
-		} else {
-			m.status = "edit still open"
-		}
+		m.status.clear()
 		return m, nil
 	case "j", "down", "ctrl+n":
 		m.diffOffset++
@@ -1189,7 +1172,7 @@ func (m *Model) updateDiff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) diffPageSize() int {
-	size := m.height - 10
+	size := screenBodyRows(m.height, false)
 	if size < 1 {
 		return 1
 	}
@@ -1233,30 +1216,26 @@ func (m *Model) startNotes() {
 	m.notesInput = field
 	m.notesTarget = host
 	m.notesMode = true
-	m.err = nil
-	m.status = ""
+	m.status.clear()
 }
 
 func (m *Model) updateNotes(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.notesMode = false
-		m.status = "notes cancelled"
+		m.status.clear()
 		return m, nil
 	case "ctrl+s":
 		if m.saveNotes == nil {
-			m.err = fmt.Errorf("notes are not configured")
-			m.status = "notes failed"
+			m.status.fail("notes failed: notes are not configured", m.notesTarget.Alias)
 			return m, nil
 		}
 		if err := m.saveNotes(m.notesTarget, m.notesInput.Value()); err != nil {
-			m.err = err
-			m.status = "notes failed"
+			m.status.fail(fmt.Sprintf("notes failed · %s: %v", m.notesTarget.Alias, err), m.notesTarget.Alias)
 			return m, nil
 		}
 		m.notesMode = false
-		m.err = nil
-		m.status = "notes saved"
+		m.status.result("notes saved", m.notesTarget.Alias)
 		return m, m.reload
 	}
 	cmd := m.notesInput.Update(msg)
@@ -1272,23 +1251,29 @@ func maxInt(a, b int) int {
 
 func (m *Model) toggleSelectedFavorite() {
 	host, ok := m.selected()
-	if !ok || m.toggleFavorite == nil {
+	if !ok {
+		return
+	}
+	if m.toggleFavorite == nil {
+		m.status.fail("favorite update failed: favorites are not configured", host.Alias)
 		return
 	}
 	next := !host.Favorite
 	if err := m.toggleFavorite(host, next); err != nil {
-		m.err = err
-		m.status = "favorite update failed"
+		m.status.fail(fmt.Sprintf("favorite update failed · %s: %v", host.Alias, err), host.Alias)
 		return
 	}
-	m.err = nil
 	for i := range m.allHosts {
 		if m.allHosts[i].Alias == host.Alias {
 			m.allHosts[i].Favorite = next
 		}
 	}
 	m.applyFilter()
-	m.status = fmt.Sprintf("%s favorite=%v", host.Alias, next)
+	if next {
+		m.status.result(fmt.Sprintf("favorite on · %s", host.Alias), host.Alias)
+	} else {
+		m.status.result(fmt.Sprintf("favorite off · %s", host.Alias), host.Alias)
+	}
 }
 
 func (m *Model) selected() (sshconfig.Host, bool) {
@@ -1296,6 +1281,14 @@ func (m *Model) selected() (sshconfig.Host, bool) {
 		return sshconfig.Host{}, false
 	}
 	return m.filtered[m.cursor], true
+}
+
+func (m *Model) selectedAlias() string {
+	host, ok := m.selected()
+	if !ok {
+		return ""
+	}
+	return host.Alias
 }
 
 func (m *Model) applyFilter() {
@@ -1353,7 +1346,7 @@ func (m *Model) clampCursor() {
 
 func (m *Model) applyFilterAndExit() {
 	m.filterFocused = false
-	m.status = ""
+	m.status.clear()
 }
 
 func (m *Model) removeLastFilterRune() {
@@ -1379,6 +1372,9 @@ func (m *Model) selectedSummary() string {
 	parts := []string{host.Alias, host.Address()}
 	if host.User != "" {
 		parts = append(parts, "user "+host.User)
+	}
+	if m.record || host.Record {
+		parts = append(parts, "recording on")
 	}
 	if m.showAll {
 		parts = append(parts, "access "+hostAccessDescription(host))

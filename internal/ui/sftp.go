@@ -51,8 +51,7 @@ type SFTPModel struct {
 	remote    []coreconnector.FileEntry
 
 	searching bool
-	status    string
-	err       error
+	status    statusState
 }
 
 type sftpPane int
@@ -89,7 +88,7 @@ func NewSFTP(opts SFTPOptions) *SFTPModel {
 		remotePath = "."
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &SFTPModel{
+	m := &SFTPModel{
 		host:       opts.Host,
 		localPath:  filepath.Clean(localPath),
 		remotePath: path.Clean(remotePath),
@@ -98,8 +97,9 @@ func NewSFTP(opts SFTPOptions) *SFTPModel {
 		cancel:     cancel,
 		width:      100,
 		height:     30,
-		status:     "loading local and remote directories...",
 	}
+	m.status.progress("loading local and remote directories...", "")
+	return m
 }
 
 // Init implements tea.Model.
@@ -118,6 +118,11 @@ func (m *SFTPModel) Close() error {
 
 // Update implements tea.Model.
 func (m *SFTPModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	return model, m.status.arm(cmd)
+}
+
+func (m *SFTPModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -127,26 +132,25 @@ func (m *SFTPModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		m.busy = false
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = "file browser failed"
+			m.status.fail(fmt.Sprintf("file browser failed: %v", msg.err), "")
 			return m, nil
 		}
 		m.localAll = msg.local
 		m.remoteAll = msg.remote
 		m.applySearches()
-		m.err = nil
-		m.status = ""
+		m.status.clearProgress()
 		return m, nil
 	case sftpTransferDoneMsg:
 		m.busy = false
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = msg.action + " failed"
+			m.status.fail(fmt.Sprintf("%s failed: %v", msg.action, msg.err), "")
 			return m, nil
 		}
-		m.err = nil
-		m.status = msg.action + " completed"
+		m.status.result(msg.action+" completed", "")
 		return m, m.load()
+	case statusExpiredMsg:
+		m.status.expire(msg.id)
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -174,33 +178,39 @@ func (m *SFTPModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cancel()
 		return m, tea.Quit
 	case "tab":
+		m.status.clearResult()
 		m.active = (m.active + 1) % 2
 		return m, nil
 	case "j", "down", "ctrl+n":
+		m.status.clearResult()
 		m.move(1)
 		return m, nil
 	case "k", "up", "ctrl+p":
+		m.status.clearResult()
 		m.move(-1)
 		return m, nil
 	case "g":
+		m.status.clearResult()
 		m.cursor[m.active] = 0
 		return m, nil
 	case "G":
+		m.status.clearResult()
 		entries := m.entries(m.active)
 		if len(entries) > 0 {
 			m.cursor[m.active] = len(entries) - 1
 		}
 		return m, nil
 	case "ctrl+d", "pgdown":
+		m.status.clearResult()
 		m.move(m.entryPageSize())
 		return m, nil
 	case "ctrl+u", "pgup":
+		m.status.clearResult()
 		m.move(-m.entryPageSize())
 		return m, nil
 	case "/":
 		m.searching = true
-		m.err = nil
-		m.status = ""
+		m.status.clear()
 		return m, nil
 	case "enter", "right":
 		return m.openSelected()
@@ -209,7 +219,7 @@ func (m *SFTPModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		if !m.busy {
 			m.busy = true
-			m.status = "refreshing..."
+			m.status.progress("refreshing...", "")
 			return m, m.load()
 		}
 	case "u":
@@ -239,24 +249,26 @@ func (m *SFTPModel) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "backspace":
 		m.removeLastQueryRune(m.active)
-		m.status = ""
+		m.status.clear()
 		return m, nil
 	case "ctrl+u":
 		m.queries[m.active] = ""
 		m.applySearch(m.active)
-		m.status = ""
+		m.status.clear()
 		return m, nil
 	case "j", "down", "ctrl+n":
+		m.status.clearResult()
 		m.move(1)
 		return m, nil
 	case "k", "up", "ctrl+p":
+		m.status.clearResult()
 		m.move(-1)
 		return m, nil
 	}
 	if len(msg.Runes) > 0 {
 		m.queries[m.active] += string(msg.Runes)
 		m.applySearch(m.active)
-		m.status = ""
+		m.status.clear()
 	}
 	return m, nil
 }
@@ -400,7 +412,7 @@ func (m *SFTPModel) openSelected() (tea.Model, tea.Cmd) {
 	}
 	m.cursor[m.active] = 0
 	m.busy = true
-	m.status = "opening " + entry.Name + "..."
+	m.status.progress("opening "+entry.Name+"...", "")
 	return m, m.load()
 }
 
@@ -424,7 +436,7 @@ func (m *SFTPModel) parentDirectory() (tea.Model, tea.Cmd) {
 	m.clearSearch(m.active)
 	m.cursor[m.active] = 0
 	m.busy = true
-	m.status = "loading parent directory..."
+	m.status.progress("loading parent directory...", "")
 	return m, m.load()
 }
 
@@ -459,11 +471,11 @@ func (m *SFTPModel) startUpload() (tea.Model, tea.Cmd) {
 	}
 	entry, ok := m.selected(int(sftpLocal))
 	if !ok || entry.Directory {
-		m.status = "select a local file to upload"
+		m.status.result("select a local file to upload", "")
 		return m, nil
 	}
 	m.busy = true
-	m.status = "uploading " + entry.Name + "..."
+	m.status.progress("uploading "+entry.Name+"...", "")
 	localPath := entry.Path
 	remotePath := path.Join(m.remotePath, entry.Name)
 	transfer := m.transfer
@@ -478,11 +490,11 @@ func (m *SFTPModel) startDownload() (tea.Model, tea.Cmd) {
 	}
 	entry, ok := m.selected(int(sftpRemote))
 	if !ok || entry.Directory {
-		m.status = "select a remote file to download"
+		m.status.result("select a remote file to download", "")
 		return m, nil
 	}
 	m.busy = true
-	m.status = "downloading " + entry.Name + "..."
+	m.status.progress("downloading "+entry.Name+"...", "")
 	remotePath := entry.Path
 	localPath := filepath.Join(m.localPath, entry.Name)
 	transfer := m.transfer
@@ -495,24 +507,17 @@ func (m *SFTPModel) startDownload() (tea.Model, tea.Cmd) {
 func (m *SFTPModel) View() string {
 	width := m.viewWidth()
 	height := m.viewHeight()
-	header := styleTitle.Render(" whop SFTP ") + styleDim.Render(" "+m.host.Alias)
-	if m.busy {
-		header += "  " + styleAccent.Render("busy")
-	}
-	header = ansi.Truncate(header, width, "~")
-
-	footer := m.viewFooter(width)
-	status := m.viewStatus(width)
-	bodyRows := m.contentRows(height)
-	body := m.viewBody(width, bodyRows)
-	lines := []string{header, ""}
-	lines = append(lines, body...)
-	lines = append(lines, "")
-	if footer != "" {
-		lines = append(lines, strings.Split(footer, "\n")...)
-	}
-	lines = append(lines, status...)
-	return strings.Join(lines, "\n")
+	header := viewSectionHeader("SFTP / "+m.host.Alias, "LOCAL <-> REMOTE", width)
+	bodyRows := screenBodyRows(height, false)
+	return renderScreen(
+		width,
+		height,
+		header,
+		"",
+		m.viewBody(width, bodyRows),
+		m.viewFooter(width),
+		m.viewStatus(width),
+	)
 }
 
 func (m *SFTPModel) viewWidth() int {
@@ -540,7 +545,7 @@ func (m *SFTPModel) viewBody(width, rows int) []string {
 		if i < len(remote) {
 			right = remote[i]
 		}
-		body = append(body, padTo(left, leftWidth)+" | "+right)
+		body = append(body, padTo(left, leftWidth)+" "+styleRule.Render("│")+" "+padTo(right, rightWidth))
 	}
 	return body
 }
@@ -561,12 +566,12 @@ func (m *SFTPModel) viewFooter(width int) string {
 	default:
 		hints = []footerHint{
 			{key: "tab", action: "switch"},
+			{key: "enter", action: "open"},
+			{key: "u/d", action: "upload/download"},
+			{key: "/", action: "search"},
+			{key: "backspace", action: "parent"},
 			{key: "j/k", action: "move"},
 			{key: "ctrl+d/u", action: "page"},
-			{key: "/", action: "search"},
-			{key: "enter", action: "open"},
-			{key: "backspace", action: "parent"},
-			{key: "u/d", action: "upload/download"},
 			{key: "?", action: "help"},
 			{key: "q", action: "quit"},
 		}
@@ -574,49 +579,28 @@ func (m *SFTPModel) viewFooter(width int) string {
 	return renderFooterHints(width, hints)
 }
 
-func (m *SFTPModel) viewStatus(width int) []string {
-	var lines []string
-	if m.status != "" {
-		lines = append(lines, styleDim.Render(ansi.Truncate(" "+m.status, width, "~")))
-	}
-	if m.err != nil {
-		lines = append(lines, styleError.Render(ansi.Truncate(" error: "+m.err.Error(), width, "~")))
-	}
-	return lines
-}
-
-func (m *SFTPModel) contentRows(height int) int {
-	footer := m.viewFooter(m.viewWidth())
-	status := m.viewStatus(m.viewWidth())
-	chrome := 3 + textLineCount(footer) + len(status)
-	return max(1, height-chrome)
+func (m *SFTPModel) viewStatus(width int) string {
+	return m.status.render(width, m.host.Alias)
 }
 
 func (m *SFTPModel) entryPageSize() int {
-	rows := m.contentRows(m.viewHeight()) - 1
+	rows := screenBodyRows(m.viewHeight(), false) - 2 // pane title + column header
 	if rows < 1 {
 		return 1
 	}
 	return rows
 }
 
-func textLineCount(value string) int {
-	if value == "" {
-		return 0
-	}
-	return strings.Count(value, "\n") + 1
-}
-
 func (m *SFTPModel) paneLines(pane sftpPane, width, bodyRows int) []string {
 	title := "LOCAL"
-	current := m.localPath
+	current := displayConfigPath(m.localPath)
 	if pane == sftpRemote {
 		title = "REMOTE"
 		current = m.remotePath
 	}
-	label := title + " / " + displayConfigPath(current)
-	if pane == sftpRemote {
-		label = title + " " + current
+	label := " " + title + "  " + current
+	if pane == sftpPane(m.active) {
+		label = " [" + title + "]  " + current
 	}
 	if query := m.queries[pane]; query != "" || (m.searching && pane == sftpPane(m.active)) {
 		label += "  /" + query
@@ -624,14 +608,18 @@ func (m *SFTPModel) paneLines(pane sftpPane, width, bodyRows int) []string {
 			label += "█"
 		}
 	}
-	header := ansi.Truncate(" "+label, width, "~")
+	header := ansi.Truncate(label, width, "~")
 	if pane == sftpPane(m.active) {
-		header = styleSelected.Render(padTo(header, width))
+		header = styleFocus.Render(padTo(header, width))
 	} else {
-		header = styleAccent.Render(header)
+		header = styleDim.Render(padTo(header, width))
 	}
-	lines := []string{header}
-	entryRows := max(0, bodyRows-1)
+
+	nameWidth, showModified := sftpNameWidth(width)
+	columnHeader := sftpLine("", "NAME", "SIZE", "MODIFIED", width, nameWidth, showModified)
+	lines := []string{header, styleDim.Render(columnHeader)}
+
+	entryRows := max(0, bodyRows-2)
 	entries := m.entries(int(pane))
 	start := 0
 	if entryRows > 0 && m.cursor[pane] >= entryRows {
@@ -648,7 +636,15 @@ func (m *SFTPModel) paneLines(pane sftpPane, width, bodyRows int) []string {
 		if entry.Directory {
 			size = "-"
 		}
-		line := "  " + fit(name, max(1, width-10)) + " " + fit(size, 7)
+		modified := "-"
+		if !entry.Modified.IsZero() {
+			modified = entry.Modified.Format("01-02 15:04")
+		}
+		prefix := "  "
+		if i == m.cursor[pane] {
+			prefix = "> "
+		}
+		line := sftpLine(prefix, name, size, modified, width, nameWidth, showModified)
 		if i == m.cursor[pane] && pane == sftpPane(m.active) {
 			line = styleSelected.Render(padTo(line, width))
 		}
@@ -664,10 +660,25 @@ func (m *SFTPModel) paneLines(pane sftpPane, width, bodyRows int) []string {
 	return lines
 }
 
+func sftpNameWidth(width int) (nameWidth int, showModified bool) {
+	// prefix 2 + gap 2 + size 7; modified adds gap 2 + 12.
+	showModified = width >= 40
+	if showModified {
+		return max(8, width-25), true
+	}
+	return max(1, width-11), false
+}
+
+func sftpLine(prefix, name, size, modified string, width, nameWidth int, showModified bool) string {
+	line := prefix + fit(name, nameWidth) + "  " + fitRight(size, 7)
+	if showModified {
+		line += "  " + fit(modified, 12)
+	}
+	return ansi.Truncate(line, width, "~")
+}
+
 func (m *SFTPModel) viewHelp(width, rows int) []string {
 	lines := []string{
-		styleAccent.Render(" KEYBOARD"),
-		"",
 		styleAccent.Render(" NAVIGATION"),
 		"  tab           switch local / remote pane",
 		"  j/k, up/down  move in active pane",

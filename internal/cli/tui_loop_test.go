@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -43,8 +44,14 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if !td.relaunched {
 		t.Fatal("TUI was not relaunched")
 	}
-	if got := os.Getenv(tuiNoticeEnv); got != "session ended" {
+	if got := os.Getenv(tuiNoticeEnv); got != "session ended · prod-db" {
 		t.Fatalf("notice = %q", got)
+	}
+	if got := os.Getenv(tuiNoticeLevelEnv); got != "result" {
+		t.Fatalf("notice level = %q", got)
+	}
+	if got := os.Getenv(tuiNoticeScopeEnv); got != "prod-db" {
+		t.Fatalf("notice scope = %q", got)
 	}
 }
 
@@ -79,7 +86,7 @@ func TestTUIMacroRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if calls != 1 || !td.relaunched {
 		t.Fatalf("calls=%d relaunched=%v", calls, td.relaunched)
 	}
-	if got := os.Getenv(tuiNoticeEnv); !strings.Contains(got, "macro collect completed on prod-db") {
+	if got := os.Getenv(tuiNoticeEnv); got != "macro collect completed · prod-db" {
 		t.Fatalf("notice = %q", got)
 	}
 	if got := os.Getenv(tuiMacroPauseEnv); got != "1" {
@@ -93,13 +100,15 @@ func TestTUIMacroRelaunchesInsteadOfTeaExec(t *testing.T) {
 func TestTUIMacroRelaunchWaitsForEnter(t *testing.T) {
 	td := newTestDeps()
 	td.deps.Stdin = strings.NewReader("\n")
-	t.Setenv(tuiNoticeEnv, "macro collect completed on prod-db")
+	t.Setenv(tuiNoticeEnv, "macro collect completed · prod-db")
+	t.Setenv(tuiNoticeLevelEnv, "result")
+	t.Setenv(tuiNoticeScopeEnv, "prod-db")
 	t.Setenv(tuiMacroPauseEnv, "1")
 
 	td.deps.RunTUI = func(opts ui.Options) error {
 		td.tuiRan = true
-		if opts.InitialStatus != "macro collect completed on prod-db" {
-			t.Fatalf("initial status = %q", opts.InitialStatus)
+		if opts.InitialNotice.Text != "macro collect completed · prod-db" || opts.InitialNotice.Scope != "prod-db" {
+			t.Fatalf("initial notice = %+v", opts.InitialNotice)
 		}
 		if !strings.Contains(td.stderr.String(), "Press Enter to return to the host list...") {
 			t.Fatalf("missing pause prompt: %q", td.stderr.String())
@@ -116,7 +125,44 @@ func TestTUIMacroRelaunchWaitsForEnter(t *testing.T) {
 	if !td.tuiRan {
 		t.Fatal("TUI was not started after the pause")
 	}
-	if !strings.Contains(td.stderr.String(), "macro collect completed on prod-db") {
+	if !strings.Contains(td.stderr.String(), "macro collect completed · prod-db") {
 		t.Fatalf("missing macro result: %q", td.stderr.String())
+	}
+}
+
+func TestTUIConnectFailureRelaunchesWithErrorNotice(t *testing.T) {
+	td := newTestDeps()
+	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error {
+		return fmt.Errorf("permission denied")
+	}
+	t.Setenv(tuiNoticeEnv, "")
+	t.Setenv(tuiNoticeLevelEnv, "")
+	t.Setenv(tuiNoticeScopeEnv, "")
+	td.deps.RunTUI = func(opts ui.Options) error {
+		hosts, err := opts.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := opts.Connect(hosts[0], false)
+		if cmd == nil {
+			t.Fatal("connect command is nil")
+		}
+		_ = cmd()
+		return nil
+	}
+	if code := Run(nil, td.deps); code != 0 {
+		t.Fatalf("exit = %d: %s", code, td.stderr.String())
+	}
+	if !td.relaunched {
+		t.Fatal("TUI was not relaunched")
+	}
+	if got := os.Getenv(tuiNoticeEnv); got != "connection failed · prod-db: permission denied" {
+		t.Fatalf("notice = %q", got)
+	}
+	if got := os.Getenv(tuiNoticeLevelEnv); got != "error" {
+		t.Fatalf("notice level = %q", got)
+	}
+	if got := os.Getenv(tuiNoticeScopeEnv); got != "prod-db" {
+		t.Fatalf("notice scope = %q", got)
 	}
 }

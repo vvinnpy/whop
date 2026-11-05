@@ -16,30 +16,53 @@
 ## Main screen
 
 ```text
- whop  12 hosts  ~/.ssh/config                              login hosts
-
- / search: prod█
-
- FLAGS  NAME             HOST                 USER      PORT   TAGS
- > * REC prod-db         10.10.0.11           deploy    22     prod db
-   *     prod-cache      10.10.0.12           deploy    22     prod
-     REC staging-db      10.20.0.11           deploy    22     staging
-
- ┌─ prod-db ───────────────────────────────────────────────┐
- │ host      10.10.0.11:22                                 │
- │ user      deploy                                        │
- │ identity  ~/.ssh/id_ed25519                             │
- │ proxy     none                                          │
- └─────────────────────────────────────────────────────────┘
-
- enter: connect   /: search   j/k: move   ?: help   q: quit
+ whop / hosts                    ~/.ssh/config                 login hosts
+ / search: prod_                                                   1/4 hosts
+------------------------------------------------------------------------------
+ FLAGS  NAME             HOST                 TAGS        | PROD-DB
+ > *    prod-db          10.10.0.11           prod,db     | host      10.10.0.11:22
+   REC  prod-cache       10.10.0.12           prod        | user      deploy
+     -  staging-db       10.20.0.11           staging     | identity  ~/.ssh/id_ed25519
+                                                           | tags      prod, db
+                                                           | favorite  yes
+------------------------------------------------------------------------------
+  REC on - prod-db (next session)
+  enter connect   / search   j/k move   a all entries   ? help   q quit
 ```
 
-The detail panel is hidden below 96 columns. The list remains the primary surface.
+The detail panel is hidden below 100 columns. The list remains the primary surface.
+At narrower widths the selected host is summarized in one reserved row between
+the list and the bottom rule.
 
 Row-level status is shown in the `FLAGS` column: `*` means favorite and `REC`
 means the host will record the session. Hosts without flags show `-`. Narrow
 terminals use the compact `FLG` header and `R` recording marker.
+
+## Layout system
+
+Every persistent screen uses the same vertical grid:
+
+```text
+header
+[search/filter]
+rule
+body
+rule
+status (reserved, one row)
+footer (one row, never wraps)
+```
+
+- The body is sized from the terminal height after reserving header, rules,
+  status, and footer.
+- The status row sits immediately above the footer. Dynamic notices never move
+  the footer or change the body height.
+- A full-width horizontal rule separates chrome from the body and the body from
+  the status row.
+- Split views use one vertical rule with one column of padding on each side.
+- The footer is a single line. When space is constrained, lower-priority hints
+  are dropped; `? help` and `q quit` remain visible.
+- Forms, diff, help, and SFTP use the same grid, so transitions between screens
+  do not change the location of the status or shortcut row.
 
 ## Keys
 
@@ -96,11 +119,36 @@ terminals use the compact `FLG` header and `R` recording marker.
   current directory.
 - The footer follows the current mode, and `?` opens the full shortcut reference.
 
+## Status line contract
+
+The status row is for events, not persistent host state.
+
+- Persistent host state stays on the row (`FLAGS`) and in the selected-host detail
+  or narrow summary. `*` means favorite; `REC` means recording is enabled for
+  the next session. `REC` does not mean a recording is currently active.
+- Completed actions are short results such as `REC on · prod-db (next session)`.
+  They expire after about three seconds and are cleared immediately by
+  navigation, search input, or a mode change.
+- Operations in progress use `...`, such as `connecting · prod-db...` or
+  `uploading file...`, and remain until a result or error replaces them.
+- Errors use a red `! ...` line and remain visible across navigation until
+  `esc` dismisses them or a later status-producing action replaces them. A
+  scoped error names its target host.
+- A host-scoped result is not shown after the selected host changes. The
+  relaunched TUI's initial notice is the exception: it remains visible on
+  startup because the cursor may start on a different row, and its text names
+  the target host.
+- The status row is reserved even when empty so notices do not shift the list
+  or move the footer. It is rendered directly above the footer.
+
 ## Visual rules
 
-- One accent color; selection uses accent background.
+- One accent color; selection uses accent background and a row marker.
 - Dim secondary metadata; never rely on color alone.
-- ASCII fallback for icons and separators.
+- ASCII fallback for icons and separators. Unicode rules use `─` / `│`;
+  fallback is `-` / `|`.
+- Tables use two-column gaps and right-align ports and sizes.
+- Avoid full panel borders except for destructive confirmation dialogs.
 - No mouse dependency.
 - Help is one keystroke away and never blocks the list permanently.
 - Errors appear in a single status line, not a modal unless destructive.

@@ -15,8 +15,10 @@ import (
 var (
 	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"})
 	styleAccent   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"})
+	styleFocus    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#5FD7FF"})
 	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6C6C6C", Dark: "#808080"})
-	styleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#D7EEF7", Dark: "#1F3A46"}).Foreground(lipgloss.AdaptiveColor{Light: "#003B4A", Dark: "#E6FBFF"}).Bold(true)
+	styleRule     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#C9D2D6", Dark: "#3A4A50"})
+	styleSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#D7EEF7", Dark: "#1F3A46"}).Foreground(lipgloss.AdaptiveColor{Light: "#003B4A", Dark: "#E6FBFF"})
 	styleError    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#AF0000", Dark: "#FF5F5F"})
 	styleAdded    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#006B2E", Dark: "#5FD787"})
 	styleRemoved  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9B0000", Dark: "#FF6B6B"})
@@ -36,69 +38,93 @@ func (m *Model) View() string {
 	}
 
 	if m.diffMode {
-		return joinView(m.viewDiff(width, height), m.viewFooter(width), m.viewStatus(width))
+		bodyRows := screenBodyRows(height, false)
+		title, meta := m.diffScreenTitle()
+		return renderScreen(
+			width,
+			height,
+			viewSectionHeader(title, meta, width),
+			"",
+			m.viewDiff(width, bodyRows),
+			m.viewFooter(width),
+			m.viewStatus(width),
+		)
 	}
 	if m.editing {
-		return joinView(m.viewEdit(width), m.viewFooter(width), m.viewStatus(width))
+		title, meta := m.editScreenTitle()
+		return m.renderSecondary(width, height, title, meta, m.viewEdit(width))
 	}
 	if m.notesMode {
-		return joinView(m.viewNotes(width), m.viewFooter(width), m.viewStatus(width))
+		return m.renderSecondary(width, height, "NOTES "+m.notesTarget.Alias, "UNSAVED", m.viewNotes(width))
 	}
 	if m.forwardMode {
-		return joinView(m.viewForward(width), m.viewFooter(width), m.viewStatus(width))
+		return m.renderSecondary(width, height, "FORWARD / "+m.forwardTarget.Alias, "FORM", m.viewForward(width))
 	}
 	if m.macroMode {
-		return joinView(m.viewMacros(width), m.viewFooter(width), m.viewStatus(width))
+		return m.renderSecondary(width, height, "MACROS / "+m.macroTarget.Alias, "", m.viewMacros(width))
 	}
 	if m.accessMode {
-		return joinView(m.viewAccess(width), m.viewFooter(width), m.viewStatus(width))
+		return m.renderSecondary(width, height, "ACCESS / "+m.accessTarget.Alias, "", m.viewAccess(width))
 	}
 	if m.help {
-		return joinView(m.viewHelp(width), m.viewFooter(width))
+		return m.renderSecondary(width, height, "KEYBOARD", "", m.viewHelp(width, screenBodyRows(height, false)))
 	}
 
-	header := m.viewHeader(width)
-	filter := m.viewFilter(width)
-	list := m.viewList(width, height)
-	if width < 96 {
-		if summary := m.selectedSummary(); summary != "" {
-			list = append(list, styleDim.Render(ansi.Truncate("  "+summary, width, "~")))
-		}
-	}
-	detail := m.viewDetail(width)
-	body := strings.Join(list, "\n")
-	if detail != "" {
-		body = joinColumns(list, strings.Split(detail, "\n"), width)
-	}
-
-	return joinView(header, filter, body, m.viewFooter(width), m.viewStatus(width))
+	bodyRows := screenBodyRows(height, true)
+	return renderScreen(
+		width,
+		height,
+		m.viewHeader(width),
+		m.viewFilter(width),
+		m.viewMainBody(width, bodyRows),
+		m.viewFooter(width),
+		m.viewStatus(width),
+	)
 }
 
-func joinView(sections ...string) string {
-	visible := make([]string, 0, len(sections))
-	for _, section := range sections {
-		if section != "" {
-			visible = append(visible, section)
+func (m *Model) renderSecondary(width, height int, title, meta string, body []string) string {
+	return renderScreen(
+		width,
+		height,
+		viewSectionHeader(title, meta, width),
+		"",
+		body,
+		m.viewFooter(width),
+		m.viewStatus(width),
+	)
+}
+
+func (m *Model) editScreenTitle() (string, string) {
+	title := "EDIT " + m.editTarget.Alias
+	meta := "UNSAVED"
+	if m.creating {
+		title = "NEW HOST"
+		if m.copying {
+			title = "COPY / " + m.copySource
 		}
 	}
-	return strings.Join(visible, "\n")
+	return title, meta
+}
+
+func (m *Model) diffScreenTitle() (string, string) {
+	added, removed := 0, 0
+	for _, line := range m.diffLines {
+		switch {
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			added++
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			removed++
+		}
+	}
+	return "CONFIG DIFF / " + m.diffTarget.Alias, fmt.Sprintf("+%d -%d", added, removed)
 }
 
 func (m *Model) viewHeader(width int) string {
-	count := fmt.Sprintf("%d/%d hosts", len(m.filtered), len(m.allHosts))
-	left := styleTitle.Render(" whop ") + styleDim.Render(" "+count)
+	left := styleTitle.Render(" whop") + styleDim.Render(" / hosts")
 	if path := displayConfigPath(m.configPath); path != "" && width >= 72 {
-		left += styleDim.Render("  " + path)
+		left += styleDim.Render("   " + path)
 	}
-	mode := styleAccent.Render(m.modeLabel())
-	if ansi.StringWidth(left)+ansi.StringWidth(mode)+1 > width {
-		left = ansi.Truncate(left, max(1, width-ansi.StringWidth(mode)-1), "~")
-	}
-	gap := width - ansi.StringWidth(left) - ansi.StringWidth(mode)
-	if gap < 1 {
-		gap = 1
-	}
-	return left + strings.Repeat(" ", gap) + mode
+	return leftRightLine(left, styleAccent.Render(m.modeLabel()), width)
 }
 
 func (m *Model) viewFilter(width int) string {
@@ -111,34 +137,80 @@ func (m *Model) viewFilter(width int) string {
 	} else {
 		value = styleDim.Render("(press / to search)")
 	}
-	return ansi.Truncate(label+value, width, "~")
+	count := fmt.Sprintf("%d/%d hosts", len(m.filtered), len(m.allHosts))
+	return leftRightLine(label+value, styleDim.Render(count), width)
+}
+
+func (m *Model) viewMainBody(width, rows int) []string {
+	listWidth, detailWidth, split := splitPaneWidths(width)
+	if split {
+		left := m.viewListForPane(listWidth, rows, true)
+		right := m.viewDetail(detailWidth)
+		return joinPaneLines(left, right, listWidth, detailWidth, rows)
+	}
+
+	summary := m.selectedSummary()
+	listRows := rows
+	if summary != "" && rows > 1 {
+		listRows = rows - 1
+	}
+	list := m.viewListForPane(width, listRows, false)
+	list = fitLines(list, listRows, width)
+	if summary != "" && rows > 1 {
+		list = append(list, styleDim.Render(ansi.Truncate("  "+summary, width, "~")))
+	}
+	return list
+}
+
+func splitPaneWidths(width int) (listWidth, detailWidth int, ok bool) {
+	if width < 100 {
+		return width, 0, false
+	}
+	detailWidth = width * 32 / 100
+	if detailWidth < 32 {
+		detailWidth = 32
+	}
+	if detailWidth > 44 {
+		detailWidth = 44
+	}
+	listWidth = width - detailWidth - 3
+	if listWidth < 58 {
+		return width, 0, false
+	}
+	return listWidth, detailWidth, true
+}
+
+func joinPaneLines(left, right []string, listWidth, detailWidth, rows int) []string {
+	result := make([]string, 0, rows)
+	for index := 0; index < rows; index++ {
+		line := ""
+		if index < len(left) {
+			line = left[index]
+		}
+		detail := ""
+		if index < len(right) {
+			detail = right[index]
+		}
+		result = append(result, padTo(line, listWidth)+" "+styleRule.Render("│")+" "+padTo(detail, detailWidth))
+	}
+	return result
 }
 
 func (m *Model) viewList(width, height int) []string {
-	listWidth := width
-	detailVisible := width >= 96
-	if detailVisible {
-		listWidth = max(55, width*3/5)
-		if listWidth > width-30 {
-			listWidth = width - 30
-		}
-	}
+	return m.viewListForPane(width, height, false)
+}
 
-	compactFlags := listWidth < 52
+func (m *Model) viewListForPane(width, height int, split bool) []string {
+	compactFlags := width < 60
 	flagsWidth := m.flagsColumnWidth(compactFlags)
-	cols := listColumnsFor(listWidth, m.showAll)
-	if detailVisible {
-		// User and port remain visible in the detail pane, so the list
-		// prefers tags in split view.
-		available := max(22, listWidth-26)
-		hostWidth := max(14, available*3/5)
-		if m.showAll {
-			cols = columns{name: 20, host: hostWidth, access: 8, showAccess: true}
-		} else {
-			cols = columns{name: 20, host: hostWidth, tags: max(8, available-hostWidth), showTags: true}
-		}
+	var cols columns
+	if split {
+		cols = splitListColumns(width, m.showAll)
+	} else {
+		cols = listColumnsFor(width, m.showAll)
 	}
 	cols = withFlagsColumn(cols, flagsWidth)
+
 	flagsHeader := ""
 	if cols.showFlags {
 		flagsHeader = "FLAGS"
@@ -150,22 +222,27 @@ func (m *Model) viewList(width, height int) []string {
 	if cols.showAccess {
 		accessHeader = "ACCESS"
 	}
-	lines := []string{styleDim.Render(padTo(rowLine(cols, "  ", flagsHeader, "NAME", "HOST", "USER", "PORT", accessHeader, "TAGS"), listWidth))}
 
-	available := height - 7
-	if available < 3 {
-		available = 3
+	showHeader := height >= 3
+	dataRows := height
+	lines := make([]string, 0, height)
+	if showHeader {
+		lines = append(lines, styleDim.Render(padTo(rowLine(cols, "  ", flagsHeader, "NAME", "HOST", "USER", "PORT", accessHeader, "TAGS"), width)))
+		dataRows--
+	}
+	if dataRows < 0 {
+		dataRows = 0
 	}
 	if len(m.filtered) == 0 {
-		lines = append(lines, m.emptyListLines(listWidth)...)
+		lines = append(lines, m.emptyListLines(width)...)
 		return lines
 	}
 
 	start := 0
-	if m.cursor >= available {
-		start = m.cursor - available + 1
+	if m.cursor >= dataRows {
+		start = m.cursor - dataRows + 1
 	}
-	end := start + available
+	end := start + dataRows
 	if end > len(m.filtered) {
 		end = len(m.filtered)
 	}
@@ -186,9 +263,9 @@ func (m *Model) viewList(width, height int) []string {
 			tags = "-"
 		}
 		access := string(host.EffectiveAccess())
-		line := padTo(rowLine(cols, prefix, flags, host.Alias, host.HostName, host.User, fmt.Sprintf("%d", host.Port), access, tags), listWidth)
+		line := padTo(rowLine(cols, prefix, flags, host.Alias, host.HostName, host.User, fmt.Sprintf("%d", host.Port), access, tags), width)
 		if selected {
-			line = styleSelected.Render(padTo(line, listWidth))
+			line = styleSelected.Render(padTo(line, width))
 		}
 		lines = append(lines, line)
 	}
@@ -311,55 +388,49 @@ func (m *Model) emptyListLines(width int) []string {
 	}
 }
 
-func (m *Model) viewDetail(width int) string {
+func (m *Model) viewDetail(width int) []string {
 	host, ok := m.selected()
 	if !ok {
-		return ""
+		return nil
+	}
+	if width < 1 {
+		return nil
 	}
 
-	if width < 96 {
-		return ""
-	}
-
-	detailWidth := width - max(55, width*3/5) - 2
-	if detailWidth < 24 {
-		detailWidth = 24
-	}
 	identity := strings.Join(host.IdentityFiles, ", ")
 	proxy := host.ProxyJump
-	tags := strings.Join(host.Tags, ",")
+	tags := strings.Join(host.Tags, ", ")
 
 	lines := []string{
-		styleAccent.Render(fit(strings.ToUpper(host.Alias), detailWidth)),
-		detailLine("host", host.Address(), detailWidth),
-		detailLine("user", valueOrDash(host.User), detailWidth),
-	}
-	for _, badge := range m.hostBadges(host) {
-		lines = append(lines, detailLine(badge.DetailLabel, badge.DetailValue, detailWidth))
+		styleAccent.Render(fit(strings.ToUpper(host.Alias), width)),
+		detailLine("host", host.Address(), width),
+		detailLine("user", valueOrDash(host.User), width),
 	}
 	if identity != "" {
-		lines = append(lines, detailLine("identity", identity, detailWidth))
+		lines = append(lines, detailLine("identity", identity, width))
 	}
 	if proxy != "" {
-		lines = append(lines, detailLine("proxy", proxy, detailWidth))
+		lines = append(lines, detailLine("proxy", proxy, width))
+	}
+	for _, badge := range m.hostBadges(host) {
+		lines = append(lines, detailLine(badge.DetailLabel, badge.DetailValue, width))
 	}
 	if tags != "" {
-		lines = append(lines, detailLine("tags", tags, detailWidth))
+		lines = append(lines, detailLine("tags", tags, width))
 	}
 	if host.Notes != "" {
-		lines = append(lines, detailLine("notes", host.Notes, detailWidth))
+		lines = append(lines, detailLine("notes", host.Notes, width))
 	}
 	if m.showAll {
-		lines = append(lines, detailLine("access", hostAccessDescription(host), detailWidth))
+		lines = append(lines, detailLine("access", hostAccessDescription(host), width))
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-func (m *Model) viewDiff(width, height int) string {
-	lines := []string{styleAccent.Render(" CONFIG DIFF / " + m.diffTarget.Alias), ""}
-	available := max(1, height-7)
+func (m *Model) viewDiff(width, rows int) []string {
 	m.clampDiffOffset()
-	end := min(len(m.diffLines), m.diffOffset+available)
+	lines := make([]string, 0, rows)
+	end := min(len(m.diffLines), m.diffOffset+rows)
 	for _, line := range m.diffLines[m.diffOffset:end] {
 		switch {
 		case strings.HasPrefix(line, "+"):
@@ -376,54 +447,46 @@ func (m *Model) viewDiff(width, height int) string {
 	if len(m.diffLines) == 0 {
 		lines = append(lines, styleDim.Render("  no changes"))
 	}
-	lines = append(lines, "")
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-func (m *Model) viewEdit(width int) string {
-	title := " EDIT " + m.editTarget.Alias
-	if m.creating {
-		title = " NEW HOST"
-		if m.copying {
-			title = " COPY / " + m.copySource
-		}
-	}
-	lines := []string{styleAccent.Render(title)}
+func (m *Model) viewEdit(width int) []string {
+	lines := make([]string, 0, len(m.editFields)+4)
 	if m.copying {
-		lines = append(lines, ansi.Truncate(styleDim.Render(" Prefilled fields select on focus; type to replace. Password and history are not copied."), width, "~"))
+		lines = append(lines, ansi.Truncate(styleDim.Render("  Prefilled fields select on focus; type to replace. Password and history are not copied."), width, "~"), "")
 	}
-	lines = append(lines, "")
 	for index, field := range m.editFields {
 		prefix := "  "
 		if index == m.editFocus {
 			prefix = "> "
 		}
-		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
+		lines = append(lines, ansi.Truncate(prefix+field.AlignedView(max(1, width-2)), width, "~"))
+		if index == 6 {
+			lines = append(lines, "")
+		}
 	}
-	passwordHint := " Password optional; if set, saved in the encrypted vault"
+	passwordHint := "  Password optional; if set, saved in the encrypted vault"
 	if !m.creating {
-		passwordHint = " Leave password blank to keep the current password"
+		passwordHint = "  Leave password blank to keep the current password"
 	}
 	lines = append(lines,
 		"",
-		styleDim.Render(" IdentityFile blank inherits Host * / OpenSSH defaults"),
-		styleDim.Render(passwordHint),
+		styleDim.Render("  IdentityFile blank inherits Host * / OpenSSH defaults"),
+		styleDim.Render(ansi.Truncate(passwordHint, width, "~")),
 	)
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-func (m *Model) viewForward(width int) string {
+func (m *Model) viewForward(width int) []string {
 	kind := m.forwardKind()
-	lines := []string{
-		styleAccent.Render(" FORWARD / " + m.forwardTarget.Alias),
-		"",
-	}
+	lines := make([]string, 0, 12)
+
 	typePrefix := "  "
 	if m.forwardFocus == 0 {
 		typePrefix = "> "
 	}
 	lines = append(lines, ansi.Truncate(typePrefix+m.viewForwardType(), width, "~"))
-	lines = append(lines, styleDim.Render("   left/right or 1/2/3 to choose type"), "")
+	lines = append(lines, styleDim.Render("    left/right or 1/2/3 to choose type"), "")
 
 	bindPrefix := "  "
 	if m.forwardFocus == 1 {
@@ -431,7 +494,7 @@ func (m *Model) viewForward(width int) string {
 	}
 	lines = append(lines, ansi.Truncate(bindPrefix+m.forwardFields[0].View(), width, "~"))
 	if kind == coreconnector.ForwardDynamic {
-		lines = append(lines, styleDim.Render("   Destination: none (chosen by each SOCKS5 request)"))
+		lines = append(lines, styleDim.Render("    Destination: none (chosen by each SOCKS5 request)"))
 	} else {
 		destinationPrefix := "  "
 		if m.forwardFocus == 2 {
@@ -444,21 +507,21 @@ func (m *Model) viewForward(width int) string {
 	switch kind {
 	case coreconnector.ForwardRemote:
 		lines = append(lines,
-			styleDim.Render("   Listener: remote SSH host"),
-			styleDim.Render("   Destination: dialed from this machine"),
+			styleDim.Render("    Listener: remote SSH host"),
+			styleDim.Render("    Destination: dialed from this machine"),
 		)
 	case coreconnector.ForwardDynamic:
 		lines = append(lines,
-			styleDim.Render("   Listener: this machine (SOCKS5 proxy)"),
-			styleDim.Render("   Destination: supplied by each SOCKS5 client"),
+			styleDim.Render("    Listener: this machine (SOCKS5 proxy)"),
+			styleDim.Render("    Destination: supplied by each SOCKS5 client"),
 		)
 	default:
 		lines = append(lines,
-			styleDim.Render("   Listener: this machine"),
-			styleDim.Render("   Destination: dialed from the remote SSH host"),
+			styleDim.Render("    Listener: this machine"),
+			styleDim.Render("    Destination: dialed from the remote SSH host"),
 		)
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 func (m *Model) viewForwardType() string {
@@ -480,39 +543,31 @@ func (m *Model) viewForwardType() string {
 	return m.forwardType.label + ":   " + strings.Join(parts, " ")
 }
 
-func (m *Model) viewNotes(width int) string {
-	lines := []string{
-		styleAccent.Render(" NOTES " + m.notesTarget.Alias),
-		"",
-		ansi.Truncate("  "+m.notesInput.View(), width, "~"),
-	}
-	return strings.Join(lines, "\n")
+func (m *Model) viewNotes(width int) []string {
+	return []string{ansi.Truncate("  "+m.notesInput.View(), width, "~")}
 }
 
-func (m *Model) viewMacros(width int) string {
-	lines := []string{styleAccent.Render(" MACROS / " + m.macroTarget.Alias), ""}
+func (m *Model) viewMacros(width int) []string {
+	lines := make([]string, 0, len(m.macroNames)+1)
 	if len(m.macroNames) == 0 {
-		lines = append(lines, styleDim.Render("  no macros"))
-	} else {
-		for index, name := range m.macroNames {
-			prefix := "  "
-			if index == m.macroCursor {
-				prefix = "> "
-			}
-			line := ansi.Truncate(prefix+name, width, "~")
-			if index == m.macroCursor {
-				line = styleSelected.Render(padTo(line, max(1, width-1)))
-			}
-			lines = append(lines, line)
-		}
+		return []string{styleDim.Render("  no macros")}
 	}
-	return strings.Join(lines, "\n")
+	for index, name := range m.macroNames {
+		prefix := "  "
+		if index == m.macroCursor {
+			prefix = "> "
+		}
+		line := ansi.Truncate(prefix+name, width, "~")
+		if index == m.macroCursor {
+			line = styleSelected.Render(padTo(line, max(1, width-1)))
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
-func (m *Model) viewAccess(width int) string {
+func (m *Model) viewAccess(width int) []string {
 	lines := []string{
-		styleAccent.Render(" ACCESS / " + m.accessTarget.Alias),
-		"",
 		styleDim.Render(ansi.Truncate("  current: "+hostAccessDescription(m.accessTarget), width, "~")),
 		"",
 	}
@@ -527,7 +582,7 @@ func (m *Model) viewAccess(width int) string {
 		}
 		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 func accessChoiceLabel(mode sshconfig.AccessMode) string {
@@ -541,11 +596,8 @@ func accessChoiceLabel(mode sshconfig.AccessMode) string {
 	}
 }
 
-func (m *Model) viewHelp(width int) string {
-	lines := []string{
-		styleAccent.Render(" KEYBOARD"),
-		"",
-		styleAccent.Render(" NAVIGATION"),
+func (m *Model) viewHelp(width, rows int) []string {
+	navigation := []string{
 		"  enter         connect to selected host",
 		"  /             search hosts",
 		"  tab / esc     apply search",
@@ -554,7 +606,8 @@ func (m *Model) viewHelp(width int) string {
 		"  g / G         first / last",
 		"  ctrl+d/u      page down / up",
 		"  q             quit",
-		styleAccent.Render(" HOSTS"),
+	}
+	hosts := []string{
 		"  a             login hosts / all entries",
 		"  L             set login access",
 		"  f             toggle favorite (*)",
@@ -564,17 +617,54 @@ func (m *Model) viewHelp(width int) string {
 		"  n             edit notes",
 		"  p             port forwarding",
 		"  s             SFTP file browser",
-		styleAccent.Render(" SESSIONS"),
+	}
+	sessions := []string{
 		"  m             run macro",
 		"  R             recording on/off (REC)",
 		"  r             reload config",
-		"",
-		"  ?             close help",
 	}
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "~")
+
+	if width >= 96 {
+		left := append([]string{styleAccent.Render(" NAVIGATION")}, navigation...)
+		left = append(left, "", styleAccent.Render(" SESSIONS"))
+		left = append(left, sessions...)
+		right := append([]string{styleAccent.Render(" HOSTS")}, hosts...)
+		lines := joinHelpColumns(left, right, width)
+		if len(lines) > rows {
+			lines = lines[:rows]
+		}
+		return lines
 	}
-	return strings.Join(lines, "\n")
+
+	lines := []string{styleAccent.Render(" NAVIGATION")}
+	lines = append(lines, navigation...)
+	lines = append(lines, "", styleAccent.Render(" HOSTS"))
+	lines = append(lines, hosts...)
+	lines = append(lines, "", styleAccent.Render(" SESSIONS"))
+	lines = append(lines, sessions...)
+	if len(lines) > rows {
+		lines = lines[:rows]
+	}
+	return lines
+}
+
+func joinHelpColumns(left, right []string, width int) []string {
+	gap := 3
+	leftWidth := (width - gap) * 55 / 100
+	rightWidth := width - leftWidth - gap
+	rows := max(len(left), len(right))
+	lines := make([]string, 0, rows)
+	for index := 0; index < rows; index++ {
+		l, r := "", ""
+		if index < len(left) {
+			l = ansi.Truncate(left[index], leftWidth, "~")
+		}
+		if index < len(right) {
+			r = ansi.Truncate(right[index], rightWidth, "~")
+		}
+		lines = append(lines, padTo(l, leftWidth)+strings.Repeat(" ", gap)+r)
+	}
+	return lines
 }
 
 func (m *Model) viewFooter(width int) string {
@@ -680,46 +770,74 @@ func renderFooterHints(width int, hints []footerHint) string {
 	if width < 1 {
 		width = 1
 	}
-	const separator = "  "
-	lines := make([]string, 0, 2)
-	line := ""
-	lineWidth := 0
+	if len(hints) == 0 {
+		return ""
+	}
+
+	leftHints := make([]footerHint, 0, len(hints))
+	rightHints := make([]footerHint, 0, 2)
 	for _, hint := range hints {
-		item := styleKey.Render(hint.key) + styleDim.Render(": "+hint.action)
-		itemWidth := ansi.StringWidth(item)
-		switch {
-		case line == "":
-			line = " " + item
-			lineWidth = 1 + itemWidth
-		case lineWidth+len(separator)+itemWidth <= width:
-			line += separator + item
-			lineWidth += len(separator) + itemWidth
+		switch hint.key {
+		case "?", "q", "?/esc":
+			rightHints = append(rightHints, hint)
 		default:
-			lines = append(lines, line)
-			line = " " + item
-			lineWidth = 1 + itemWidth
+			leftHints = append(leftHints, hint)
 		}
 	}
-	if line != "" {
-		lines = append(lines, line)
+
+	renderItem := func(hint footerHint) string {
+		return styleKey.Render(hint.key) + " " + styleDim.Render(hint.action)
 	}
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "~")
+	renderHints := func(items []footerHint) string {
+		parts := make([]string, 0, len(items))
+		for _, hint := range items {
+			parts = append(parts, renderItem(hint))
+		}
+		return strings.Join(parts, "   ")
 	}
-	return strings.Join(lines, "\n")
+
+	right := renderHints(rightHints)
+	rightWidth := ansi.StringWidth(right)
+	leftBudget := width
+	if rightWidth > 0 {
+		leftBudget = width - rightWidth - 2
+	}
+	if leftBudget < 1 {
+		return fit(right, width)
+	}
+
+	selected := make([]footerHint, 0, len(leftHints))
+	used := 0
+	for _, hint := range leftHints {
+		itemWidth := ansi.StringWidth(renderItem(hint))
+		separator := 0
+		if len(selected) > 0 {
+			separator = 3
+		}
+		if used+separator+itemWidth > leftBudget {
+			continue
+		}
+		selected = append(selected, hint)
+		used += separator + itemWidth
+	}
+
+	left := renderHints(selected)
+	line := " " + left
+	if right != "" {
+		gap := width - ansi.StringWidth(line) - rightWidth
+		if gap < 1 {
+			gap = 1
+		}
+		line += strings.Repeat(" ", gap) + right
+	}
+	return fit(line, width)
 }
 
 func (m *Model) viewStatus(width int) string {
-	if m.err != nil {
-		return styleError.Render(ansi.Truncate(" error: "+m.err.Error(), width, "~"))
-	}
-	if m.status == "" {
-		if m.loaded {
-			return ""
-		}
+	if !m.loaded && m.status.current.Text == "" {
 		return styleDim.Render(" loading...")
 	}
-	return styleDim.Render(ansi.Truncate(" "+m.status, width, "~"))
+	return m.status.render(width, m.selectedAlias())
 }
 
 type columns struct {
@@ -736,21 +854,41 @@ func listColumnsFor(width int, showAll bool) columns {
 	switch {
 	case width >= 100:
 		if showAll {
-			return columns{name: 24, host: 30, user: 12, port: 5, access: 8, tags: max(6, width-86), showUser: true, showPort: true, showAccess: true, showTags: true}
+			return columns{
+				name: 24, host: 30, user: 12, port: 5, access: 8,
+				tags:     max(6, width-91),
+				showUser: true, showPort: true, showAccess: true, showTags: true,
+			}
 		}
-		return columns{name: 24, host: 30, user: 12, port: 5, tags: max(8, width-24-30-12-5-6), showUser: true, showPort: true, showTags: true}
+		return columns{
+			name: 24, host: 30, user: 12, port: 5,
+			tags:     max(8, width-81),
+			showUser: true, showPort: true, showTags: true,
+		}
 	case width >= 72:
+		hostWidth := max(14, width-53)
 		if showAll {
-			return columns{name: 20, host: max(14, width-49), user: 10, port: 5, access: 8, showUser: true, showPort: true, showAccess: true}
+			return columns{name: 20, host: hostWidth, user: 10, port: 5, access: 8, showUser: true, showPort: true, showAccess: true}
 		}
-		return columns{name: 20, host: max(16, width-49), user: 10, port: 5, tags: 8, showUser: true, showPort: true, showTags: true}
+		return columns{name: 20, host: hostWidth, user: 10, port: 5, tags: 8, showUser: true, showPort: true, showTags: true}
 	case width >= 52:
-		hostWidth := max(12, (width-18-8)/2)
-		userWidth := max(8, width-18-hostWidth-6)
+		userWidth := min(10, max(8, width/6))
+		hostWidth := max(12, width-24-userWidth)
 		return columns{name: 18, host: hostWidth, user: userWidth, showUser: true}
 	default:
-		return columns{name: 16, host: max(8, width-18)}
+		return columns{name: 16, host: max(8, width-20)}
 	}
+}
+
+func splitListColumns(width int, showAll bool) columns {
+	nameWidth := 18
+	// Two leading cursor columns, two inter-column gaps, and the tags or
+	// access cell are part of the pane width budget.
+	hostWidth := max(12, width-32)
+	if showAll {
+		return columns{name: nameWidth, host: hostWidth, access: 8, showAccess: true}
+	}
+	return columns{name: nameWidth, host: hostWidth, tags: 8, showTags: true}
 }
 
 func withFlagsColumn(columns columns, flagsWidth int) columns {
@@ -759,12 +897,7 @@ func withFlagsColumn(columns columns, flagsWidth int) columns {
 	}
 	columns.showFlags = true
 	columns.flags = flagsWidth
-	extra := flagsWidth + 1
-	if columns.showTags {
-		reduce := min(extra, max(0, columns.tags-6))
-		columns.tags -= reduce
-		extra -= reduce
-	}
+	extra := flagsWidth + 2
 	if extra > 0 {
 		reduce := min(extra, max(0, columns.host-8))
 		columns.host -= reduce
@@ -773,29 +906,34 @@ func withFlagsColumn(columns columns, flagsWidth int) columns {
 	if extra > 0 {
 		reduce := min(extra, max(0, columns.name-10))
 		columns.name -= reduce
+		extra -= reduce
+	}
+	if extra > 0 && columns.showTags {
+		reduce := min(extra, max(0, columns.tags-6))
+		columns.tags -= reduce
 	}
 	return columns
 }
 
 func rowLine(columns columns, prefix, flags, name, host, user, port, access, tags string) string {
-	line := prefix
+	cells := make([]string, 0, 7)
 	if columns.showFlags {
-		line += fit(flags, columns.flags) + " "
+		cells = append(cells, fit(flags, columns.flags))
 	}
-	line += fit(name, columns.name) + " " + fit(host, columns.host)
+	cells = append(cells, fit(name, columns.name), fit(host, columns.host))
 	if columns.showUser {
-		line += " " + fit(user, columns.user)
+		cells = append(cells, fit(user, columns.user))
 	}
 	if columns.showPort {
-		line += " " + fit(port, columns.port)
+		cells = append(cells, fitRight(port, columns.port))
 	}
 	if columns.showAccess {
-		line += " " + fit(access, columns.access)
+		cells = append(cells, fit(access, columns.access))
 	}
 	if columns.showTags {
-		line += " " + fit(tags, columns.tags)
+		cells = append(cells, fit(tags, columns.tags))
 	}
-	return line
+	return prefix + strings.Join(cells, "  ")
 }
 
 func detailLine(label, value string, width int) string {
@@ -809,26 +947,6 @@ func valueOrDash(value string) string {
 		return "-"
 	}
 	return value
-}
-
-func joinColumns(left, right []string, width int) string {
-	leftWidth := max(55, width*3/5)
-	if leftWidth > width-30 {
-		leftWidth = width - 30
-	}
-	rows := max(len(left), len(right))
-	lines := make([]string, 0, rows)
-	for i := 0; i < rows; i++ {
-		var l, r string
-		if i < len(left) {
-			l = left[i]
-		}
-		if i < len(right) {
-			r = right[i]
-		}
-		lines = append(lines, padTo(l, leftWidth)+"  "+r)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func fit(value string, width int) string {

@@ -165,7 +165,7 @@ func TestNarrowFooterKeepsHelpAndQuitVisible(t *testing.T) {
 	m.width = 40
 	m.height = 20
 	view := plainView(m)
-	if !strings.Contains(view, "?: help") || !strings.Contains(view, "q: quit") {
+	if !strings.Contains(view, "? help") || !strings.Contains(view, "q quit") {
 		t.Fatalf("narrow footer hid essential keys:\n%s", view)
 	}
 }
@@ -210,13 +210,13 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 
 	sendKey(m, runeKey("n"))
-	if got := strings.Count(plainView(m), "ctrl+s: save"); got != 1 {
+	if got := strings.Count(plainView(m), "ctrl+s save"); got != 1 {
 		t.Fatalf("notes screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 
 	sendKey(m, runeKey("e"))
-	if got := strings.Count(plainView(m), "tab/enter: next"); got != 1 {
+	if got := strings.Count(plainView(m), "tab/enter next"); got != 1 {
 		t.Fatalf("edit screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -224,7 +224,7 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	m.diffMode = true
 	m.diffTarget = testHosts()[0]
 	m.diffLines = []string{"@@ -1 +1 @@", "-old", "+new"}
-	if got := strings.Count(plainView(m), "enter/y: apply"); got != 1 {
+	if got := strings.Count(plainView(m), "enter/y apply"); got != 1 {
 		t.Fatalf("diff screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 	m.diffMode = false
@@ -232,20 +232,20 @@ func TestSecondaryScreensShowActionHintOnce(t *testing.T) {
 	m.macroMode = true
 	m.macroTarget = testHosts()[0]
 	m.macroNames = []string{"health"}
-	if got := strings.Count(plainView(m), "enter: run"); got != 1 {
+	if got := strings.Count(plainView(m), "enter run"); got != 1 {
 		t.Fatalf("macro screen repeats action hint %d times:\n%s", got, plainView(m))
 	}
 }
 
 func TestHelpDoesNotShowStaleListStatus(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
-	m.status = "edit cancelled"
+	m.status.result("edit cancelled", "")
 	sendKey(m, runeKey("?"))
 	view := plainView(m)
 	if strings.Contains(view, "edit cancelled") {
 		t.Fatalf("help screen showed stale status:\n%s", view)
 	}
-	if !strings.Contains(view, "?/esc: close help") {
+	if !strings.Contains(view, "?/esc close help") {
 		t.Fatalf("help footer is not contextual:\n%s", view)
 	}
 }
@@ -363,7 +363,7 @@ func TestFooterStaysUsableAtSixtyColumns(t *testing.T) {
 	m.width = 60
 	m.height = 20
 	view := plainView(m)
-	for _, want := range []string{"enter: connect", "/: search", "?: help", "q: quit"} {
+	for _, want := range []string{"enter connect", "/ search", "? help", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("60-column footer missing %q:\n%s", want, view)
 		}
@@ -453,5 +453,57 @@ func TestFlaggedMainScreenGolden(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("flagged main screen changed\n--- want ---\n%s\n--- got ---\n%s", want, got)
+	}
+}
+
+func TestMainScreenUsesFixedHeightAndStatusRow(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.status.result("REC on · prod-db (next session)", "prod-db")
+
+	lines := strings.Split(plainView(m), "\n")
+	if len(lines) != 24 {
+		t.Fatalf("view has %d lines, want 24:\n%s", len(lines), plainView(m))
+	}
+	if !strings.Contains(lines[2], "─") || !strings.Contains(lines[len(lines)-3], "─") {
+		t.Fatalf("expected rules around the body:\n%s", plainView(m))
+	}
+	if !strings.Contains(lines[len(lines)-2], "REC on · prod-db") {
+		t.Fatalf("status row is not directly above the footer:\n%s", plainView(m))
+	}
+	if !strings.Contains(lines[len(lines)-1], "enter connect") {
+		t.Fatalf("footer is not the final row:\n%s", plainView(m))
+	}
+}
+
+func TestSecondaryScreensUseFixedHeight(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(*Model)
+	}{
+		{name: "edit", open: func(m *Model) { sendKey(m, runeKey("e")) }},
+		{name: "help", open: func(m *Model) { sendKey(m, runeKey("?")) }},
+		{name: "diff", open: func(m *Model) {
+			m.diffMode = true
+			m.diffTarget = testHosts()[0]
+			m.diffLines = []string{"+new"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := newTestModel(t, testHosts())
+			m.Update(tea.WindowSizeMsg{Width: 100, Height: 22})
+			tt.open(m)
+			lines := strings.Split(plainView(m), "\n")
+			if len(lines) != 22 {
+				t.Fatalf("view has %d lines, want 22:\n%s", len(lines), plainView(m))
+			}
+			if !strings.Contains(lines[1], "─") {
+				t.Fatalf("header is not separated by a rule:\n%s", plainView(m))
+			}
+			if !strings.Contains(lines[len(lines)-3], "─") {
+				t.Fatalf("body is not separated from status:\n%s", plainView(m))
+			}
+		})
 	}
 }

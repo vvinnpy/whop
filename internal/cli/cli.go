@@ -29,8 +29,10 @@ import (
 )
 
 const (
-	tuiNoticeEnv     = "WHOP_TUI_NOTICE"
-	tuiMacroPauseEnv = "WHOP_TUI_MACRO_PAUSE"
+	tuiNoticeEnv      = "WHOP_TUI_NOTICE"
+	tuiNoticeLevelEnv = "WHOP_TUI_NOTICE_LEVEL"
+	tuiNoticeScopeEnv = "WHOP_TUI_NOTICE_SCOPE"
+	tuiMacroPauseEnv  = "WHOP_TUI_MACRO_PAUSE"
 )
 
 // Version is the development version string.
@@ -298,12 +300,21 @@ func runTUI(args []string, deps Deps) int {
 		return 2
 	}
 
-	tuiNotice := os.Getenv(tuiNoticeEnv)
+	tuiNotice := ui.Notice{
+		Text:  os.Getenv(tuiNoticeEnv),
+		Level: ui.StatusResult,
+		Scope: os.Getenv(tuiNoticeScopeEnv),
+	}
+	if os.Getenv(tuiNoticeLevelEnv) == "error" {
+		tuiNotice.Level = ui.StatusError
+	}
 	_ = os.Unsetenv(tuiNoticeEnv)
+	_ = os.Unsetenv(tuiNoticeLevelEnv)
+	_ = os.Unsetenv(tuiNoticeScopeEnv)
 	pauseAfterMacro := envBool(tuiMacroPauseEnv)
 	_ = os.Unsetenv(tuiMacroPauseEnv)
 	if pauseAfterMacro {
-		waitForMacroResult(deps, tuiNotice)
+		waitForMacroResult(deps, tuiNotice.Text)
 	}
 
 	configPathValue := resolvePath(*configPath)
@@ -323,7 +334,7 @@ func runTUI(args []string, deps Deps) int {
 		options := ui.Options{
 			ConfigPath:    configPathValue,
 			InitialFilter: initialFilter,
-			InitialStatus: tuiNotice,
+			InitialNotice: tuiNotice,
 			ShowAll:       *showAll,
 			Record:        *record,
 			Load: func() ([]sshconfig.Host, error) {
@@ -407,15 +418,27 @@ func runTUI(args []string, deps Deps) int {
 			// Bubble Tea input loop avoids the first-key-lost race after tea.Exec.
 			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
 			if loadErr != nil {
-				tuiNotice = fmt.Sprintf("connection to %s failed: %v", request.host.Alias, loadErr)
+				tuiNotice = ui.Notice{
+					Text:  fmt.Sprintf("connection failed · %s: %v", request.host.Alias, loadErr),
+					Level: ui.StatusError,
+					Scope: request.host.Alias,
+				}
 				return relaunchTUI(deps, tuiNotice)
 			}
 			err := deps.Connect(request.host, hosts, deps.Stdin, deps.Stdout, deps.Stderr, request.record, deps.UseAgent)
 			if err != nil {
-				tuiNotice = fmt.Sprintf("connection to %s failed: %v", request.host.Alias, err)
+				tuiNotice = ui.Notice{
+					Text:  fmt.Sprintf("connection failed · %s: %v", request.host.Alias, err),
+					Level: ui.StatusError,
+					Scope: request.host.Alias,
+				}
 			} else {
 				_ = metaStore.RecordConnect(request.host.Alias, time.Now())
-				tuiNotice = "session ended"
+				tuiNotice = ui.Notice{
+					Text:  "session ended · " + request.host.Alias,
+					Level: ui.StatusResult,
+					Scope: request.host.Alias,
+				}
 			}
 			return relaunchTUI(deps, tuiNotice)
 
@@ -424,13 +447,25 @@ func runTUI(args []string, deps Deps) int {
 			pendingForward = nil
 			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
 			if loadErr != nil {
-				tuiNotice = fmt.Sprintf("port forwarding for %s failed: %v", request.host.Alias, loadErr)
+				tuiNotice = ui.Notice{
+					Text:  fmt.Sprintf("forwarding failed · %s: %v", request.host.Alias, loadErr),
+					Level: ui.StatusError,
+					Scope: request.host.Alias,
+				}
 				return relaunchTUI(deps, tuiNotice)
 			}
 			if err := runForwardInteractive(deps, request.host, hosts, request.spec); err != nil {
-				tuiNotice = fmt.Sprintf("port forwarding for %s failed: %v", request.host.Alias, err)
+				tuiNotice = ui.Notice{
+					Text:  fmt.Sprintf("forwarding failed · %s: %v", request.host.Alias, err),
+					Level: ui.StatusError,
+					Scope: request.host.Alias,
+				}
 			} else {
-				tuiNotice = "port forwarding ended"
+				tuiNotice = ui.Notice{
+					Text:  "forwarding ended · " + request.host.Alias,
+					Level: ui.StatusResult,
+					Scope: request.host.Alias,
+				}
 			}
 			return relaunchTUI(deps, tuiNotice)
 
@@ -439,20 +474,33 @@ func runTUI(args []string, deps Deps) int {
 			pendingSFTP = nil
 			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
 			if loadErr != nil {
-				tuiNotice = fmt.Sprintf("SFTP for %s failed: %v", request.host.Alias, loadErr)
+				tuiNotice = ui.Notice{
+					Text:  fmt.Sprintf("SFTP failed · %s: %v", request.host.Alias, loadErr),
+					Level: ui.StatusError,
+					Scope: request.host.Alias,
+				}
 				return relaunchTUI(deps, tuiNotice)
 			}
 			if err := deps.RunSFTP(request.host, hosts, deps.UseAgent); err != nil {
-				tuiNotice = fmt.Sprintf("SFTP for %s failed: %v", request.host.Alias, err)
+				tuiNotice = ui.Notice{
+					Text:  fmt.Sprintf("SFTP failed · %s: %v", request.host.Alias, err),
+					Level: ui.StatusError,
+					Scope: request.host.Alias,
+				}
 			} else {
-				tuiNotice = "SFTP browser closed"
+				tuiNotice = ui.Notice{
+					Text:  "SFTP closed · " + request.host.Alias,
+					Level: ui.StatusResult,
+					Scope: request.host.Alias,
+				}
 			}
 			return relaunchTUI(deps, tuiNotice)
 
 		case pendingMacro != nil:
 			request := *pendingMacro
 			pendingMacro = nil
-			tuiNotice = runTUIMacro(deps, metaStore, configPathValue, request.host, request.name)
+			text, level := runTUIMacro(deps, metaStore, configPathValue, request.host, request.name)
+			tuiNotice = ui.Notice{Text: text, Level: level, Scope: request.host.Alias}
 			// The next process shows the macro result before reopening the TUI.
 			// Waiting here would race with Bubble Tea's old stdin reader.
 			_ = os.Setenv(tuiMacroPauseEnv, "1")
@@ -464,9 +512,23 @@ func runTUI(args []string, deps Deps) int {
 	}
 }
 
-func relaunchTUI(deps Deps, notice string) int {
-	if notice != "" {
-		_ = os.Setenv(tuiNoticeEnv, notice)
+func relaunchTUI(deps Deps, notice ui.Notice) int {
+	if notice.Text != "" {
+		_ = os.Setenv(tuiNoticeEnv, notice.Text)
+		level := "result"
+		if notice.Level == ui.StatusError {
+			level = "error"
+		}
+		_ = os.Setenv(tuiNoticeLevelEnv, level)
+		if notice.Scope != "" {
+			_ = os.Setenv(tuiNoticeScopeEnv, notice.Scope)
+		} else {
+			_ = os.Unsetenv(tuiNoticeScopeEnv)
+		}
+	} else {
+		_ = os.Unsetenv(tuiNoticeEnv)
+		_ = os.Unsetenv(tuiNoticeLevelEnv)
+		_ = os.Unsetenv(tuiNoticeScopeEnv)
 	}
 	if err := deps.Relaunch(); err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: restart TUI: %v\n", err)
@@ -497,14 +559,14 @@ type macroRequest struct {
 	name string
 }
 
-func runTUIMacro(deps Deps, metaStore MetaStore, configPath string, host sshconfig.Host, name string) string {
+func runTUIMacro(deps Deps, metaStore MetaStore, configPath string, host sshconfig.Host, name string) (string, ui.StatusLevel) {
 	macro, err := loadStoredMacro(metaStore, name, deps.LookupEnv)
 	if err != nil {
-		return fmt.Sprintf("macro %s failed: %v", name, err)
+		return fmt.Sprintf("macro %s failed · %s: %v", name, host.Alias, err), ui.StatusError
 	}
 	hosts, err := loadHosts(deps, metaStore, configPath)
 	if err != nil {
-		return fmt.Sprintf("macro %s failed: %v", name, err)
+		return fmt.Sprintf("macro %s failed · %s: %v", name, host.Alias, err), ui.StatusError
 	}
 	collector := newAuditCollector(metaStore)
 	macroAuditStarted(collector, host.Alias, name)
@@ -518,9 +580,9 @@ func runTUIMacro(deps Deps, metaStore MetaStore, configPath string, host sshconf
 	}
 	_ = macroAuditFlush(collector, deps.Stderr)
 	if err != nil {
-		return fmt.Sprintf("macro %s failed on %s: %v", name, host.Alias, err)
+		return fmt.Sprintf("macro %s failed · %s: %v", name, host.Alias, err), ui.StatusError
 	}
-	return fmt.Sprintf("macro %s completed on %s", name, host.Alias)
+	return fmt.Sprintf("macro %s completed · %s", name, host.Alias), ui.StatusResult
 }
 
 func runList(args []string, deps Deps) int {

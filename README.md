@@ -327,8 +327,12 @@ to quit.
 | `q` | quit |
 
 The list `FLAGS` column keeps row-level status together: `*` marks favorites
-and `REC` marks hosts that record sessions. Narrow terminals use the compact
-`FLG` header and `R` recording marker.
+and `REC` marks hosts whose recording policy is on for the next session (not an
+active recording). Narrow terminals use the compact `FLG` header and `R`
+recording marker. The bottom line is only for events: results expire after a
+few seconds, progress stays until completion, and red `! ...` errors remain
+until the next action or `esc`. See [the status-line guide](docs/usage.md#状态栏与主机标记)
+for the full meaning and lifecycle.
 
 The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides
 service endpoints inferred from known Git/Auth hosts, wildcard blocks, and

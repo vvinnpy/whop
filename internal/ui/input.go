@@ -109,6 +109,16 @@ func (f *textField) Update(msg tea.KeyMsg) tea.Cmd {
 }
 
 func (f *textField) View() string {
+	return f.viewWithLabelWidth(0, f.width)
+}
+
+// AlignedView renders the field with a fixed label gutter so adjacent form
+// fields line up. width includes the label and value.
+func (f *textField) AlignedView(width int) string {
+	return f.viewWithLabelWidth(18, width)
+}
+
+func (f *textField) viewWithLabelWidth(labelWidth, width int) string {
 	value := string(f.value)
 	if f.secret {
 		if len(f.value) > 0 {
@@ -121,9 +131,14 @@ func (f *textField) View() string {
 		after := string(f.value[f.cursor:])
 		value = before + "█" + after
 	}
-	line := f.label + ": " + value
-	if f.width > 0 {
-		return ansi.Truncate(line, f.width, "~")
+
+	label := f.label + ":"
+	if labelWidth > 0 {
+		label = fit(label, labelWidth)
+	}
+	line := label + " " + value
+	if width > 0 {
+		return ansi.Truncate(line, width, "~")
 	}
 	return line
 }

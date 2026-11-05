@@ -169,13 +169,13 @@ func newSFTPTestModel(t *testing.T) (*SFTPModel, *fakeFileTransfer, string) {
 func updateSFTP(t *testing.T, model *SFTPModel, msg tea.Msg) tea.Cmd {
 	t.Helper()
 	_, cmd := model.Update(msg)
-	return cmd
+	return firstCommand(cmd)
 }
 
 func TestSFTPDualPaneLoadsBothSides(t *testing.T) {
 	model, _, _ := newSFTPTestModel(t)
 	view := ansiStrip(model.View())
-	for _, want := range []string{"whop SFTP", "LOCAL", "REMOTE", "upload.txt", "download.txt"} {
+	for _, want := range []string{"SFTP / prod-db", "LOCAL", "REMOTE", "upload.txt", "download.txt"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -555,8 +555,9 @@ func TestSFTPTransferUsesFilteredSelection(t *testing.T) {
 
 func TestSFTPFooterAndHelpShowShortcuts(t *testing.T) {
 	model, _, _ := newSFTPTestModel(t)
+	model.width = 120
 	view := ansiStrip(model.View())
-	for _, want := range []string{"tab: switch", "ctrl+d/u: page", "/: search", "backspace: parent", "u/d: upload/download", "?: help"} {
+	for _, want := range []string{"tab switch", "ctrl+d/u page", "/ search", "backspace parent", "? help"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("browse footer missing %q:\n%s", want, view)
 		}
@@ -564,7 +565,7 @@ func TestSFTPFooterAndHelpShowShortcuts(t *testing.T) {
 
 	updateSFTP(t, model, runeKey("/"))
 	view = ansiStrip(model.View())
-	for _, want := range []string{"type: search active pane", "tab/esc: apply", "ctrl+u: clear"} {
+	for _, want := range []string{"type search active pane", "tab/esc apply", "ctrl+u clear"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("search footer missing %q:\n%s", want, view)
 		}
@@ -594,6 +595,55 @@ func TestSFTPViewFitsNarrowTerminal(t *testing.T) {
 		if width := ansi.StringWidth(line); width > 40 {
 			t.Fatalf("line width %d exceeds terminal width:\n%s", width, view)
 		}
+	}
+	_ = model.Close()
+}
+
+func TestSFTPTransferResultSurvivesReload(t *testing.T) {
+	model, _, _ := newSFTPTestModel(t)
+	upload := updateSFTP(t, model, runeKey("u"))
+	done := upload()
+	reload := updateSFTP(t, model, done)
+	if got := model.status.text(); got != "upload upload.txt completed" {
+		t.Fatalf("transfer result = %q", got)
+	}
+	updateSFTP(t, model, reload())
+	if got := model.status.text(); got != "upload upload.txt completed" {
+		t.Fatalf("reload cleared transfer result: %q", got)
+	}
+	model.Update(statusExpiredMsg{id: model.status.current.id})
+	if got := model.status.text(); got != "" {
+		t.Fatalf("transfer result did not expire: %q", got)
+	}
+	_ = model.Close()
+}
+
+func TestSFTPProgressClearsAfterLoad(t *testing.T) {
+	model, _, _ := newSFTPTestModel(t)
+	reload := model.load()
+	model.Update(reload())
+	if got := model.status.text(); got != "" {
+		t.Fatalf("progress notice survived load: %q", got)
+	}
+	_ = model.Close()
+}
+
+func TestSFTPUsesFixedHeightAndPaneDivider(t *testing.T) {
+	model, _, _ := newSFTPTestModel(t)
+	model.width = 100
+	model.height = 20
+	lines := strings.Split(ansiStrip(model.View()), "\n")
+	if len(lines) != 20 {
+		t.Fatalf("view has %d lines, want 20:\n%s", len(lines), ansiStrip(model.View()))
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "│") {
+		t.Fatalf("SFTP panes are not separated by a vertical rule:\n%s", ansiStrip(model.View()))
+	}
+	if !strings.Contains(lines[17], "─") {
+		t.Fatalf("status is not separated from the panes:\n%s", ansiStrip(model.View()))
+	}
+	if !strings.Contains(lines[19], "tab switch") {
+		t.Fatalf("footer is not the final row:\n%s", ansiStrip(model.View()))
 	}
 	_ = model.Close()
 }
