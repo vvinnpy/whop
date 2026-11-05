@@ -90,11 +90,7 @@ func (m *Model) viewHeader(width int) string {
 	if path := displayConfigPath(m.configPath); path != "" && width >= 72 {
 		left += styleDim.Render("  " + path)
 	}
-	modeText := m.modeLabel()
-	if m.selectedRecording() {
-		modeText += " · recording"
-	}
-	mode := styleAccent.Render(modeText)
+	mode := styleAccent.Render(m.modeLabel())
 	if ansi.StringWidth(left)+ansi.StringWidth(mode)+1 > width {
 		left = ansi.Truncate(left, max(1, width-ansi.StringWidth(mode)-1), "~")
 	}
@@ -128,6 +124,8 @@ func (m *Model) viewList(width, height int) []string {
 		}
 	}
 
+	compactFlags := listWidth < 52
+	flagsWidth := m.flagsColumnWidth(compactFlags)
 	cols := listColumnsFor(listWidth, m.showAll)
 	if detailVisible {
 		// User and port remain visible in the detail pane, so the list
@@ -140,11 +138,19 @@ func (m *Model) viewList(width, height int) []string {
 			cols = columns{name: 20, host: hostWidth, tags: max(8, available-hostWidth), showTags: true}
 		}
 	}
+	cols = withFlagsColumn(cols, flagsWidth)
+	flagsHeader := ""
+	if cols.showFlags {
+		flagsHeader = "FLAGS"
+		if compactFlags {
+			flagsHeader = "FLG"
+		}
+	}
 	accessHeader := ""
 	if cols.showAccess {
 		accessHeader = "ACCESS"
 	}
-	lines := []string{styleDim.Render(padTo(rowLine(cols, "NAME", "HOST", "USER", "PORT", accessHeader, "TAGS"), listWidth))}
+	lines := []string{styleDim.Render(padTo(rowLine(cols, "  ", flagsHeader, "NAME", "HOST", "USER", "PORT", accessHeader, "TAGS"), listWidth))}
 
 	available := height - 7
 	if available < 3 {
@@ -171,22 +177,115 @@ func (m *Model) viewList(width, height int) []string {
 		if selected {
 			prefix = "> "
 		}
-		name := host.Alias
-		if host.Favorite {
-			name = "*" + name
+		flags := ""
+		if cols.showFlags {
+			flags = renderHostBadges(m.hostBadges(host), compactFlags, flagsWidth)
 		}
 		tags := strings.Join(host.Tags, ",")
 		if tags == "" {
 			tags = "-"
 		}
 		access := string(host.EffectiveAccess())
-		line := padTo(rowLine(cols, prefix+name, host.HostName, host.User, fmt.Sprintf("%d", host.Port), access, tags), listWidth)
+		line := padTo(rowLine(cols, prefix, flags, host.Alias, host.HostName, host.User, fmt.Sprintf("%d", host.Port), access, tags), listWidth)
 		if selected {
 			line = styleSelected.Render(padTo(line, listWidth))
 		}
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// hostBadge is a compact row-level status marker. Adding a new host status
+// only requires adding it to hostBadges; list and detail rendering stay shared.
+type hostBadge struct {
+	Label       string
+	Compact     string
+	DetailLabel string
+	DetailValue string
+}
+
+func (m *Model) hostBadges(host sshconfig.Host) []hostBadge {
+	badges := make([]hostBadge, 0, 2)
+	if host.Favorite {
+		badges = append(badges, hostBadge{
+			Label:       "*",
+			Compact:     "*",
+			DetailLabel: "favorite",
+			DetailValue: "yes",
+		})
+	}
+	if m.record || host.Record {
+		badges = append(badges, hostBadge{
+			Label:       "REC",
+			Compact:     "R",
+			DetailLabel: "recording",
+			DetailValue: "on",
+		})
+	}
+	return badges
+}
+
+func (m *Model) hasHostBadges() bool {
+	for _, host := range m.allHosts {
+		if len(m.hostBadges(host)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) flagsColumnWidth(compact bool) int {
+	if !m.hasHostBadges() {
+		return 0
+	}
+	header := "FLAGS"
+	limit := 8
+	if compact {
+		header = "FLG"
+		limit = 4
+	}
+	width := ansi.StringWidth(header)
+	for _, host := range m.allHosts {
+		width = max(width, ansi.StringWidth(renderHostBadges(m.hostBadges(host), compact, limit)))
+	}
+	return width
+}
+
+func renderHostBadges(badges []hostBadge, compact bool, limit int) string {
+	if len(badges) == 0 {
+		return "-"
+	}
+	labels := make([]string, 0, len(badges))
+	for _, badge := range badges {
+		label := badge.Label
+		if compact && badge.Compact != "" {
+			label = badge.Compact
+		}
+		labels = append(labels, label)
+	}
+	if ansi.StringWidth(strings.Join(labels, " ")) <= limit {
+		return strings.Join(labels, " ")
+	}
+
+	visible := make([]string, 0, len(labels))
+	used := 0
+	for _, label := range labels {
+		separator := 0
+		if len(visible) > 0 {
+			separator = 1
+		}
+		labelWidth := ansi.StringWidth(label)
+		if used+separator+labelWidth > limit {
+			overflow := fmt.Sprintf("+%d", len(labels)-len(visible))
+			if len(visible) > 0 && used+1+ansi.StringWidth(overflow) <= limit {
+				return strings.Join(visible, " ") + " " + overflow
+			}
+			return ansi.Truncate(overflow, limit, "~")
+		}
+		visible = append(visible, label)
+		used += separator + labelWidth
+	}
+	return strings.Join(visible, " ")
 }
 
 func (m *Model) emptyListLines(width int) []string {
@@ -234,6 +333,9 @@ func (m *Model) viewDetail(width int) string {
 		styleAccent.Render(fit(strings.ToUpper(host.Alias), detailWidth)),
 		detailLine("host", host.Address(), detailWidth),
 		detailLine("user", valueOrDash(host.User), detailWidth),
+	}
+	for _, badge := range m.hostBadges(host) {
+		lines = append(lines, detailLine(badge.DetailLabel, badge.DetailValue, detailWidth))
 	}
 	if identity != "" {
 		lines = append(lines, detailLine("identity", identity, detailWidth))
@@ -428,13 +530,6 @@ func (m *Model) viewAccess(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func recordingLabel(enabled bool) string {
-	if enabled {
-		return "on"
-	}
-	return "off"
-}
-
 func accessChoiceLabel(mode sshconfig.AccessMode) string {
 	switch mode {
 	case sshconfig.AccessLogin:
@@ -471,7 +566,7 @@ func (m *Model) viewHelp(width int) string {
 		"  s             SFTP file browser",
 		styleAccent.Render(" SESSIONS"),
 		"  m             run macro",
-		"  R             recording on/off",
+		"  R             recording on/off (REC)",
 		"  r             reload config",
 		"",
 		"  ?             close help",
@@ -628,8 +723,9 @@ func (m *Model) viewStatus(width int) string {
 }
 
 type columns struct {
-	name, host, user, port, tags, access     int
-	showUser, showPort, showTags, showAccess bool
+	name, host, user, port, tags, access, flags int
+	showUser, showPort, showTags, showAccess    bool
+	showFlags                                   bool
 }
 
 func listColumns(width int) columns {
@@ -657,8 +753,36 @@ func listColumnsFor(width int, showAll bool) columns {
 	}
 }
 
-func rowLine(columns columns, name, host, user, port, access, tags string) string {
-	line := "  " + fit(name, columns.name) + " " + fit(host, columns.host)
+func withFlagsColumn(columns columns, flagsWidth int) columns {
+	if flagsWidth <= 0 {
+		return columns
+	}
+	columns.showFlags = true
+	columns.flags = flagsWidth
+	extra := flagsWidth + 1
+	if columns.showTags {
+		reduce := min(extra, max(0, columns.tags-6))
+		columns.tags -= reduce
+		extra -= reduce
+	}
+	if extra > 0 {
+		reduce := min(extra, max(0, columns.host-8))
+		columns.host -= reduce
+		extra -= reduce
+	}
+	if extra > 0 {
+		reduce := min(extra, max(0, columns.name-10))
+		columns.name -= reduce
+	}
+	return columns
+}
+
+func rowLine(columns columns, prefix, flags, name, host, user, port, access, tags string) string {
+	line := prefix
+	if columns.showFlags {
+		line += fit(flags, columns.flags) + " "
+	}
+	line += fit(name, columns.name) + " " + fit(host, columns.host)
 	if columns.showUser {
 		line += " " + fit(user, columns.user)
 	}

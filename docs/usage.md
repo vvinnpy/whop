@@ -423,7 +423,7 @@ TUI：
 TUI：
 
 1. 选中主机；
-2. 按 `R`，界面显示 `rec`；
+2. 按 `R`，该主机在列表 `FLAGS` 列中显示 `REC`；
 3. 按 `enter` 连接。
 
 CLI：
@@ -434,7 +434,7 @@ whop connect prod-db
 whop connect -record prod-db
 ```
 
-`R` 修改的是当前主机的持久化录制策略；`whop record <alias> on|off` 提供等价的 CLI 操作。`-record` 仍然可以作为单次显式覆盖。
+`R` 修改的是当前主机的持久化录制策略；`whop record <alias> on|off` 提供等价的 CLI 操作。列表 `FLAGS` 列统一显示行级状态：`*` 表示收藏，`REC` 表示连接时会录制，`-` 表示没有状态标记。窄终端使用紧凑的 `FLG` 列和 `R` 标记。`-record` 仍然可以作为单次全局显式覆盖，此时所有可见主机都会显示 `REC`。
 
 默认目录：
 

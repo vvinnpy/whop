@@ -1,0 +1,9 @@
+ whop  3/4 hosts  ~/.ssh/config                                                          login hosts
+ / search: (press / to search)
+  FLAGS NAME                 HOST                 TAGS        PROD-DB
+> *     prod-db              10.0.0.11            prod,db     host      10.0.0.11:22
+  REC   prod-cache           10.0.0.12            prod        user      deploy
+  -     staging-db           10.1.0.11            staging~    favorite  yes
+                                                              identity  ~/.ssh/id_ed25519
+                                                              tags      prod,db
+ enter: connect  /: search  j/k: move  a: all entries  ?: help  q: quit

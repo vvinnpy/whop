@@ -326,6 +326,10 @@ to quit.
 | `tab` / `esc` | apply search and return to list actions |
 | `q` | quit |
 
+The list `FLAGS` column keeps row-level status together: `*` marks favorites
+and `REC` marks hosts that record sessions. Narrow terminals use the compact
+`FLG` header and `R` recording marker.
+
 The initial discovery pass reads `~/.ssh/config`, expands `Include`, and hides
 service endpoints inferred from known Git/Auth hosts, wildcard blocks, and
 `Match` blocks from the default login list. Use `-all` to inspect them. Press

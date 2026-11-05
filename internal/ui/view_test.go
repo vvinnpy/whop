@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"whop/internal/sshconfig"
 )
@@ -52,6 +53,99 @@ func TestViewListShowsTags(t *testing.T) {
 	joined = strings.Join(lines, "\n")
 	if !strings.Contains(joined, "TAGS") || !strings.Contains(joined, "prod,db") {
 		t.Fatalf("tags missing at medium width:\n%s", joined)
+	}
+}
+
+func TestListShowsUnifiedHostFlags(t *testing.T) {
+	hosts := testHosts()
+	hosts[0].Favorite = true
+	hosts[1].Record = true
+	m, _ := newTestModel(t, hosts)
+
+	view := plainView(m)
+	if !strings.Contains(view, "FLAGS") {
+		t.Fatalf("flags column missing:\n%s", view)
+	}
+	favoriteRow := lineContaining(view, "prod-db")
+	if !strings.Contains(favoriteRow, "*") || strings.Contains(favoriteRow, "*prod-db") {
+		t.Fatalf("favorite should be a separate flag, got %q:\n%s", favoriteRow, view)
+	}
+	if recordingRow := lineContaining(view, "prod-cache"); !strings.Contains(recordingRow, "REC") {
+		t.Fatalf("recording flag missing from row %q:\n%s", recordingRow, view)
+	}
+	if plainRow := lineContaining(view, "staging-db"); strings.Contains(plainRow, "*") || strings.Contains(plainRow, "REC") {
+		t.Fatalf("host without flags should stay unmarked, got %q:\n%s", plainRow, view)
+	}
+	if !strings.Contains(view, "favorite  yes") {
+		t.Fatalf("detail panel missing favorite status:\n%s", view)
+	}
+	sendKey(m, runeKey("j"))
+	if view = plainView(m); !strings.Contains(view, "recording on") {
+		t.Fatalf("detail panel missing recording status:\n%s", view)
+	}
+}
+
+func TestCompactListUsesShortHostFlags(t *testing.T) {
+	hosts := testHosts()
+	hosts[0].Favorite = true
+	hosts[1].Record = true
+	m, _ := newTestModel(t, hosts)
+	m.width = 40
+	m.height = 20
+
+	view := plainView(m)
+	if !strings.Contains(view, "FLG") {
+		t.Fatalf("compact flags header missing:\n%s", view)
+	}
+	if row := lineContaining(view, "prod-db"); !strings.Contains(row, "*") {
+		t.Fatalf("favorite compact flag missing from row %q:\n%s", row, view)
+	}
+	if row := lineContaining(view, "prod-cache"); !strings.Contains(row, "R") {
+		t.Fatalf("recording compact flag missing from row %q:\n%s", row, view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := ansi.StringWidth(line); width > m.width {
+			t.Fatalf("compact view line exceeds terminal width %d: %d\n%s", m.width, width, line)
+		}
+	}
+}
+
+func TestGlobalRecordingMarksEveryVisibleHost(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	m.record = true
+
+	list := strings.Join(m.viewList(100, 30), "\n")
+	for _, alias := range []string{"prod-db", "prod-cache", "staging-db"} {
+		row := lineContaining(list, alias)
+		if !strings.Contains(row, "REC") {
+			t.Fatalf("global recording flag missing from %q row %q:\n%s", alias, row, list)
+		}
+	}
+}
+
+func TestRenderHostBadges(t *testing.T) {
+	favorite := hostBadge{Label: "*", Compact: "*"}
+	recording := hostBadge{Label: "REC", Compact: "R"}
+	tests := []struct {
+		name    string
+		badges  []hostBadge
+		compact bool
+		limit   int
+		want    string
+	}{
+		{name: "none", limit: 8, want: "-"},
+		{name: "favorite", badges: []hostBadge{favorite}, limit: 8, want: "*"},
+		{name: "recording", badges: []hostBadge{recording}, limit: 8, want: "REC"},
+		{name: "combined", badges: []hostBadge{favorite, recording}, limit: 8, want: "* REC"},
+		{name: "compact", badges: []hostBadge{favorite, recording}, compact: true, limit: 4, want: "* R"},
+		{name: "overflow", badges: []hostBadge{{Label: "AAA"}, {Label: "BBB"}, {Label: "CCC"}}, limit: 3, want: "+2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := renderHostBadges(tt.badges, tt.compact, tt.limit); got != tt.want {
+				t.Fatalf("renderHostBadges() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -309,9 +403,17 @@ func TestDisplayConfigPathShortensHome(t *testing.T) {
 	}
 }
 
+func goldenView(m *Model) []byte {
+	lines := strings.Split(plainView(m), "\n")
+	for index := range lines {
+		lines[index] = strings.TrimRight(lines[index], " ")
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
 func TestMainScreenGolden(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
-	got := []byte(plainView(m))
+	got := goldenView(m)
 	path := filepath.Join("testdata", "main-screen.golden")
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -327,5 +429,29 @@ func TestMainScreenGolden(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("main screen changed\n--- want ---\n%s\n--- got ---\n%s", want, got)
+	}
+}
+
+func TestFlaggedMainScreenGolden(t *testing.T) {
+	hosts := testHosts()
+	hosts[0].Favorite = true
+	hosts[1].Record = true
+	m, _ := newTestModel(t, hosts)
+	got := goldenView(m)
+	path := filepath.Join("testdata", "flagged-main-screen.golden")
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, got, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden (run UPDATE_GOLDEN=1 go test ./internal/ui -run TestFlaggedMainScreenGolden): %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("flagged main screen changed\n--- want ---\n%s\n--- got ---\n%s", want, got)
 	}
 }

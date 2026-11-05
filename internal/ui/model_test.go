@@ -86,6 +86,15 @@ func runeKey(value string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
 }
 
+func lineContaining(view, text string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, text) {
+			return line
+		}
+	}
+	return ""
+}
+
 func TestInitialViewShowsServers(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	view := plainView(m)
@@ -422,8 +431,13 @@ func TestToggleFavorite(t *testing.T) {
 	if !m.allHosts[0].Favorite {
 		t.Fatal("host favorite flag not updated")
 	}
-	if !strings.Contains(plainView(m), "*prod-db") {
-		t.Fatalf("favorite marker missing:\n%s", plainView(m))
+	view := plainView(m)
+	if !strings.Contains(view, "FLAGS") {
+		t.Fatalf("flags column missing:\n%s", view)
+	}
+	row := lineContaining(view, "prod-db")
+	if !strings.Contains(row, "*") || strings.Contains(row, "*prod-db") {
+		t.Fatalf("favorite should be a separate flag, got %q:\n%s", row, view)
 	}
 }
 
@@ -452,8 +466,13 @@ func TestRecordToggle(t *testing.T) {
 	if !persisted || !m.allHosts[0].Record {
 		t.Fatal("recording policy should be enabled for the selected host")
 	}
-	if !strings.Contains(plainView(m), "rec") {
-		t.Fatalf("recording badge missing:\n%s", plainView(m))
+	view := plainView(m)
+	row := lineContaining(view, "prod-db")
+	if !strings.Contains(row, "REC") {
+		t.Fatalf("recording flag missing from row %q:\n%s", row, view)
+	}
+	if strings.Contains(view, "· recording") {
+		t.Fatalf("recording should not duplicate the list mode label:\n%s", view)
 	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !recorded {

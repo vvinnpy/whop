@@ -20,10 +20,10 @@
 
  / search: prod█
 
- NAME             HOST                 USER      PORT   TAGS
- > prod-db        10.10.0.11           deploy    22     prod db
-   prod-cache     10.10.0.12           deploy    22     prod
-   staging-db     10.20.0.11           deploy    22     staging
+ FLAGS  NAME             HOST                 USER      PORT   TAGS
+ > * REC prod-db         10.10.0.11           deploy    22     prod db
+   *     prod-cache      10.10.0.12           deploy    22     prod
+     REC staging-db      10.20.0.11           deploy    22     staging
 
  ┌─ prod-db ───────────────────────────────────────────────┐
  │ host      10.10.0.11:22                                 │
@@ -36,6 +36,10 @@
 ```
 
 The detail panel is hidden below 96 columns. The list remains the primary surface.
+
+Row-level status is shown in the `FLAGS` column: `*` means favorite and `REC`
+means the host will record the session. Hosts without flags show `-`. Narrow
+terminals use the compact `FLG` header and `R` recording marker.
 
 ## Keys
 

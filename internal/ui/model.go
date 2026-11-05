@@ -450,14 +450,6 @@ func (m *Model) updateHostRecording(alias string, enabled bool) {
 	}
 }
 
-func (m *Model) selectedRecording() bool {
-	if m.record {
-		return true
-	}
-	host, ok := m.selected()
-	return ok && host.Record
-}
-
 func (m *Model) startSFTP() (tea.Model, tea.Cmd) {
 	host, ok := m.selected()
 	if !ok {
