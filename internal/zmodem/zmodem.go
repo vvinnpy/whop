@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/natefinch/atomic"
 	zm "github.com/xx25/go-zmodem"
 )
@@ -260,22 +262,37 @@ func WaitForHeader(data []byte) bool {
 		bytes.Contains(data, []byte("*\x18D"))
 }
 
-// ProgressPrinter returns a simple human-readable progress callback. It keeps
-// one dynamic line so raw-mode terminals do not accumulate indentation and file
-// listings do not grow by one line per block.
+// ProgressPrinter returns a simple human-readable progress callback. Terminal
+// writers get one dynamic line; redirected output gets only final status lines.
 func ProgressPrinter(out io.Writer) ProgressFunc {
+	return progressPrinter(out, isTerminalWriter(out))
+}
+
+func progressPrinter(out io.Writer, interactive bool) ProgressFunc {
 	var lastUpdate time.Time
-	var lastLen int
+	var lastWidth int
 	return func(progress Progress) {
+		name := sanitizeProgressText(progress.Name)
+		if name == "" {
+			name = "file"
+		}
 		if progress.Done {
-			line := fmt.Sprintf("%s: done (%d bytes)", progress.Name, progress.Transferred)
+			line := sanitizeProgressText(fmt.Sprintf("%s: done (%d bytes)", name, progress.Transferred))
 			if progress.Err != nil {
-				line = fmt.Sprintf("%s: %v", progress.Name, progress.Err)
+				line = sanitizeProgressText(fmt.Sprintf("%s: %v", name, progress.Err))
 			}
-			if lastLen > len(line) {
-				line += strings.Repeat(" ", lastLen-len(line))
+			if interactive {
+				width := ansi.StringWidth(line)
+				if lastWidth > width {
+					line += strings.Repeat(" ", lastWidth-width)
+				}
+				fmt.Fprintf(out, "\r%s\r\n", line)
+			} else {
+				fmt.Fprintln(out, line)
 			}
-			fmt.Fprintf(out, "\r%s\r\n", line)
+			return
+		}
+		if !interactive {
 			return
 		}
 		now := time.Now()
@@ -283,10 +300,36 @@ func ProgressPrinter(out io.Writer) ProgressFunc {
 			return
 		}
 		lastUpdate = now
-		line := fmt.Sprintf("%s: %d/%d bytes", progress.Name, progress.Transferred, progress.Total)
-		lastLen = len(line)
+		line := sanitizeProgressText(fmt.Sprintf("%s: %d/%d bytes", name, progress.Transferred, progress.Total))
+		lastWidth = ansi.StringWidth(line)
 		fmt.Fprintf(out, "\r%s", line)
 	}
+}
+
+func sanitizeProgressText(text string) string {
+	var out strings.Builder
+	lastSpace := false
+	for _, r := range text {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			if out.Len() > 0 && !lastSpace {
+				out.WriteByte(' ')
+				lastSpace = true
+			}
+			continue
+		}
+		out.WriteRune(r)
+		lastSpace = false
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func isTerminalWriter(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // DefaultTimeout is a sensible receive timeout for real transports.

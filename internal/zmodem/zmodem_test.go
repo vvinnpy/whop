@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	zm "github.com/xx25/go-zmodem"
 )
 
@@ -350,7 +351,7 @@ func TestReceiverDoesNotOverwriteFileCreatedDuringTransfer(t *testing.T) {
 
 func TestProgressPrinterUsesSingleLine(t *testing.T) {
 	var out bytes.Buffer
-	progress := ProgressPrinter(&out)
+	progress := progressPrinter(&out, true)
 	progress(Progress{Name: "file.bin", Transferred: 1024, Total: 4096})
 	progress(Progress{Name: "file.bin", Transferred: 2048, Total: 4096})
 	progress(Progress{Name: "file.bin", Transferred: 4096, Total: 4096, Done: true})
@@ -365,9 +366,49 @@ func TestProgressPrinterUsesSingleLine(t *testing.T) {
 
 func TestProgressPrinterErrorEndsLine(t *testing.T) {
 	var out bytes.Buffer
-	ProgressPrinter(&out)(Progress{Name: "file.bin", Done: true, Err: errors.New("connection lost")})
+	progressPrinter(&out, true)(Progress{Name: "file.bin", Done: true, Err: errors.New("connection lost")})
 	got := out.String()
 	if !strings.HasPrefix(got, "\rfile.bin: connection lost") || !strings.HasSuffix(got, "\r\n") {
 		t.Fatalf("progress error = %q", got)
+	}
+}
+
+func TestProgressPrinterNonTerminalOnlyPrintsFinalStatus(t *testing.T) {
+	var out bytes.Buffer
+	progress := progressPrinter(&out, false)
+	progress(Progress{Name: "file.bin", Transferred: 1024, Total: 4096})
+	progress(Progress{Name: "file.bin", Transferred: 4096, Total: 4096, Done: true})
+	if strings.Contains(out.String(), "\r") {
+		t.Fatalf("non-terminal progress contains carriage returns: %q", out.String())
+	}
+	if out.String() != "file.bin: done (4096 bytes)\n" {
+		t.Fatalf("non-terminal progress = %q", out.String())
+	}
+}
+
+func TestSanitizeProgressTextPreservesChinese(t *testing.T) {
+	got := sanitizeProgressText("中文\x1b[31m文件\n名称")
+	if !strings.Contains(got, "中文") || !strings.Contains(got, "文件") || !strings.Contains(got, "名称") {
+		t.Fatalf("sanitized text = %q", got)
+	}
+	if strings.ContainsAny(got, "\x1b\n\r") {
+		t.Fatalf("control characters leaked: %q", got)
+	}
+}
+
+func TestProgressPrinterWideNamePadding(t *testing.T) {
+	var out bytes.Buffer
+	progress := progressPrinter(&out, true)
+	progress(Progress{Name: "中文文件.bin", Transferred: 123456789, Total: 123456789})
+	progress(Progress{Name: "中文文件.bin", Transferred: 123456789, Total: 123456789, Done: true})
+	got := strings.TrimSuffix(out.String(), "\r\n")
+	parts := strings.Split(got, "\r")
+	if len(parts) < 2 {
+		t.Fatalf("progress output = %q", out.String())
+	}
+	progressLine := parts[len(parts)-2]
+	doneLine := parts[len(parts)-1]
+	if ansi.StringWidth(doneLine) < ansi.StringWidth(progressLine) {
+		t.Fatalf("done line width %d < progress width %d: %q", ansi.StringWidth(doneLine), ansi.StringWidth(progressLine), out.String())
 	}
 }
