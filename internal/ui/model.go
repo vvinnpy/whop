@@ -220,6 +220,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.allHosts = msg.hosts
 		m.applyFilter()
+		if m.status == "reloading..." {
+			m.status = "config reloaded"
+		}
 		if m.initialStatus != "" {
 			m.status = m.initialStatus
 			m.initialStatus = ""

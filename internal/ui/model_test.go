@@ -363,6 +363,12 @@ func TestReload(t *testing.T) {
 	if len(m.allHosts) != 4 {
 		t.Fatalf("hosts after reload = %d", len(m.allHosts))
 	}
+	if m.status != "config reloaded" {
+		t.Fatalf("status after reload = %q", m.status)
+	}
+	if view := plainView(m); strings.Contains(view, "reloading") {
+		t.Fatalf("view still shows reloading:\n%s", view)
+	}
 }
 
 func TestLoadError(t *testing.T) {
