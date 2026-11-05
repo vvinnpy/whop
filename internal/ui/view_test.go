@@ -156,6 +156,54 @@ func TestHelpDoesNotShowStaleListStatus(t *testing.T) {
 	}
 }
 
+func TestSecondaryScreensHideListChrome(t *testing.T) {
+	tests := []struct {
+		name  string
+		open  func(*Model)
+		title string
+	}{
+		{name: "help", open: func(m *Model) { sendKey(m, runeKey("?")) }, title: "KEYBOARD"},
+		{name: "edit", open: func(m *Model) { sendKey(m, runeKey("e")) }, title: "EDIT prod-db"},
+		{name: "notes", open: func(m *Model) { sendKey(m, runeKey("n")) }, title: " NOTES prod-db"},
+		{name: "forward", open: func(m *Model) {
+			m.forwardMode = true
+			m.forwardTarget = testHosts()[0]
+			m.forwardType = newChoiceField("Type", []string{"local", "remote", "dynamic"}, 0)
+			m.forwardFields = []textField{newTextField("Bind (local)", "", 20), newTextField("Destination (remote)", "", 20)}
+		}, title: " FORWARD / prod-db"},
+		{name: "macros", open: func(m *Model) {
+			m.macroMode = true
+			m.macroTarget = testHosts()[0]
+			m.macroNames = []string{"health"}
+		}, title: " MACROS / prod-db"},
+		{name: "access", open: func(m *Model) {
+			m.accessMode = true
+			m.accessTarget = testHosts()[0]
+			m.accessOptions = []sshconfig.AccessMode{sshconfig.AccessAuto, sshconfig.AccessLogin}
+		}, title: " ACCESS / prod-db"},
+		{name: "diff", open: func(m *Model) {
+			m.diffMode = true
+			m.diffTarget = testHosts()[0]
+			m.diffLines = []string{"+new"}
+		}, title: " CONFIG DIFF / prod-db"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := newTestModel(t, testHosts())
+			tt.open(m)
+			view := plainView(m)
+			for _, unwanted := range []string{"3/4 hosts", "press / to search"} {
+				if strings.Contains(view, unwanted) {
+					t.Fatalf("%s screen still shows list chrome %q:\n%s", tt.name, unwanted, view)
+				}
+			}
+			if !strings.Contains(view, tt.title) {
+				t.Fatalf("%s screen missing contextual title %q:\n%s", tt.name, tt.title, view)
+			}
+		})
+	}
+}
+
 func TestDetailPanelSkipsEmptyAndLowValueFields(t *testing.T) {
 	m, _ := newTestModel(t, []sshconfig.Host{{
 		Alias:    "minimal",

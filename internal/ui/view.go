@@ -35,30 +35,30 @@ func (m *Model) View() string {
 		height = 30
 	}
 
-	header := m.viewHeader(width)
-	filter := m.viewFilter(width)
 	if m.diffMode {
-		return joinView(header, filter, m.viewDiff(width, height), m.viewFooter(width), m.viewStatus(width))
+		return joinView(m.viewDiff(width, height), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.editing {
-		return joinView(header, filter, m.viewEdit(width), m.viewFooter(width), m.viewStatus(width))
+		return joinView(m.viewEdit(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.notesMode {
-		return joinView(header, filter, m.viewNotes(width), m.viewFooter(width), m.viewStatus(width))
+		return joinView(m.viewNotes(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.forwardMode {
-		return joinView(header, filter, m.viewForward(width), m.viewFooter(width), m.viewStatus(width))
+		return joinView(m.viewForward(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.macroMode {
-		return joinView(header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width))
+		return joinView(m.viewMacros(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.accessMode {
-		return joinView(header, filter, m.viewAccess(width), m.viewFooter(width), m.viewStatus(width))
+		return joinView(m.viewAccess(width), m.viewFooter(width), m.viewStatus(width))
 	}
 	if m.help {
-		return joinView(header, filter, m.viewHelp(width), m.viewFooter(width))
+		return joinView(m.viewHelp(width), m.viewFooter(width))
 	}
 
+	header := m.viewHeader(width)
+	filter := m.viewFilter(width)
 	list := m.viewList(width, height)
 	if width < 96 {
 		if summary := m.selectedSummary(); summary != "" {
