@@ -733,6 +733,16 @@ whop macro run -json health prod-db
 
 ### 端口转发
 
+完整语法、数据流、OpenSSH `ssh -L/-R/-D` 逐项对照和 sshd 配置限制见 [forwarding.md](forwarding.md)。
+
+三种模式可以简单记成：
+
+| whop | OpenSSH | 监听侧 | 目标侧 | 目标是否固定 |
+|---|---|---|---|---|
+| `-L` | `ssh -N -L` | 本机 | 远端网络 | 固定 |
+| `-R` | `ssh -N -R` | 远端 | 本机网络 | 固定 |
+| `-D` | `ssh -N -D` | 本机 SOCKS5 | 远端网络 | 每次请求决定 |
+
 本地转发：
 
 ```bash

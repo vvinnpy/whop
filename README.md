@@ -88,10 +88,11 @@ whop access github.com service
 whop access prod-db auto
 whop record prod-db on
 
-# Port forwarding
+# Port forwarding: equivalent to ssh -N -L/-R/-D
 whop forward -L 127.0.0.1:8080:db.internal:5432 prod-db
 whop forward -R 9000:localhost:3000 prod-db
 whop forward -D 127.0.0.1:1080 prod-db
+# Full OpenSSH comparison: docs/forwarding.md
 
 # Dual-pane SFTP browser
 whop sftp prod-db
@@ -138,6 +139,18 @@ whop audit --limit 50
 whop audit --json
 whop audit clear
 ```
+
+### Port forwarding
+
+`whop forward` mirrors OpenSSH's common forwarding modes without opening a remote shell:
+
+| whop | OpenSSH equivalent | Listener | Fixed destination |
+|---|---|---|---|
+| `whop forward -L spec alias` | `ssh -N -L spec host` | local | remote side |
+| `whop forward -R spec alias` | `ssh -N -R spec host` | remote | local side |
+| `whop forward -D spec alias` | `ssh -N -D spec host` | local SOCKS5 | no, selected per SOCKS5 request |
+
+See [docs/forwarding.md](docs/forwarding.md) for side-by-side syntax, data paths, TUI fields, sshd requirements, limitations, and troubleshooting.
 
 ### Macros
 

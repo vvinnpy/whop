@@ -1482,9 +1482,9 @@ Flags for record:
 
 Flags for forward:
   -config path   path to ssh config
-  -L spec        local forward: [bind:]port:host:port (repeatable)
-  -R spec        remote forward: [bind:]port:host:port (repeatable)
-  -D spec        dynamic SOCKS5 forward: [bind:]port (repeatable)
+  -L spec        local forward (ssh -L): [bind:]port:host:port (repeatable)
+  -R spec        remote forward (ssh -R): [bind:]port:host:port (repeatable)
+  -D spec        dynamic SOCKS5 forward (ssh -D): [bind:]port (repeatable)
   -json          emit forwarding status as JSON lines
 
 Flags for sftp:

@@ -34,9 +34,9 @@ func runForward(args []string, deps Deps) int {
 	fs := newFlagSet("whop forward", deps)
 	configPath := fs.String("config", defaultConfigPath(), "path to ssh config")
 	var localValues, remoteValues, dynamicValues stringList
-	fs.Var(&localValues, "L", "local forward: [bind:]port:host:port")
-	fs.Var(&remoteValues, "R", "remote forward: [bind:]port:host:port")
-	fs.Var(&dynamicValues, "D", "dynamic SOCKS5 forward: [bind:]port")
+	fs.Var(&localValues, "L", "local forward (ssh -L): [bind:]port:host:port")
+	fs.Var(&remoteValues, "R", "remote forward (ssh -R): [bind:]port:host:port")
+	fs.Var(&dynamicValues, "D", "dynamic SOCKS5 forward (ssh -D): [bind:]port")
 	asJSON := fs.Bool("json", false, "emit forwarding status as JSON lines")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
