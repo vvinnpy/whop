@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	coreconnector "whop/internal/connector"
 	"whop/internal/sshconfig"
@@ -251,6 +253,16 @@ func TestSFTPNavigationTabAndParent(t *testing.T) {
 	if model.remotePath != "/" {
 		t.Fatalf("remote path = %q", model.remotePath)
 	}
+
+	model.remotePath = "/home"
+	cmd = updateSFTP(t, model, runeKey("h"))
+	if cmd == nil {
+		t.Fatal("h parent navigation did not load")
+	}
+	updateSFTP(t, model, cmd())
+	if model.remotePath != "/" {
+		t.Fatalf("remote path after h = %q", model.remotePath)
+	}
 	_ = model.Close()
 }
 
@@ -264,7 +276,7 @@ func TestCopyWithContextCanceled(t *testing.T) {
 }
 
 func ansiStrip(value string) string {
-	return strings.NewReplacer("\x1b", "").Replace(value)
+	return ansi.Strip(value)
 }
 
 func TestSFTPMoveOpenDirectoryAndFormatting(t *testing.T) {
@@ -325,4 +337,263 @@ func TestSortEntriesDirectoriesFirst(t *testing.T) {
 			t.Fatalf("sorted = %#v, want %#v", got, want)
 		}
 	}
+}
+
+func selectSFTPEntry(t *testing.T, model *SFTPModel, pane sftpPane, name string) {
+	t.Helper()
+	for index, entry := range model.entries(int(pane)) {
+		if entry.Name == name {
+			model.cursor[int(pane)] = index
+			return
+		}
+	}
+	t.Fatalf("%s entry %q not found in %#v", paneName(pane), name, model.entries(int(pane)))
+}
+
+func paneName(pane sftpPane) string {
+	if pane == sftpRemote {
+		return "remote"
+	}
+	return "local"
+}
+
+func TestSFTPSearchFiltersOnlyActivePane(t *testing.T) {
+	model, remote, _ := newSFTPTestModel(t)
+	remote.files["/home/notes.log"] = []byte("notes")
+	remote.dirs["/home"]["notes.log"] = coreconnector.FileEntry{Name: "notes.log", Path: "/home/notes.log", Size: 5}
+	reload := model.load()
+	updateSFTP(t, model, reload())
+
+	updateSFTP(t, model, runeKey("/"))
+	updateSFTP(t, model, runeKey("upload"))
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	if model.searching {
+		t.Fatal("tab did not leave search mode")
+	}
+	if model.active != int(sftpRemote) {
+		t.Fatalf("tab did not switch pane, active=%d", model.active)
+	}
+	if got := model.queries[int(sftpLocal)]; got != "upload" {
+		t.Fatalf("local query = %q", got)
+	}
+	if len(model.local) != 1 || model.local[0].Name != "upload.txt" {
+		t.Fatalf("filtered local entries = %#v", model.local)
+	}
+	if len(model.remote) != 2 {
+		t.Fatalf("remote pane was unexpectedly filtered: %#v", model.remote)
+	}
+
+	updateSFTP(t, model, runeKey("/"))
+	updateSFTP(t, model, runeKey("download"))
+	updateSFTP(t, model, runeKey("x"))
+	if got := model.queries[int(sftpRemote)]; got != "downloadx" {
+		t.Fatalf("remote query = %q", got)
+	}
+	if len(model.remote) != 0 {
+		t.Fatalf("remote filtered entries = %#v", model.remote)
+	}
+	if len(model.local) != 1 || model.local[0].Name != "upload.txt" {
+		t.Fatalf("local pane changed while searching remote: %#v", model.local)
+	}
+
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyBackspace})
+	if len(model.remote) != 1 || model.remote[0].Name != "download.txt" {
+		t.Fatalf("remote backspace filter = %#v", model.remote)
+	}
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if model.searching {
+		t.Fatal("esc did not leave search mode")
+	}
+	if got := model.queries[int(sftpLocal)]; got != "upload" {
+		t.Fatalf("local query lost after pane switch: %q", got)
+	}
+	_ = model.Close()
+}
+
+func TestSFTPSearchModeSwallowsCommands(t *testing.T) {
+	model, remote, _ := newSFTPTestModel(t)
+	updateSFTP(t, model, runeKey("/"))
+	if cmd := updateSFTP(t, model, runeKey("udq?")); cmd != nil {
+		t.Fatalf("typing commands in search mode returned a command: %T", cmd())
+	}
+	if got := model.queries[int(sftpLocal)]; got != "udq?" {
+		t.Fatalf("query = %q", got)
+	}
+	if !model.searching {
+		t.Fatal("search mode exited while typing")
+	}
+	if model.busy {
+		t.Fatal("typing triggered a transfer")
+	}
+	if len(remote.files) != 1 {
+		t.Fatalf("remote files changed: %#v", remote.files)
+	}
+
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyCtrlU})
+	if got := model.queries[int(sftpLocal)]; got != "" {
+		t.Fatalf("ctrl+u did not clear query: %q", got)
+	}
+	if !model.searching {
+		t.Fatal("ctrl+u should stay in search mode")
+	}
+	_ = model.Close()
+}
+
+func TestSFTPPageKeysMoveOnlyActivePane(t *testing.T) {
+	model, remote, local := newSFTPTestModel(t)
+	for i := 0; i < 12; i++ {
+		name := fmt.Sprintf("local-%02d.txt", i)
+		if err := os.WriteFile(filepath.Join(local, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 6; i++ {
+		name := fmt.Sprintf("remote-%02d.txt", i)
+		remotePath := path.Join("/home", name)
+		remote.files[remotePath] = []byte(name)
+		remote.dirs["/home"][name] = coreconnector.FileEntry{Name: name, Path: remotePath, Size: int64(len(name))}
+	}
+	model.height = 10
+	reload := model.load()
+	updateSFTP(t, model, reload())
+
+	model.cursor[int(sftpLocal)] = 0
+	model.cursor[int(sftpRemote)] = 0
+	pageSize := model.entryPageSize()
+	if pageSize < 2 {
+		t.Fatalf("page size too small: %d", pageSize)
+	}
+	if len(model.local) <= pageSize {
+		t.Fatalf("test needs more local entries than one page: entries=%d page=%d", len(model.local), pageSize)
+	}
+
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyCtrlD})
+	if model.cursor[int(sftpLocal)] != pageSize {
+		t.Fatalf("local cursor after page down = %d, want %d", model.cursor[int(sftpLocal)], pageSize)
+	}
+	if model.cursor[int(sftpRemote)] != 0 {
+		t.Fatalf("remote cursor moved while local pane active: %d", model.cursor[int(sftpRemote)])
+	}
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyCtrlU})
+	if model.cursor[int(sftpLocal)] != 0 {
+		t.Fatalf("local cursor after page up = %d", model.cursor[int(sftpLocal)])
+	}
+
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyCtrlD})
+	if model.cursor[int(sftpRemote)] != min(pageSize, len(model.remote)-1) {
+		t.Fatalf("remote cursor after page down = %d", model.cursor[int(sftpRemote)])
+	}
+	if model.cursor[int(sftpLocal)] != 0 {
+		t.Fatalf("local cursor moved while remote pane active: %d", model.cursor[int(sftpLocal)])
+	}
+	_ = model.Close()
+}
+
+func TestSFTPDirectoryNavigationClearsOnlyActiveSearch(t *testing.T) {
+	model, _, local := newSFTPTestModel(t)
+	if err := os.Mkdir(filepath.Join(local, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reload := model.load()
+	updateSFTP(t, model, reload())
+
+	updateSFTP(t, model, runeKey("/"))
+	updateSFTP(t, model, runeKey("sub"))
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	updateSFTP(t, model, runeKey("/"))
+	updateSFTP(t, model, runeKey("download"))
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	selectSFTPEntry(t, model, sftpLocal, "sub")
+
+	cmd := updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("opening directory did not load")
+	}
+	updateSFTP(t, model, cmd())
+	if model.localPath != filepath.Join(local, "sub") {
+		t.Fatalf("local path = %q", model.localPath)
+	}
+	if got := model.queries[int(sftpLocal)]; got != "" {
+		t.Fatalf("local query after navigation = %q", got)
+	}
+	if got := model.queries[int(sftpRemote)]; got != "download" {
+		t.Fatalf("remote query after local navigation = %q", got)
+	}
+	if len(model.remote) != 1 || model.remote[0].Name != "download.txt" {
+		t.Fatalf("remote filter lost after local navigation: %#v", model.remote)
+	}
+	_ = model.Close()
+}
+
+func TestSFTPTransferUsesFilteredSelection(t *testing.T) {
+	model, remote, local := newSFTPTestModel(t)
+	if err := os.WriteFile(filepath.Join(local, "other.txt"), []byte("other"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reload := model.load()
+	updateSFTP(t, model, reload())
+	updateSFTP(t, model, runeKey("/"))
+	updateSFTP(t, model, runeKey("upload"))
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+
+	cmd := updateSFTP(t, model, runeKey("u"))
+	if cmd == nil {
+		t.Fatal("upload command missing")
+	}
+	updateSFTP(t, model, cmd())
+	if got := string(remote.files["/home/upload.txt"]); got != "from local" {
+		t.Fatalf("uploaded = %q", got)
+	}
+	if _, ok := remote.files["/home/other.txt"]; ok {
+		t.Fatal("unselected file was uploaded")
+	}
+	_ = model.Close()
+}
+
+func TestSFTPFooterAndHelpShowShortcuts(t *testing.T) {
+	model, _, _ := newSFTPTestModel(t)
+	view := ansiStrip(model.View())
+	for _, want := range []string{"tab: switch", "ctrl+d/u: page", "/: search", "backspace: parent", "u/d: upload/download", "?: help"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("browse footer missing %q:\n%s", want, view)
+		}
+	}
+
+	updateSFTP(t, model, runeKey("/"))
+	view = ansiStrip(model.View())
+	for _, want := range []string{"type: search active pane", "tab/esc: apply", "ctrl+u: clear"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("search footer missing %q:\n%s", want, view)
+		}
+	}
+	updateSFTP(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+
+	updateSFTP(t, model, runeKey("?"))
+	view = ansiStrip(model.View())
+	for _, want := range []string{"NAVIGATION", "SEARCH", "TRANSFER", "ctrl+d/u", "backspace/left/h", "upload selected local file", "download selected remote file", "close help"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("help view missing %q:\n%s", want, view)
+		}
+	}
+	updateSFTP(t, model, runeKey("q"))
+	if model.help {
+		t.Fatal("q did not close help")
+	}
+	_ = model.Close()
+}
+
+func TestSFTPViewFitsNarrowTerminal(t *testing.T) {
+	model, _, _ := newSFTPTestModel(t)
+	model.width = 40
+	model.height = 20
+	view := ansiStrip(model.View())
+	for _, line := range strings.Split(view, "\n") {
+		if width := ansi.StringWidth(line); width > 40 {
+			t.Fatalf("line width %d exceeds terminal width:\n%s", width, view)
+		}
+	}
+	_ = model.Close()
 }

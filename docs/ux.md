@@ -77,6 +77,21 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 - If the initial filter matches exactly one host, the user can press `enter`
   immediately; auto-connect is a later opt-in flag.
 
+## SFTP browser
+
+- The left pane is local and the right pane is remote. `tab` switches the active pane.
+- Movement, search, and paging apply only to the active pane. Each pane keeps its own
+  query and cursor when the user switches sides.
+- `/` filters the active pane by filename; `ctrl+u` clears the query while typing,
+  and `tab` / `esc` applies it. Directory navigation clears only the active query.
+- `ctrl+d` / `ctrl+u` page the active pane while not searching. `g` / `G` jump to
+  the first or last visible entry.
+- `backspace` / `left` / `h` returns to the parent directory. `enter` / `right`
+  enters directories. `u` uploads the selected local file to the
+  remote current directory; `d` downloads the selected remote file to the local
+  current directory.
+- The footer follows the current mode, and `?` opens the full shortcut reference.
+
 ## Visual rules
 
 - One accent color; selection uses accent background.

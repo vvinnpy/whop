@@ -95,6 +95,7 @@ whop forward -D 127.0.0.1:1080 prod-db
 # Full OpenSSH comparison: docs/forwarding.md
 
 # Dual-pane SFTP browser
+# tab: switch pane | /: search | ctrl+d/u: page | enter: open | backspace/h: parent | u/d: transfer | ?: help
 whop sftp prod-db
 
 # Record, replay, and search sessions
