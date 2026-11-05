@@ -139,12 +139,26 @@ func newTestDeps() *testDeps {
 }
 
 func TestVersion(t *testing.T) {
+	oldVersion := Version
+	Version = "v9.9.9"
+	t.Cleanup(func() { Version = oldVersion })
+
 	td := newTestDeps()
 	if code := Run([]string{"version"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !strings.Contains(td.stdout.String(), "whop "+Version) {
-		t.Fatalf("stdout = %q", td.stdout.String())
+	if got := td.stdout.String(); got != "whop 9.9.9\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestVersionFallsBackToBuildInfo(t *testing.T) {
+	oldVersion := Version
+	Version = ""
+	t.Cleanup(func() { Version = oldVersion })
+
+	if got := versionString(); got == "" || got == "v" {
+		t.Fatalf("versionString() = %q", got)
 	}
 }
 
@@ -337,28 +351,94 @@ func TestHelp(t *testing.T) {
 	if code := Run([]string{"help"}, td.deps); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !strings.Contains(td.stdout.String(), "Usage:") {
-		t.Fatalf("stdout = %q", td.stdout.String())
+	out := td.stdout.String()
+	for _, want := range []string{
+		"Usage:", "Commands:", "Connection:", "Sessions:",
+		"Metadata and automation:", "Configuration and security:",
+		"list", "connect", "forward", "sftp", "snippet", "macro", "vault", "version",
+		`Run "whop help <command>"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Flags for list:") {
+		t.Fatalf("top-level help should not dump every command's flags:\n%s", out)
+	}
+}
+
+func TestHelpCommand(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"help", "forward"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	out := td.stdout.String()
+	for _, want := range []string{"whop forward - ", "Usage:", "-L spec", "-R spec", "-D spec", "Examples:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("forward help missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHelpNestedCommand(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"help", "vault", "status"}, td.deps); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, td.stderr.String())
+	}
+	out := td.stdout.String()
+	for _, want := range []string{"whop vault status - ", "Usage:", "-json"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("vault status help missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHelpUnknownCommand(t *testing.T) {
+	td := newTestDeps()
+	if code := Run([]string{"help", "does-not-exist"}, td.deps); code != 2 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if !strings.Contains(td.stderr.String(), "unknown command") {
+		t.Fatalf("stderr = %q", td.stderr.String())
 	}
 }
 
 func TestVersionAliases(t *testing.T) {
+	oldVersion := Version
+	Version = "v9.9.9"
+	t.Cleanup(func() { Version = oldVersion })
+
 	for _, arg := range []string{"--version", "-v"} {
 		td := newTestDeps()
 		if code := Run([]string{arg}, td.deps); code != 0 {
 			t.Fatalf("%s exit code = %d", arg, code)
 		}
-		if !strings.Contains(td.stdout.String(), Version) {
+		if !strings.Contains(td.stdout.String(), "whop 9.9.9") {
 			t.Fatalf("%s stdout = %q", arg, td.stdout.String())
 		}
 	}
 }
 
 func TestSubcommandHelp(t *testing.T) {
-	for _, args := range [][]string{{"list", "-h"}, {"list", "--help"}, {"connect", "-h"}, {"connect", "--help"}} {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"list", "-h"}, "whop list - "},
+		{[]string{"list", "--help"}, "whop list - "},
+		{[]string{"connect", "-h"}, "whop connect - "},
+		{[]string{"connect", "--help"}, "whop connect - "},
+		{[]string{"macro", "run", "--help"}, "whop macro run - "},
+		{[]string{"snippet", "set", "-h"}, "whop snippet set - "},
+		{[]string{"list", "-json", "--help"}, "whop list - "},
+	}
+	for _, tt := range tests {
 		td := newTestDeps()
-		if code := Run(args, td.deps); code != 0 {
-			t.Fatalf("%v exit code = %d", args, code)
+		if code := Run(tt.args, td.deps); code != 0 {
+			t.Fatalf("%v exit code = %d: %s", tt.args, code, td.stderr.String())
+		}
+		if !strings.Contains(td.stdout.String(), tt.want) {
+			t.Fatalf("%v stdout = %q", tt.args, td.stdout.String())
 		}
 	}
 }

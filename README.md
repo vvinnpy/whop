@@ -60,6 +60,11 @@ Existing connection managers are good at one or two things, but rarely all of th
 Read [AGENTS.md](AGENTS.md) before contributing. It defines the hard constraints for
 pure-Go, cross-platform, config-safe development.
 
+```bash
+make build
+./bin/whop version   # nearest tag plus commit state, e.g. 0.2.1 or 0.2.1-3-gabc1234
+```
+
 ## Releasing
 
 Releases are tag-driven and gated by CI. A release tag must be valid SemVer
@@ -88,6 +93,10 @@ goreleaser release --snapshot --clean
 ## Usage
 
 ```bash
+# Discover commands and command-specific flags
+whop help
+whop help connect
+
 # Interactive host list
 whop
 

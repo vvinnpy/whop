@@ -35,8 +35,9 @@ const (
 	tuiMacroPauseEnv  = "WHOP_TUI_MACRO_PAUSE"
 )
 
-// Version is the development version string.
-var Version = "0.1.0-dev"
+// Version is overridden at build time with -ldflags. When empty, versionString
+// falls back to Go build metadata so local and installed builds stay accurate.
+var Version string
 
 // PreparedConnect is an authenticated interactive session waiting for the
 // local terminal. Run blocks until the remote shell exits.
@@ -147,6 +148,14 @@ func Run(args []string, deps Deps) int {
 	if len(args) == 0 {
 		return runTUI(args, deps)
 	}
+	if path, ok := helpRequestPath(args); ok {
+		if len(path) == 0 {
+			printUsage(deps.Stdout)
+		} else {
+			return runHelp(path, deps)
+		}
+		return 0
+	}
 
 	switch args[0] {
 	case "list":
@@ -190,11 +199,10 @@ func Run(args []string, deps Deps) int {
 	case "diagnose":
 		return runDiagnose(args[1:], deps)
 	case "version", "--version", "-v":
-		fmt.Fprintf(deps.Stdout, "whop %s\n", Version)
+		fmt.Fprintf(deps.Stdout, "whop %s\n", versionString())
 		return 0
 	case "help", "--help", "-h":
-		printUsage(deps.Stdout)
-		return 0
+		return runHelp(args[1:], deps)
 	default:
 		if strings.HasPrefix(args[0], "-") {
 			return runTUI(args, deps)
@@ -1538,100 +1546,4 @@ func valueOrDash(value string) string {
 		return "-"
 	}
 	return value
-}
-
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `whop - fast, local-first terminal connection deck
-
-Usage:
-  whop [flags] [filter...]       open the interactive host list
-  whop list [flags]              list hosts
-  whop connect [flags] <alias>   connect to a host
-  whop forward [flags] <alias>   local/remote/dynamic port forwarding
-  whop sftp [flags] <alias>      dual-pane SFTP file browser
-  whop favorite [flags] <alias> <on|off>
-  whop record [flags] <alias> [on|off]
-  whop access [flags] <alias> [auto|login|service]
-  whop note [flags] <alias> [text...]
-  whop tag [flags] <alias> [tag...]
-  whop replay [flags] <file.cast>
-  whop search [flags] <query>
-  whop index [flags]
-  whop zmodem put [flags] <alias> <file...>
-  whop zmodem get [flags] <alias> <remote-file...>
-  whop run [flags] <alias> <command...>
-  whop snippet <set|list|delete|run> ...
-  whop macro <set|list|show|delete|run> ...
-  whop audit [flags]             show persisted automation audit events
-  whop audit clear [flags]       clear the audit log
-  whop import nccm [flags]       preview or apply nccm.yml migration
-  whop vault <init|set|list|delete|status> ...
-  whop diagnose [flags] <alias>
-  whop version                   print version
-
-Flags for whop:
-  -config path   path to ssh config (default ~/.ssh/config)
-  -all           show service endpoints too
-  -record        record interactive sessions
-  -agent         use ssh-agent (default: off)
-  -no-agent      disable ssh-agent
-
-Flags for list:
-  -config path   path to ssh config
-  -all           show service endpoints too
-  -json          emit JSON
-
-Flags for connect:
-  -config path   path to ssh config
-  -record        record the session
-  -json          emit a structured connection diagnostic
-
-Flags for record:
-  -config path   path to ssh config
-  -json          emit JSON
-
-Flags for forward:
-  -config path   path to ssh config
-  -L spec        local forward (ssh -L): [bind:]port:host:port (repeatable)
-  -R spec        remote forward (ssh -R): [bind:]port:host:port (repeatable)
-  -D spec        dynamic SOCKS5 forward (ssh -D): [bind:]port (repeatable)
-  -json          emit forwarding status as JSON lines
-
-Flags for sftp:
-  -config path   path to ssh config
-
-Flags for search:
-  -dir path       recording directory
-  -files          scan transcript files instead of the SQLite index
-  -no-sync        do not scan recordings before searching
-  -skip-invalid   skip malformed recordings while syncing
-  -json           emit JSON
-
-Flags for index:
-  -dir path       recording directory
-  -skip-invalid   skip malformed recordings
-  -no-prune       keep entries for deleted recordings
-  -json           emit JSON
-
-Flags for macro run:
-  -config path    path to ssh config
-  -timeout 30s    overall automation timeout
-  -json           emit a structured failure diagnostic
-
-Flags for audit:
-  -limit 100      maximum events to show (max 1000)
-  -json           emit JSON
-
-Flags for import nccm:
-  -file path      nccm.yml path (default: auto-detect)
-  -config path    destination ssh config
-  -only names     comma-separated nccm connection names
-  -apply          write changes (default: dry-run)
-  -json           emit JSON
-
-Vault environment:
-  WHOP_VAULT_PATH       override vault file path
-  WHOP_VAULT_PASSWORD   master password for automation
-  WHOP_VAULT_KEY_FILE   override auto-unlock key file
-  WHOP_HOST_PASSWORD    host password for 'vault set' automation`)
 }

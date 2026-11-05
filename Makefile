@@ -1,9 +1,11 @@
 .PHONY: build test vet race cross clean
 
 BINARY := whop
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS ?= -X whop/internal/cli.Version=$(VERSION)
 
 build:
-	CGO_ENABLED=0 go build -trimpath -o bin/$(BINARY) ./cmd/whop
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/whop
 
 test:
 	CGO_ENABLED=0 go test ./...

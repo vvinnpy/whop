@@ -1,6 +1,6 @@
 # whop 使用手册
 
-> 适用版本：当前仓库构建的 `0.1.0-dev`  
+> 适用版本：以当前构建的 `whop version` 输出为准
 > 本文截图来自真实运行的 whop TUI；演示使用隔离的临时 HOME、演示 SSH 配置和假地址，不包含真实凭据。
 
 ## 目录
@@ -936,6 +936,11 @@ whop 的底线：
 ## 附：常用命令速查
 
 ```bash
+# 查看命令与各命令参数
+whop help
+whop help connect
+whop macro run --help
+
 # TUI
 whop
 whop prod
