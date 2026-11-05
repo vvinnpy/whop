@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -52,33 +54,109 @@ func (c *Connector) RunZmodem(ctx context.Context, host sshconfig.Host, command 
 		return fmt.Errorf("zmodem: start %q on %s: %w", command, host.Alias, err)
 	}
 
-	stream := newRemoteStream(stdout, stdin, session.Close)
+	capture := newTailBuffer(4096)
+	stream := newRemoteStream(io.TeeReader(stdout, capture), stdin, session.Close)
 	defer func() { _ = stream.Close() }()
 	stopCancel := context.AfterFunc(ctx, func() { _ = stream.Close() })
 	defer stopCancel()
+
 	transferErr := transfer(stream)
+	_ = stdin.Close()
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- session.Wait() }()
+
 	if transferErr != nil {
 		if ctx.Err() != nil {
 			transferErr = ctx.Err()
 		}
-		_ = stream.Close()
-		_ = stdin.Close()
-		return transferErr
+		var waitErr error
+		select {
+		case waitErr = <-waitCh:
+		case <-time.After(2 * time.Second):
+			_ = session.Close()
+			waitErr = <-waitCh
+		}
+		remoteMessage := strings.TrimSpace(stderr.String())
+		if output := printableTail(capture.String()); output != "" {
+			if remoteMessage != "" {
+				remoteMessage += " "
+			}
+			remoteMessage += output
+		}
+		return zmodemTransferError(transferErr, waitErr, remoteMessage)
 	}
-	if err := ctx.Err(); err != nil {
-		_ = stream.Close()
-		_ = stdin.Close()
-		return err
+
+	waitErr := <-waitCh
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	_ = stdin.Close()
-	if err := session.Wait(); err != nil {
+	if waitErr != nil {
 		message := strings.TrimSpace(stderr.String())
 		if message != "" {
-			return fmt.Errorf("zmodem: remote command on %s failed: %w (%s)", host.Alias, err, message)
+			return fmt.Errorf("zmodem: remote command on %s failed: %w (%s)", host.Alias, waitErr, message)
 		}
-		return fmt.Errorf("zmodem: remote command on %s failed: %w", host.Alias, err)
+		return fmt.Errorf("zmodem: remote command on %s failed: %w", host.Alias, waitErr)
 	}
 	return nil
+}
+
+func zmodemTransferError(transferErr, waitErr error, stderr string) error {
+	message := strings.TrimSpace(stderr)
+	switch {
+	case message != "":
+		return fmt.Errorf("zmodem: transfer failed: %w (remote: %s)", transferErr, message)
+	case waitErr != nil:
+		return fmt.Errorf("zmodem: transfer failed: %w (remote: %w)", transferErr, waitErr)
+	default:
+		return transferErr
+	}
+}
+
+type tailBuffer struct {
+	mu    sync.Mutex
+	data  []byte
+	limit int
+}
+
+func newTailBuffer(limit int) *tailBuffer {
+	return &tailBuffer{limit: limit}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+	if len(b.data) > b.limit {
+		b.data = append(b.data[:0], b.data[len(b.data)-b.limit:]...)
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.data)
+}
+
+func printableTail(data string) string {
+	var out strings.Builder
+	lastSpace := false
+	for _, r := range data {
+		switch r {
+		case '\n', '\r', '\t':
+			if out.Len() > 0 && !lastSpace {
+				out.WriteByte(' ')
+				lastSpace = true
+			}
+		default:
+			if r < 0x20 || r >= 0x7f {
+				continue
+			}
+			out.WriteRune(r)
+			lastSpace = r == ' '
+		}
+	}
+	return strings.TrimSpace(out.String())
 }
 
 // ShellQuote quotes one POSIX shell argument for the remote exec request.

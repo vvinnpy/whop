@@ -447,3 +447,32 @@ func TestRunZmodemAwareShellReturnsErrorOnTransferFailure(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
+
+func TestZmodemTransferErrorIncludesRemoteOutput(t *testing.T) {
+	err := zmodemTransferError(io.EOF, errors.New("exit status 1"), "sz: jsdx.tar.gz: No such file or directory\n")
+	if !strings.Contains(err.Error(), "transfer failed: EOF") || !strings.Contains(err.Error(), "No such file") {
+		t.Fatalf("error = %v", err)
+	}
+	err = zmodemTransferError(io.EOF, errors.New("exit status 1"), "")
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("fallback error = %v", err)
+	}
+}
+
+func TestTailBufferKeepsLastChunk(t *testing.T) {
+	buffer := newTailBuffer(5)
+	_, _ = buffer.Write([]byte("123456789"))
+	if got := buffer.String(); got != "56789" {
+		t.Fatalf("tail = %q", got)
+	}
+}
+
+func TestPrintableTailDropsZmodemControlBytes(t *testing.T) {
+	got := printableTail("rz\r**\x18B0000000000000000\r\nsz: cannot open file: No such file or directory\r\n")
+	if !strings.Contains(got, "sz: cannot open file: No such file or directory") {
+		t.Fatalf("printable tail = %q", got)
+	}
+	if strings.ContainsAny(got, "\x18") {
+		t.Fatalf("control bytes leaked: %q", got)
+	}
+}
