@@ -1,6 +1,7 @@
 package zmodem
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -344,5 +345,29 @@ func TestReceiverDoesNotOverwriteFileCreatedDuringTransfer(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name() != "race.bin" {
 		t.Fatalf("unexpected files: %v", entries)
+	}
+}
+
+func TestProgressPrinterUsesSingleLine(t *testing.T) {
+	var out bytes.Buffer
+	progress := ProgressPrinter(&out)
+	progress(Progress{Name: "file.bin", Transferred: 1024, Total: 4096})
+	progress(Progress{Name: "file.bin", Transferred: 2048, Total: 4096})
+	progress(Progress{Name: "file.bin", Transferred: 4096, Total: 4096, Done: true})
+	got := out.String()
+	if strings.Count(got, "\n") != 1 {
+		t.Fatalf("progress output has extra lines: %q", got)
+	}
+	if !strings.Contains(got, "file.bin: done (4096 bytes)") {
+		t.Fatalf("progress output = %q", got)
+	}
+}
+
+func TestProgressPrinterErrorEndsLine(t *testing.T) {
+	var out bytes.Buffer
+	ProgressPrinter(&out)(Progress{Name: "file.bin", Done: true, Err: errors.New("connection lost")})
+	got := out.String()
+	if !strings.HasPrefix(got, "\rfile.bin: connection lost") || !strings.HasSuffix(got, "\r\n") {
+		t.Fatalf("progress error = %q", got)
 	}
 }

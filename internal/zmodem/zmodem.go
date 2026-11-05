@@ -260,18 +260,32 @@ func WaitForHeader(data []byte) bool {
 		bytes.Contains(data, []byte("*\x18D"))
 }
 
-// ProgressPrinter returns a simple human-readable progress callback.
+// ProgressPrinter returns a simple human-readable progress callback. It keeps
+// one dynamic line so raw-mode terminals do not accumulate indentation and file
+// listings do not grow by one line per block.
 func ProgressPrinter(out io.Writer) ProgressFunc {
+	var lastUpdate time.Time
+	var lastLen int
 	return func(progress Progress) {
 		if progress.Done {
+			line := fmt.Sprintf("%s: done (%d bytes)", progress.Name, progress.Transferred)
 			if progress.Err != nil {
-				fmt.Fprintf(out, "%s: %v\n", progress.Name, progress.Err)
-			} else {
-				fmt.Fprintf(out, "%s: done (%d bytes)\n", progress.Name, progress.Transferred)
+				line = fmt.Sprintf("%s: %v", progress.Name, progress.Err)
 			}
+			if lastLen > len(line) {
+				line += strings.Repeat(" ", lastLen-len(line))
+			}
+			fmt.Fprintf(out, "\r%s\r\n", line)
 			return
 		}
-		fmt.Fprintf(out, "%s: %d/%d bytes\n", progress.Name, progress.Transferred, progress.Total)
+		now := time.Now()
+		if !lastUpdate.IsZero() && now.Sub(lastUpdate) < 100*time.Millisecond {
+			return
+		}
+		lastUpdate = now
+		line := fmt.Sprintf("%s: %d/%d bytes", progress.Name, progress.Transferred, progress.Total)
+		lastLen = len(line)
+		fmt.Fprintf(out, "\r%s", line)
 	}
 }
 
