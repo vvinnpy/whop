@@ -31,6 +31,10 @@ var (
 	// ErrInteractiveUnavailable means the remote endpoint refused a PTY and
 	// does not provide an interactive shell.
 	ErrInteractiveUnavailable = errors.New("remote host does not provide an interactive shell")
+	// ErrInteractiveAuthRequired means a promptless connection attempt needs
+	// terminal input, such as a password, OTP, or vault unlock. Callers should
+	// restore their own UI and retry with an interactive provider.
+	ErrInteractiveAuthRequired = errors.New("interactive authentication required")
 )
 
 // PassphraseProvider supplies a private-key passphrase when needed.
@@ -549,101 +553,12 @@ func NewRunner(connector *Connector, size func() (int, int)) *Runner {
 }
 
 // Run opens an interactive shell and blocks until it exits.
-func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) (returnErr error) {
-	client, err := r.Connector.Dial(ctx, host)
+func (r *Runner) Run(ctx context.Context, host sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer) error {
+	prepared, err := r.Prepare(ctx, host)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	session, err := client.NewSession()
-	if err != nil {
-		return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open session: %w", err)}
-	}
-	defer session.Close()
-
-	width, height := r.Size()
-	if width <= 0 {
-		width = 80
-	}
-	if height <= 0 {
-		height = 24
-	}
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
-	}
-	ptyRejected := false
-	if err := session.RequestPty("xterm-256color", height, width, modes); err != nil {
-		if !isPTYRejected(err) {
-			return &StageError{Stage: "pty", Host: host.Alias, Err: fmt.Errorf("request pty: %w", err)}
-		}
-		ptyRejected = true
-		if stderr != nil {
-			fmt.Fprintf(stderr, "whop: remote host refused PTY; continuing without a TTY\n")
-		}
-	}
-
-	stdoutWriter := stdout
-	if stdoutWriter == nil {
-		stdoutWriter = io.Discard
-	}
-	if r.RecordingFactory != nil {
-		recorder, err := r.RecordingFactory(host, width, height)
-		if err != nil {
-			return &StageError{Stage: "record", Host: host.Alias, Err: fmt.Errorf("start recording: %w", err)}
-		}
-		defer recorder.Close()
-		stdoutWriter = io.MultiWriter(stdoutWriter, recorder)
-	}
-
-	rawStdin, terminal, err := prepareTerminalInput(stdin)
-	if err != nil {
-		return &StageError{Stage: "terminal", Host: host.Alias, Err: fmt.Errorf("enable local raw mode: %w", err)}
-	}
-	defer func() {
-		if err := terminal.Restore(); err != nil && returnErr == nil {
-			returnErr = &StageError{Stage: "terminal", Host: host.Alias, Err: fmt.Errorf("restore local terminal: %w", err)}
-		}
-	}()
-
-	if r.Zmodem != nil {
-		stdinPipe, err := session.StdinPipe()
-		if err != nil {
-			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open stdin: %w", err)}
-		}
-		stdoutPipe, err := session.StdoutPipe()
-		if err != nil {
-			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("open stdout: %w", err)}
-		}
-		session.Stderr = stderr
-		if err := session.Shell(); err != nil {
-			return &StageError{Stage: "shell", Host: host.Alias, Err: fmt.Errorf("start shell: %w", err)}
-		}
-		remote := newRemoteStream(stdoutPipe, stdinPipe, session.Close)
-		defer func() { _ = remote.Close() }()
-		stopCancel := context.AfterFunc(ctx, func() { _ = remote.Close() })
-		defer stopCancel()
-		proxyErr := runZmodemAwareShell(ctx, host, rawStdin, stdoutWriter, stderr, remote, terminal, r.Zmodem)
-		if proxyErr != nil {
-			_ = remote.Close()
-		}
-		_ = stdinPipe.Close()
-		waitErr := session.Wait()
-		if proxyErr != nil {
-			return &StageError{Stage: "session", Host: host.Alias, Err: fmt.Errorf("interactive stream: %w", proxyErr)}
-		}
-		return shellWaitError(host.Alias, ptyRejected, waitErr)
-	}
-
-	session.Stdin = rawStdin
-	session.Stdout = stdoutWriter
-	session.Stderr = stderr
-	if err := session.Shell(); err != nil {
-		return &StageError{Stage: "shell", Host: host.Alias, Err: fmt.Errorf("start shell: %w", err)}
-	}
-	return shellWaitError(host.Alias, ptyRejected, session.Wait())
+	return prepared.Run(ctx, stdin, stdout, stderr)
 }
 
 func shellWaitError(host string, ptyRejected bool, err error) error {

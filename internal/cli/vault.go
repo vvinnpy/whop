@@ -553,13 +553,20 @@ type lazyVaultPasswordProvider struct {
 }
 
 func (p *lazyVaultPasswordProvider) lookup(host sshconfig.Host) (string, bool, error) {
+	return p.lookupWithPrompt(host, true)
+}
+
+func (p *lazyVaultPasswordProvider) lookupNonInteractive(host sshconfig.Host) (string, bool, error) {
+	return p.lookupWithPrompt(host, false)
+}
+
+func (p *lazyVaultPasswordProvider) lookupWithPrompt(host sshconfig.Host, prompt bool) (string, bool, error) {
 	if p == nil {
 		return "", false, nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.openTried {
-		p.openTried = true
 		if _, err := os.Stat(p.path); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return "", false, nil
@@ -567,6 +574,10 @@ func (p *lazyVaultPasswordProvider) lookup(host sshconfig.Host) (string, bool, e
 			p.openErr = err
 			return "", false, err
 		}
+		if !prompt && os.Getenv(vaultMasterPasswordEnv) == "" {
+			return "", false, sshconn.ErrInteractiveAuthRequired
+		}
+		p.openTried = true
 		master, err := readVaultMasterPassword(Deps{Stdin: os.Stdin, Stderr: os.Stderr}, false)
 		if err != nil {
 			p.openErr = err
@@ -591,5 +602,9 @@ func defaultPasswordProvider() sshconn.PasswordProvider {
 		return terminal
 	}
 	store := &lazyVaultPasswordProvider{path: path, fallback: terminal}
-	return &sshconn.StoredPasswordProvider{Lookup: store.lookup, Fallback: terminal}
+	return &sshconn.StoredPasswordProvider{
+		Lookup:               store.lookup,
+		NonInteractiveLookup: store.lookupNonInteractive,
+		Fallback:             terminal,
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"whop/internal/automation"
+	sshconn "whop/internal/connector/ssh"
 	"whop/internal/sshconfig"
 	"whop/internal/ui"
 )
@@ -27,8 +28,16 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 		if cmd == nil {
 			t.Fatal("connect command is nil")
 		}
-		if msg := cmd(); msg == nil {
-			t.Fatal("connect should quit the TUI")
+		msg := cmd()
+		attempt, ok := msg.(ui.ConnectAttemptFinishedMsg)
+		if !ok {
+			t.Fatalf("connect message = %T, want ui.ConnectAttemptFinishedMsg", msg)
+		}
+		if attempt.Err != nil {
+			t.Fatalf("prepare connect: %v", attempt.Err)
+		}
+		if attempt.Handover != nil {
+			attempt.Handover()
 		}
 		return nil
 	}
@@ -130,10 +139,10 @@ func TestTUIMacroRelaunchWaitsForEnter(t *testing.T) {
 	}
 }
 
-func TestTUIConnectFailureRelaunchesWithErrorNotice(t *testing.T) {
+func TestTUIConnectFailureStaysInTUI(t *testing.T) {
 	td := newTestDeps()
-	td.deps.Connect = func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error {
-		return fmt.Errorf("permission denied")
+	td.deps.PrepareConnect = func(context.Context, sshconfig.Host, []sshconfig.Host, bool, bool) (PreparedConnect, error) {
+		return nil, fmt.Errorf("permission denied")
 	}
 	t.Setenv(tuiNoticeEnv, "")
 	t.Setenv(tuiNoticeLevelEnv, "")
@@ -147,22 +156,58 @@ func TestTUIConnectFailureRelaunchesWithErrorNotice(t *testing.T) {
 		if cmd == nil {
 			t.Fatal("connect command is nil")
 		}
-		_ = cmd()
+		msg := cmd()
+		attempt, ok := msg.(ui.ConnectAttemptFinishedMsg)
+		if !ok {
+			t.Fatalf("connect message = %T, want ui.ConnectAttemptFinishedMsg", msg)
+		}
+		if attempt.Err == nil || !strings.Contains(attempt.Err.Error(), "permission denied") {
+			t.Fatalf("connect error = %v", attempt.Err)
+		}
 		return nil
 	}
 	if code := Run(nil, td.deps); code != 0 {
 		t.Fatalf("exit = %d: %s", code, td.stderr.String())
 	}
-	if !td.relaunched {
-		t.Fatal("TUI was not relaunched")
+	if td.relaunched {
+		t.Fatal("connection failure should stay in the current TUI")
 	}
-	if got := os.Getenv(tuiNoticeEnv); got != "connection failed · prod-db: permission denied" {
+	if td.connected != "" {
+		t.Fatalf("unexpected session for %q", td.connected)
+	}
+	if got := os.Getenv(tuiNoticeEnv); got != "" {
 		t.Fatalf("notice = %q", got)
 	}
-	if got := os.Getenv(tuiNoticeLevelEnv); got != "error" {
-		t.Fatalf("notice level = %q", got)
+}
+
+func TestTUIConnectFallsBackForInteractiveAuthentication(t *testing.T) {
+	td := newTestDeps()
+	td.deps.PrepareConnect = func(context.Context, sshconfig.Host, []sshconfig.Host, bool, bool) (PreparedConnect, error) {
+		return nil, sshconn.ErrInteractiveAuthRequired
 	}
-	if got := os.Getenv(tuiNoticeScopeEnv); got != "prod-db" {
-		t.Fatalf("notice scope = %q", got)
+	t.Setenv(tuiNoticeEnv, "")
+	td.deps.RunTUI = func(opts ui.Options) error {
+		hosts, err := opts.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg := opts.Connect(hosts[0], false)()
+		attempt, ok := msg.(ui.ConnectAttemptFinishedMsg)
+		if !ok || attempt.Err != nil {
+			t.Fatalf("connect message = %#v", msg)
+		}
+		if attempt.Handover != nil {
+			attempt.Handover()
+		}
+		return nil
+	}
+	if code := Run(nil, td.deps); code != 0 {
+		t.Fatalf("exit = %d: %s", code, td.stderr.String())
+	}
+	if td.connected != "prod-db" {
+		t.Fatalf("interactive fallback connected = %q", td.connected)
+	}
+	if !td.relaunched {
+		t.Fatal("interactive session should relaunch the TUI after it ends")
 	}
 }

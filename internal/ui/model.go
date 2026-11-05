@@ -63,6 +63,16 @@ type Options struct {
 	SetLoginMode    func(sshconfig.Host, sshconfig.AccessMode) error
 }
 
+// ConnectAttemptFinishedMsg is emitted after the SSH connection and shell are
+// ready. A nil Err means the TUI can hand the terminal to the prepared session.
+type ConnectAttemptFinishedMsg struct {
+	Host string
+	Err  error
+	// Handover commits the prepared session once the model accepts it. It is
+	// not called when the user quits while the attempt is still running.
+	Handover func()
+}
+
 // ConnectFinishedMsg is emitted after an interactive session returns.
 type ConnectFinishedMsg struct {
 	Host string
@@ -108,6 +118,7 @@ type Model struct {
 
 	filter        string
 	filterFocused bool
+	connecting    bool
 	initialNotice Notice
 	showAll       bool
 	record        bool
@@ -237,6 +248,25 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ConnectAttemptFinishedMsg:
+		m.connecting = false
+		if msg.Err != nil {
+			text := "connection failed"
+			if msg.Host != "" {
+				text += " · " + msg.Host
+			}
+			text += ": " + msg.Err.Error()
+			m.status.fail(text, msg.Host)
+			return m, nil
+		}
+		// The session is authenticated and the shell is ready. Commit it only
+		// after reaching this state so quitting during preparation cannot start a
+		// session the user no longer wants.
+		if msg.Handover != nil {
+			msg.Handover()
+		}
+		return m, tea.Quit
+
 	case ConnectFinishedMsg:
 		scope := msg.Host
 		if msg.Err != nil {
@@ -276,6 +306,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+	if m.connecting {
+		if msg.String() == "q" {
+			return m, tea.Quit
+		}
+		return m, nil
 	}
 
 	if m.editing {
@@ -431,6 +467,7 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 	} else {
 		m.status.progress(fmt.Sprintf("connecting · %s...", host.Alias), host.Alias)
 	}
+	m.connecting = true
 	return m, m.connect(host, record)
 }
 

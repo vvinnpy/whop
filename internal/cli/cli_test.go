@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,23 @@ type persistentTestStore struct {
 }
 
 func (s persistentTestStore) Close() error { return nil }
+
+type fakePreparedConnect struct {
+	deps     *testDeps
+	host     sshconfig.Host
+	record   bool
+	useAgent bool
+	runErr   error
+}
+
+func (p *fakePreparedConnect) Run(_ context.Context, _ io.Reader, _, _ io.Writer) error {
+	p.deps.connected = p.host.Alias
+	p.deps.recorded = p.record
+	p.deps.useAgent = p.useAgent
+	return p.runErr
+}
+
+func (p *fakePreparedConnect) Close() error { return nil }
 
 type testDeps struct {
 	deps           Deps
@@ -76,6 +94,9 @@ func newTestDeps() *testDeps {
 			td.recorded = record
 			td.useAgent = useAgent
 			return nil
+		},
+		PrepareConnect: func(_ context.Context, host sshconfig.Host, _ []sshconfig.Host, record, useAgent bool) (PreparedConnect, error) {
+			return &fakePreparedConnect{deps: td, host: host, record: record, useAgent: useAgent}, nil
 		},
 		RunTUI: func(opts ui.Options) error {
 			td.tuiRan = true

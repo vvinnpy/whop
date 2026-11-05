@@ -247,6 +247,38 @@ func TestEnterConnectsSelectedHost(t *testing.T) {
 	}
 }
 
+func TestConnectAttemptFailureKeepsTUIInteractive(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	_, cmd := m.Update(ConnectAttemptFinishedMsg{Host: "prod-db", Err: fmt.Errorf("dial timeout")})
+	if cmd != nil {
+		t.Fatal("connection failure should not quit the TUI")
+	}
+	if m.connecting {
+		t.Fatal("model should accept a retry after connection failure")
+	}
+	if !strings.Contains(m.status.text(), "connection failed · prod-db: dial timeout") {
+		t.Fatalf("status = %q", m.status.text())
+	}
+	if m.status.current.Level != StatusError {
+		t.Fatalf("status level = %v", m.status.current.Level)
+	}
+}
+
+func TestConnectAttemptSuccessHandsOverTerminal(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	_, cmd := m.Update(ConnectAttemptFinishedMsg{Host: "prod-db"})
+	if cmd == nil {
+		t.Fatal("successful connection should stop the TUI before session handover")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("connection success command = %T, want tea.QuitMsg", cmd())
+	}
+}
+
 func TestToggleAllIncludesGitAuth(t *testing.T) {
 	m, _ := newTestModel(t, testHosts())
 	sendKey(m, runeKey("a"))

@@ -18,6 +18,50 @@ type SecretLookup func(host sshconfig.Host) (secret string, found bool, err erro
 type StoredPasswordProvider struct {
 	Lookup   SecretLookup
 	Fallback PasswordProvider
+	// NonInteractiveLookup is used by Promptless. It must return
+	// ErrInteractiveAuthRequired instead of prompting.
+	NonInteractiveLookup SecretLookup
+}
+
+// Promptless returns a provider that never reads from the terminal. It is used
+// while the caller's own UI still owns stdin; a missing secret is reported as
+// ErrInteractiveAuthRequired so the caller can hand over the terminal.
+func (p *StoredPasswordProvider) Promptless() PasswordProvider {
+	if p == nil {
+		return nil
+	}
+	lookup := p.NonInteractiveLookup
+	if lookup == nil {
+		lookup = func(sshconfig.Host) (string, bool, error) {
+			return "", false, ErrInteractiveAuthRequired
+		}
+	}
+	return &StoredPasswordProvider{
+		Lookup:   lookup,
+		Fallback: promptRequiredPasswordProvider{},
+	}
+}
+
+type promptRequiredPasswordProvider struct{}
+
+func (promptRequiredPasswordProvider) Password(sshconfig.Host) (string, error) {
+	return "", ErrInteractiveAuthRequired
+}
+
+func (promptRequiredPasswordProvider) KeyboardInteractive(sshconfig.Host, string, string, []string, []bool) ([]string, error) {
+	return nil, ErrInteractiveAuthRequired
+}
+
+// PromptlessPasswordProvider removes terminal prompting from provider. Unknown
+// providers are treated as interactive because they cannot prove otherwise.
+func PromptlessPasswordProvider(provider PasswordProvider) PasswordProvider {
+	if provider == nil {
+		return nil
+	}
+	if promptless, ok := provider.(interface{ Promptless() PasswordProvider }); ok {
+		return promptless.Promptless()
+	}
+	return promptRequiredPasswordProvider{}
 }
 
 // Password implements PasswordProvider.

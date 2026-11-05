@@ -229,6 +229,112 @@ func TestRunInteractiveShell(t *testing.T) {
 	}
 }
 
+func TestPrepareInteractiveShellHandsOverOutput(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	server := newTestSSHServer(t, public)
+	connector := newTestConnector()
+	runner := NewRunner(connector, func() (int, int) { return 80, 24 })
+
+	host := sshconfig.Host{
+		Alias:         "test-host",
+		HostName:      "127.0.0.1",
+		Port:          server.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+
+	prepared, err := runner.Prepare(context.Background(), host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = prepared.Close() })
+
+	// The shell is already running before the local terminal is handed over.
+	time.Sleep(20 * time.Millisecond)
+
+	var stdout, stderr bytes.Buffer
+	if err := prepared.Run(context.Background(), strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "hello from test") {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
+type preparedTestRecorder struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (r *preparedTestRecorder) Write(data []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.Write(data)
+}
+
+func (r *preparedTestRecorder) Close() error { return nil }
+
+func (r *preparedTestRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.String()
+}
+
+func TestPrepareRecordsOutputBeforeHandover(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	server := newTestSSHServer(t, public)
+	connector := newTestConnector()
+	recorder := &preparedTestRecorder{}
+	runner := NewRunner(connector, func() (int, int) { return 80, 24 })
+	runner.RecordingFactory = func(sshconfig.Host, int, int) (io.WriteCloser, error) {
+		return recorder, nil
+	}
+
+	host := sshconfig.Host{
+		Alias:         "test-host",
+		HostName:      "127.0.0.1",
+		Port:          server.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+	prepared, err := runner.Prepare(context.Background(), host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = prepared.Close() })
+
+	time.Sleep(20 * time.Millisecond)
+	if err := prepared.Run(context.Background(), strings.NewReader(""), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(recorder.String(), "hello from test") {
+		t.Fatalf("recording = %q", recorder.String())
+	}
+}
+
+func TestPrepareInteractiveShellWithZmodemProxy(t *testing.T) {
+	keyPath, public := writeClientKey(t)
+	server := newTestSSHServer(t, public)
+	connector := newTestConnector()
+	runner := NewRunner(connector, func() (int, int) { return 80, 24 })
+	runner.Zmodem = &ZmodemOptions{}
+
+	host := sshconfig.Host{
+		Alias:         "test-host",
+		HostName:      "127.0.0.1",
+		Port:          server.port(),
+		User:          "tester",
+		IdentityFiles: []string{keyPath},
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(context.Background(), host, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "hello from test") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
 func TestNoAuthMethods(t *testing.T) {
 	connector := newTestConnector()
 	host := sshconfig.Host{

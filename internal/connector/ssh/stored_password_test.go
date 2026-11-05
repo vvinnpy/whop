@@ -158,3 +158,61 @@ func TestStoredPasswordProviderPasswordAuth(t *testing.T) {
 		t.Fatalf("interactive fallback called %d times", fallback.calls)
 	}
 }
+
+func TestPromptlessPasswordProviderNeverCallsFallback(t *testing.T) {
+	fallback := &storedTestKeyboardProvider{answers: []string{"interactive"}}
+	provider := &StoredPasswordProvider{
+		Lookup: func(sshconfig.Host) (string, bool, error) {
+			return "", false, nil
+		},
+		NonInteractiveLookup: func(sshconfig.Host) (string, bool, error) {
+			return "", false, nil
+		},
+		Fallback: fallback,
+	}
+	promptless := PromptlessPasswordProvider(provider)
+
+	_, err := promptless.Password(sshconfig.Host{Alias: "prod"})
+	if !errors.Is(err, ErrInteractiveAuthRequired) {
+		t.Fatalf("password error = %v", err)
+	}
+	_, err = promptless.(KeyboardInteractiveProvider).KeyboardInteractive(
+		sshconfig.Host{Alias: "prod"}, "otp", "", []string{"OTP:"}, []bool{false},
+	)
+	if !errors.Is(err, ErrInteractiveAuthRequired) {
+		t.Fatalf("keyboard-interactive error = %v", err)
+	}
+	if fallback.calls != 0 {
+		t.Fatalf("interactive fallback called %d times", fallback.calls)
+	}
+}
+
+func TestPromptlessAuthErrorSurvivesHandshake(t *testing.T) {
+	server := newTestSSHServerWithPassword(t, "vault-secret")
+	provider := &StoredPasswordProvider{
+		Lookup: func(sshconfig.Host) (string, bool, error) {
+			return "", false, nil
+		},
+		NonInteractiveLookup: func(sshconfig.Host) (string, bool, error) {
+			return "", false, nil
+		},
+	}
+	connector := New(Options{
+		HostKeyCallback: cryptossh.InsecureIgnoreHostKey(),
+		DisableAgent:    true,
+		Timeout:         5 * time.Second,
+		Username:        "tester",
+		Password:        PromptlessPasswordProvider(provider),
+	})
+	host := sshconfig.Host{
+		Alias:         "password-host",
+		HostName:      "127.0.0.1",
+		Port:          server.port(),
+		User:          "tester",
+		IdentityFiles: []string{filepath.Join(t.TempDir(), "missing-key")},
+	}
+	_, err := connector.Dial(context.Background(), host)
+	if !errors.Is(err, ErrInteractiveAuthRequired) {
+		t.Fatalf("dial error = %v", err)
+	}
+}

@@ -131,6 +131,12 @@ The status row is for events, not persistent host state.
   navigation, search input, or a mode change.
 - Operations in progress use `...`, such as `connecting · prod-db...` or
   `uploading file...`, and remain until a result or error replaces them.
+- While connecting, the host list stays visible. whop keeps the TUI on screen
+  through DNS, TCP, handshake, host-key verification, and authentication, and
+  hands the terminal to the remote shell only after the session is ready. A
+  connection failure is shown in the same list instead of briefly closing and
+  relaunching the TUI. Password, OTP, and vault-unlock prompts are the exception:
+  they require restoring the terminal before reading input.
 - Errors use a red `! ...` line and remain visible across navigation until
   `esc` dismisses them or a later status-producing action replaces them. A
   scoped error names its target host.

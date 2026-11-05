@@ -38,27 +38,35 @@ const (
 // Version is the development version string.
 var Version = "0.1.0-dev"
 
+// PreparedConnect is an authenticated interactive session waiting for the
+// local terminal. Run blocks until the remote shell exits.
+type PreparedConnect interface {
+	Run(context.Context, io.Reader, io.Writer, io.Writer) error
+	Close() error
+}
+
 // Deps contains injectable process dependencies for tests.
 type Deps struct {
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
-	LoadConfig   func(string) ([]sshconfig.Host, error)
-	Connect      func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error
-	RunTUI       func(ui.Options) error
-	OpenStore    func() (MetaStore, error)
-	RecordingDir string
-	ZmodemPut    func(sshconfig.Host, []sshconfig.Host, []string, bool, bool, io.Writer) error
-	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, bool, io.Writer) error
-	RunCommand   func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
-	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, automation.EventFunc, bool) error
-	Forward      func(context.Context, sshconfig.Host, []sshconfig.Host, coreconnector.ForwardSpec, bool, func(coreconnector.ForwardStatus) error) error
-	RunSFTP      func(sshconfig.Host, []sshconfig.Host, bool) error
-	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
-	Password     sshconn.PasswordProvider
-	Relaunch     func() error
-	LookupEnv    func(string) (string, bool)
-	UseAgent     bool
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+	LoadConfig     func(string) ([]sshconfig.Host, error)
+	Connect        func(sshconfig.Host, []sshconfig.Host, io.Reader, io.Writer, io.Writer, bool, bool) error
+	PrepareConnect func(context.Context, sshconfig.Host, []sshconfig.Host, bool, bool) (PreparedConnect, error)
+	RunTUI         func(ui.Options) error
+	OpenStore      func() (MetaStore, error)
+	RecordingDir   string
+	ZmodemPut      func(sshconfig.Host, []sshconfig.Host, []string, bool, bool, io.Writer) error
+	ZmodemGet      func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, bool, io.Writer) error
+	RunCommand     func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
+	RunMacro       func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, automation.EventFunc, bool) error
+	Forward        func(context.Context, sshconfig.Host, []sshconfig.Host, coreconnector.ForwardSpec, bool, func(coreconnector.ForwardStatus) error) error
+	RunSFTP        func(sshconfig.Host, []sshconfig.Host, bool) error
+	Diagnose       func(sshconfig.Host, []sshconfig.Host, bool) error
+	Password       sshconn.PasswordProvider
+	Relaunch       func() error
+	LookupEnv      func(string) (string, bool)
+	UseAgent       bool
 }
 
 // MetaStore is the metadata surface used by the CLI and TUI.
@@ -97,6 +105,9 @@ func NewDeps() Deps {
 		LoadConfig: sshconfig.Load,
 		Connect: func(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record, useAgent bool) error {
 			return defaultConnect(host, hosts, stdin, stdout, stderr, record, useAgent, password)
+		},
+		PrepareConnect: func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, record, useAgent bool) (PreparedConnect, error) {
+			return defaultPrepareConnect(ctx, host, hosts, record, useAgent, password)
 		},
 		RunTUI:       defaultRunTUI,
 		OpenStore:    defaultOpenStore,
@@ -233,6 +244,11 @@ func normalizeDeps(deps Deps) Deps {
 	if deps.Connect == nil {
 		deps.Connect = func(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record, useAgent bool) error {
 			return defaultConnect(host, hosts, stdin, stdout, stderr, record, useAgent, deps.Password)
+		}
+	}
+	if deps.PrepareConnect == nil {
+		deps.PrepareConnect = func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, record, useAgent bool) (PreparedConnect, error) {
+			return defaultPrepareConnect(ctx, host, hosts, record, useAgent, deps.Password)
 		}
 	}
 	if deps.RunTUI == nil {
@@ -386,8 +402,32 @@ func runTUI(args []string, deps Deps) int {
 				}
 			},
 			Connect: func(host sshconfig.Host, record bool) tea.Cmd {
-				pendingConnect = &connectRequest{host: host, record: record}
-				return tea.Quit
+				return func() tea.Msg {
+					hosts, err := loadHosts(deps, metaStore, configPathValue)
+					if err != nil {
+						return ui.ConnectAttemptFinishedMsg{Host: host.Alias, Err: err}
+					}
+					prepared, err := deps.PrepareConnect(context.Background(), host, hosts, record, deps.UseAgent)
+					if errors.Is(err, sshconn.ErrInteractiveAuthRequired) {
+						// Passwords, OTPs, and an encrypted vault need terminal input.
+						// Restore the terminal and use the normal interactive flow.
+						return ui.ConnectAttemptFinishedMsg{
+							Host: host.Alias,
+							Handover: func() {
+								pendingConnect = &connectRequest{host: host, record: record, hosts: hosts}
+							},
+						}
+					}
+					if err != nil {
+						return ui.ConnectAttemptFinishedMsg{Host: host.Alias, Err: err}
+					}
+					return ui.ConnectAttemptFinishedMsg{
+						Host: host.Alias,
+						Handover: func() {
+							pendingConnect = &connectRequest{host: host, record: record, prepared: prepared}
+						},
+					}
+				}
 			},
 			Forward: func(host sshconfig.Host, spec coreconnector.ForwardSpec) tea.Cmd {
 				pendingForward = &forwardRequest{host: host, spec: spec}
@@ -406,6 +446,9 @@ func runTUI(args []string, deps Deps) int {
 			},
 		}
 		if err := deps.RunTUI(options); err != nil {
+			if pendingConnect != nil && pendingConnect.prepared != nil {
+				_ = pendingConnect.prepared.Close()
+			}
 			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1
 		}
@@ -414,18 +457,16 @@ func runTUI(args []string, deps Deps) int {
 		case pendingConnect != nil:
 			request := *pendingConnect
 			pendingConnect = nil
-			// The TUI has already restored the terminal. Running SSH outside the
-			// Bubble Tea input loop avoids the first-key-lost race after tea.Exec.
-			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
-			if loadErr != nil {
-				tuiNotice = ui.Notice{
-					Text:  fmt.Sprintf("connection failed · %s: %v", request.host.Alias, loadErr),
-					Level: ui.StatusError,
-					Scope: request.host.Alias,
-				}
-				return relaunchTUI(deps, tuiNotice)
+			// The TUI has restored the terminal. Key-based sessions are already
+			// authenticated with their shell ready; interactive-auth hosts fall
+			// back to the normal terminal prompt flow here.
+			var err error
+			if request.prepared != nil {
+				err = request.prepared.Run(context.Background(), deps.Stdin, deps.Stdout, deps.Stderr)
+				_ = request.prepared.Close()
+			} else {
+				err = deps.Connect(request.host, request.hosts, deps.Stdin, deps.Stdout, deps.Stderr, request.record, deps.UseAgent)
 			}
-			err := deps.Connect(request.host, hosts, deps.Stdin, deps.Stdout, deps.Stderr, request.record, deps.UseAgent)
 			if err != nil {
 				tuiNotice = ui.Notice{
 					Text:  fmt.Sprintf("connection failed · %s: %v", request.host.Alias, err),
@@ -550,8 +591,10 @@ func waitForMacroResult(deps Deps, notice string) {
 }
 
 type connectRequest struct {
-	host   sshconfig.Host
-	record bool
+	host     sshconfig.Host
+	record   bool
+	hosts    []sshconfig.Host
+	prepared PreparedConnect
 }
 
 type macroRequest struct {
@@ -1394,6 +1437,11 @@ func defaultDownloadDir(alias string) string {
 func defaultConnect(host sshconfig.Host, hosts []sshconfig.Host, stdin io.Reader, stdout, stderr io.Writer, record bool, useAgent bool, password sshconn.PasswordProvider) error {
 	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir(), useAgent, password)
 	return runner.Run(context.Background(), host, stdin, stdout, stderr)
+}
+
+func defaultPrepareConnect(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, record, useAgent bool, password sshconn.PasswordProvider) (PreparedConnect, error) {
+	runner := sshRunnerWithHosts(hosts, record, defaultRecordingDir(), useAgent, sshconn.PromptlessPasswordProvider(password))
+	return runner.Prepare(ctx, host)
 }
 
 func sshRunnerForConfig(path string, record bool, recordingDir string, useAgent bool, password sshconn.PasswordProvider) *sshconn.Runner {
