@@ -273,7 +273,7 @@ func TestIndexDirectorySortsNewestFirstStably(t *testing.T) {
 }
 
 func TestIndexDirectoryInvalidFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedIndexTempDir(t)
 	brokenBase := filepath.Join(dir, "broken-20261103-100000.000")
 	writeIndexCast(t, brokenBase+".cast", "{not json")
 	writeIndexTranscript(t, brokenBase+".txt", "still readable\n")

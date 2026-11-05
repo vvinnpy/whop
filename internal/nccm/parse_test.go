@@ -267,6 +267,7 @@ func TestLoad(t *testing.T) {
 func TestDefaultPathUsesNCCMSearchOrder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	configPath := filepath.Join(home, ".config", "nccm", "nccm.yml")
 	dotPath := filepath.Join(home, ".nccm.yml")
@@ -314,6 +315,7 @@ func TestDefaultPathUsesNCCMSearchOrder(t *testing.T) {
 func TestDefaultPathIgnoresDirectories(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	// A directory at an earlier candidate must not hide a later regular file.
 	if err := os.MkdirAll(filepath.Join(home, ".config", "nccm", "nccm.yml"), 0o700); err != nil {

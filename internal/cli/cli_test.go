@@ -444,8 +444,17 @@ func TestReplayCommand(t *testing.T) {
 	}
 }
 
+func resolvedCLITempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestSearchCommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedCLITempDir(t)
 	path := filepath.Join(dir, "session.txt")
 	if err := os.WriteFile(path, []byte("line one\nprod database\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -462,7 +471,7 @@ func TestSearchCommand(t *testing.T) {
 }
 
 func TestSearchFilesCommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedCLITempDir(t)
 	path := filepath.Join(dir, "session.txt")
 	if err := os.WriteFile(path, []byte("line one\nprod database\n"), 0o600); err != nil {
 		t.Fatal(err)

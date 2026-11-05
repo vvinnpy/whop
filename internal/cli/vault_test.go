@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestVaultLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("vault mode = %o", info.Mode().Perm())
 	}
 	if strings.Contains(td.stdout.String()+td.stderr.String(), "master-secret") || strings.Contains(td.stdout.String()+td.stderr.String(), "host-secret") {
@@ -138,7 +139,7 @@ func TestVaultAutoUnlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode = %o", info.Mode().Perm())
 	}
 	if code := Run([]string{"vault", "set", "prod-db"}, td.deps); code != 0 {

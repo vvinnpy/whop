@@ -46,11 +46,11 @@ jobs:
           if [ ! -f gotest.jsonl ]; then
             exit 0
           fi
-          grep -E '"Action":"fail"' gotest.jsonl | tail -50 | while IFS= read -r line; do
+          grep '"Action":"output"' gotest.jsonl | grep -E '"_test\.go:[0-9]+:' | tail -20 | while IFS= read -r line; do
             echo "::error title=go test failure::$line"
           done
-          grep '"Action":"output"' gotest.jsonl | grep -E -- '--- FAIL|panic:|Error Trace|FAIL' | tail -50 | while IFS= read -r line; do
-            echo "::error title=go test output::$line"
+          grep '"Action":"fail"' gotest.jsonl | tail -10 | while IFS= read -r line; do
+            echo "::error title=go test package::$line"
           done
       - name: build
         shell: bash
