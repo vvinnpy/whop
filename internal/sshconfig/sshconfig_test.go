@@ -16,6 +16,18 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// resolvedTempDir returns a temporary directory with symlinks resolved so
+// assertions match the canonical paths used by config editing. On macOS,
+// t.TempDir is commonly reached through the /var -> /private/var symlink.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestLoadDiscoversConcreteServers(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config")

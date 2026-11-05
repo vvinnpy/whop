@@ -19,6 +19,15 @@ func writeIndexCast(t *testing.T, path, header string) {
 	}
 }
 
+func resolvedIndexTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func writeIndexTranscript(t *testing.T, path, text string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
@@ -45,7 +54,7 @@ func v2Header(t *testing.T, timestamp int64, env map[string]string) string {
 }
 
 func TestIndexDirectoryNormal(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedIndexTempDir(t)
 	nested := filepath.Join(dir, "nested")
 	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)

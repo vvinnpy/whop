@@ -29,6 +29,7 @@ jobs:
         shell: bash
         run: test -z "$(gofmt -l .)"
       - name: mod tidy
+        if: runner.os == 'Linux'
         shell: bash
         run: test -z "$(go mod tidy -diff)"
       - name: vet

@@ -6,13 +6,22 @@ import (
 	"time"
 )
 
+func resolvedPruneTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestReconcileTranscriptRootRemovesStaleRecords(t *testing.T) {
 	db, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	root := t.TempDir()
+	root := resolvedPruneTempDir(t)
 	kept := filepath.Join(root, "kept.txt")
 	stale := filepath.Join(root, "nested", "stale.txt")
 	outside := filepath.Join(t.TempDir(), "outside.txt")

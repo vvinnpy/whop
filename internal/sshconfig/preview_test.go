@@ -16,7 +16,7 @@ func previewTagsPtr(values ...string) *[]string {
 }
 
 func TestPreviewHostRootConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config")
+	path := filepath.Join(resolvedTempDir(t), "config")
 	original := `# global comment
 Host prod-db
   HostName 10.0.0.11
@@ -66,7 +66,7 @@ Host staging
 }
 
 func TestPreviewHostInIncludedFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	root := filepath.Join(dir, "config")
 	includeDir := filepath.Join(dir, "config.d")
 	first := filepath.Join(includeDir, "10-first.conf")

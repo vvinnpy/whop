@@ -96,7 +96,7 @@ func TestAddHostsAddsMultipleBlocksAndBackup(t *testing.T) {
 }
 
 func TestAddHostsSkipsRootAndIncludedAliasesWithoutWriting(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	root := filepath.Join(dir, "config")
 	includeDir := filepath.Join(dir, "config.d")
 	include := filepath.Join(includeDir, "work.conf")
