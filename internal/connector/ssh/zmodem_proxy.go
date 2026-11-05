@@ -150,7 +150,7 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 					if ctx.Err() != nil {
 						transferErr = ctx.Err()
 					}
-					fmt.Fprintf(stderr, "\r\nwhop zmodem: %v\r\n", transferErr)
+					fmt.Fprintf(stderr, "\rwhop zmodem: %v\r\n", transferErr)
 					_ = writer.writeProtocol(zmodemCancel)
 					// A broken sender can leave ZRINIT bytes in the pty input
 					// queue. Closing the session is the only reliable way to keep
@@ -158,7 +158,7 @@ func runZmodemAwareShell(ctx context.Context, host sshconfig.Host, stdin io.Read
 					return fmt.Errorf("zmodem transfer aborted: %w", transferErr)
 				}
 				paused.Store(false)
-				fmt.Fprint(stderr, "\r\nwhop zmodem: transfer complete\r\n")
+				fmt.Fprint(stderr, "\rwhop zmodem: transfer complete\r\n")
 				break
 			}
 		}
