@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -257,5 +258,26 @@ func TestDisplayConfigPathShortensHome(t *testing.T) {
 	m.width = 60
 	if view := plainView(m); strings.Contains(view, "very") {
 		t.Fatalf("narrow header should omit the config path:\n%s", view)
+	}
+}
+
+func TestMainScreenGolden(t *testing.T) {
+	m, _ := newTestModel(t, testHosts())
+	got := []byte(plainView(m))
+	path := filepath.Join("testdata", "main-screen.golden")
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, got, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden (run UPDATE_GOLDEN=1 go test ./internal/ui -run TestMainScreenGolden): %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("main screen changed\n--- want ---\n%s\n--- got ---\n%s", want, got)
 	}
 }

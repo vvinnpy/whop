@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	coreconnector "whop/internal/connector"
 	"whop/internal/core"
 	"whop/internal/sshconfig"
 )
@@ -45,6 +46,8 @@ type Options struct {
 	Record          bool
 	Load            HostLoader
 	Connect         ConnectFunc
+	Forward         func(sshconfig.Host, coreconnector.ForwardSpec) tea.Cmd
+	SFTP            func(sshconfig.Host) tea.Cmd
 	LoadMacros      MacroLoader
 	RunMacro        MacroRunner
 	ToggleFavorite  func(sshconfig.Host, bool) error
@@ -56,6 +59,7 @@ type Options struct {
 	SetHostPassword func(sshconfig.Host, string) error
 	SetTags         func(sshconfig.Host, []string) error
 	SaveNotes       func(sshconfig.Host, string) error
+	SetRecord       func(sshconfig.Host, bool) error
 	SetLoginMode    func(sshconfig.Host, sshconfig.AccessMode) error
 }
 
@@ -81,6 +85,8 @@ type Model struct {
 	configPath      string
 	load            HostLoader
 	connect         ConnectFunc
+	startForward    func(sshconfig.Host, coreconnector.ForwardSpec) tea.Cmd
+	openSFTP        func(sshconfig.Host) tea.Cmd
 	loadMacros      MacroLoader
 	runMacro        MacroRunner
 	toggleFavorite  func(sshconfig.Host, bool) error
@@ -92,6 +98,7 @@ type Model struct {
 	setHostPassword func(sshconfig.Host, string) error
 	setTags         func(sshconfig.Host, []string) error
 	saveNotes       func(sshconfig.Host, string) error
+	setRecord       func(sshconfig.Host, bool) error
 	setLoginMode    func(sshconfig.Host, sshconfig.AccessMode) error
 
 	allHosts []sshconfig.Host
@@ -141,6 +148,11 @@ type Model struct {
 	notesInput  textField
 	notesTarget sshconfig.Host
 
+	forwardMode   bool
+	forwardFields []textField
+	forwardFocus  int
+	forwardTarget sshconfig.Host
+
 	macroMode   bool
 	macroNames  []string
 	macroCursor int
@@ -158,6 +170,8 @@ func New(opts Options) *Model {
 		configPath:      opts.ConfigPath,
 		load:            opts.Load,
 		connect:         opts.Connect,
+		startForward:    opts.Forward,
+		openSFTP:        opts.SFTP,
 		loadMacros:      opts.LoadMacros,
 		runMacro:        opts.RunMacro,
 		toggleFavorite:  opts.ToggleFavorite,
@@ -169,6 +183,7 @@ func New(opts Options) *Model {
 		setHostPassword: opts.SetHostPassword,
 		setTags:         opts.SetTags,
 		saveNotes:       opts.SaveNotes,
+		setRecord:       opts.SetRecord,
 		setLoginMode:    opts.SetLoginMode,
 		filter:          opts.InitialFilter,
 		initialStatus:   opts.InitialStatus,
@@ -249,6 +264,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.notesMode {
 		return m.updateNotes(msg)
+	}
+	if m.forwardMode {
+		return m.updateForward(msg)
 	}
 	if m.macroMode {
 		return m.updateMacros(msg)
@@ -340,17 +358,16 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.startEdit()
 	case "n":
 		m.startNotes()
+	case "p":
+		m.startForwardForm()
+	case "s":
+		return m.startSFTP()
 	case "m":
 		m.startMacros()
 	case "L":
 		m.startAccess()
 	case "R":
-		m.record = !m.record
-		if m.record {
-			m.status = "recording enabled for next session"
-		} else {
-			m.status = "recording disabled"
-		}
+		m.toggleSelectedRecording()
 	case "?":
 		m.help = true
 	case "esc":
@@ -382,8 +399,160 @@ func (m *Model) connectSelected() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.err = nil
-	m.status = fmt.Sprintf("connecting to %s...", host.Alias)
-	return m, m.connect(host, m.record)
+	record := host.Record || m.record
+	if record {
+		m.status = fmt.Sprintf("connecting to %s with recording...", host.Alias)
+	} else {
+		m.status = fmt.Sprintf("connecting to %s...", host.Alias)
+	}
+	return m, m.connect(host, record)
+}
+
+func (m *Model) toggleSelectedRecording() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	if m.setRecord == nil {
+		m.err = fmt.Errorf("recording policy is not configured")
+		m.status = "recording unavailable"
+		return
+	}
+	enabled := !host.Record
+	if err := m.setRecord(host, enabled); err != nil {
+		m.err = err
+		m.status = "recording policy update failed"
+		return
+	}
+	m.updateHostRecording(host.Alias, enabled)
+	m.err = nil
+	if enabled {
+		m.status = fmt.Sprintf("recording enabled for %s", host.Alias)
+	} else {
+		m.status = fmt.Sprintf("recording disabled for %s", host.Alias)
+	}
+}
+
+func (m *Model) updateHostRecording(alias string, enabled bool) {
+	for i := range m.allHosts {
+		if m.allHosts[i].Alias == alias {
+			m.allHosts[i].Record = enabled
+		}
+	}
+	for i := range m.filtered {
+		if m.filtered[i].Alias == alias {
+			m.filtered[i].Record = enabled
+		}
+	}
+}
+
+func (m *Model) selectedRecording() bool {
+	if m.record {
+		return true
+	}
+	host, ok := m.selected()
+	return ok && host.Record
+}
+
+func (m *Model) startSFTP() (tea.Model, tea.Cmd) {
+	host, ok := m.selected()
+	if !ok {
+		return m, nil
+	}
+	if m.openSFTP == nil {
+		m.err = fmt.Errorf("SFTP is not configured")
+		m.status = "SFTP unavailable"
+		return m, nil
+	}
+	m.err = nil
+	m.status = fmt.Sprintf("opening SFTP for %s...", host.Alias)
+	return m, m.openSFTP(host)
+}
+
+func (m *Model) startForwardForm() {
+	host, ok := m.selected()
+	if !ok {
+		return
+	}
+	if m.startForward == nil {
+		m.err = fmt.Errorf("port forwarding is not configured")
+		m.status = "forwarding unavailable"
+		return
+	}
+	width := m.width - 20
+	if width < 20 {
+		width = 20
+	}
+	m.forwardFields = []textField{
+		newTextField("Type", "local", width),
+		newTextField("Bind", "127.0.0.1:8080", width),
+		newTextField("Destination", "localhost:22", width),
+	}
+	m.forwardFocus = 0
+	m.forwardFields[0].Focus()
+	m.forwardTarget = host
+	m.forwardMode = true
+	m.err = nil
+	m.status = "choose local, remote, or dynamic"
+}
+
+func (m *Model) updateForward(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.forwardMode = false
+		m.status = "forwarding cancelled"
+		return m, nil
+	case "tab":
+		m.focusForwardField(1)
+		return m, nil
+	case "shift+tab":
+		m.focusForwardField(-1)
+		return m, nil
+	case "enter":
+		if m.forwardFocus < len(m.forwardFields)-1 {
+			m.focusForwardField(1)
+			return m, nil
+		}
+		return m.submitForward()
+	case "ctrl+s":
+		return m.submitForward()
+	}
+	return m, m.forwardFields[m.forwardFocus].Update(msg)
+}
+
+func (m *Model) focusForwardField(delta int) {
+	if len(m.forwardFields) == 0 {
+		return
+	}
+	next := (m.forwardFocus + delta + len(m.forwardFields)) % len(m.forwardFields)
+	m.forwardFields[m.forwardFocus].Blur()
+	m.forwardFocus = next
+	m.forwardFields[m.forwardFocus].Focus()
+}
+
+func (m *Model) submitForward() (tea.Model, tea.Cmd) {
+	if m.startForward == nil {
+		m.err = fmt.Errorf("port forwarding is not configured")
+		m.status = "forwarding failed"
+		return m, nil
+	}
+	kind := coreconnector.ForwardKind(strings.ToLower(strings.TrimSpace(m.forwardFields[0].Value())))
+	bind := strings.TrimSpace(m.forwardFields[1].Value())
+	destination := strings.TrimSpace(m.forwardFields[2].Value())
+	raw := bind
+	if kind != coreconnector.ForwardDynamic {
+		raw += ":" + destination
+	}
+	spec, err := coreconnector.ParseForwardSpec(kind, raw)
+	if err != nil {
+		m.err = err
+		m.status = "invalid forwarding rule"
+		return m, nil
+	}
+	m.err = nil
+	m.forwardMode = false
+	m.status = fmt.Sprintf("starting %s forwarding on %s", spec.Kind, spec.BindAddress())
+	return m, m.startForward(m.forwardTarget, spec)
 }
 
 func (m *Model) startMacros() {

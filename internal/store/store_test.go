@@ -38,6 +38,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := db.SetLoginOverride("prod-db", &service); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SetRecord("prod-db", true); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	if err := db.RecordConnect("prod-db", at); err != nil {
 		t.Fatal(err)
@@ -55,6 +58,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if meta.LoginOverride == nil || *meta.LoginOverride {
 		t.Fatalf("login override not stored: %+v", meta)
+	}
+	if !meta.Record {
+		t.Fatalf("record policy not stored: %+v", meta)
 	}
 	if len(meta.Tags) != 2 || meta.Tags[0] != "db" || meta.Tags[1] != "prod" {
 		t.Fatalf("unexpected tags: %#v", meta.Tags)
@@ -96,6 +102,9 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	if meta.LoginOverride == nil || *meta.LoginOverride {
 		t.Fatalf("login override did not persist: %+v", meta)
+	}
+	if !meta.Record {
+		t.Fatalf("record policy did not persist: %+v", meta)
 	}
 }
 
@@ -153,7 +162,7 @@ func TestOpenMigratesLegacyHostMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !meta.Favorite || meta.Notes != "legacy" || meta.LoginOverride != nil {
+	if !meta.Favorite || meta.Notes != "legacy" || meta.LoginOverride != nil || meta.Record {
 		t.Fatalf("legacy metadata not preserved: %+v", meta)
 	}
 	login := true
@@ -176,6 +185,9 @@ func TestStoreValidation(t *testing.T) {
 		t.Fatal("expected empty alias error")
 	}
 	if err := db.SetLoginOverride("", nil); err == nil {
+		t.Fatal("expected empty alias error")
+	}
+	if err := db.SetRecord("", true); err == nil {
 		t.Fatal("expected empty alias error")
 	}
 	if err := db.SetNotes("", "note"); err == nil {

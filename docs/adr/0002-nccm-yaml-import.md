@@ -36,3 +36,10 @@ Negative:
   unsupported flags are reported and omitted rather than guessed.
 - Password-based nccm automation cannot be migrated automatically; whop uses
   interactive credential entry or its future vault instead.
+
+## Update (2026-11-05)
+
+ADR 0003 supersedes the earlier statement that nccm passwords are never
+persisted. With explicit `--apply`, nccm `-P` values are stored only in the
+encrypted vault; dry-run never creates or modifies the vault. SSH config and
+SQLite still never contain those passwords.

@@ -51,6 +51,7 @@ type Host struct {
 	Notes           string    `json:"notes,omitempty"`
 	LastConnectedAt time.Time `json:"last_connected_at,omitempty"`
 	ConnectCount    int       `json:"connect_count,omitempty"`
+	Record          bool      `json:"recording,omitempty"`
 }
 
 // IsServer reports whether the host should appear in the default server list.

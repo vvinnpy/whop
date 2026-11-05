@@ -21,6 +21,9 @@ jobs:
       - name: gofmt
         shell: bash
         run: test -z "$(gofmt -l .)"
+      - name: mod tidy
+        shell: bash
+        run: test -z "$(go mod tidy -diff)"
       - name: vet
         run: go vet ./...
       - name: test

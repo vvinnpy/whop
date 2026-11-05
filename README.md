@@ -86,6 +86,15 @@ whop tag prod-db prod db
 whop note prod-db "primary database"
 whop access github.com service
 whop access prod-db auto
+whop record prod-db on
+
+# Port forwarding
+whop forward -L 127.0.0.1:8080:db.internal:5432 prod-db
+whop forward -R 9000:localhost:3000 prod-db
+whop forward -D 127.0.0.1:1080 prod-db
+
+# Dual-pane SFTP browser
+whop sftp prod-db
 
 # Record, replay, and search sessions
 whop -record
@@ -270,8 +279,10 @@ to quit.
 | `c` | copy the selected host and review the diff |
 | `e` | edit host name, identity, tags, password, and review the diff |
 | `n` | edit notes |
+| `p` | configure local/remote/dynamic port forwarding |
+| `s` | open the dual-pane SFTP browser |
 | `m` | run an automation macro |
-| `R` | toggle session recording |
+| `R` | toggle per-host recording policy |
 | `?` | help |
 | `tab` / `esc` | apply search and return to list actions |
 | `q` | quit |
@@ -300,11 +311,12 @@ This reports the failing stage (`dial`, `handshake`, `auth`, `host_key`,
 ## Status
 
 Early V0.1 development: the SSH-first TUI, safe config editing, metadata,
-session recording/replay/search, SQLite FTS5 transcript search, default
-plain-text transcript redaction, snippets, expect-style macros, persisted
-automation audit logs, safe diff-previewed config edits, nccm migration,
-ZMODEM transfer, and release packaging are functional. See [docs/plan.md](docs/plan.md) for
-remaining hardening and future connectors.
+session recording/replay/search, per-host recording policy, SQLite FTS5
+transcript search, default plain-text transcript redaction, local/remote/dynamic
+port forwarding, dual-pane SFTP transfer, snippets, expect-style macros,
+persisted automation audit logs, safe diff-previewed config edits, nccm
+migration, ZMODEM transfer, and release packaging are functional. See
+[docs/plan.md](docs/plan.md) for remaining hardening and future connectors.
 
 Host passwords are stored only as authenticated ciphertext in the local vault,
 using Argon2id and AES-256-GCM. They are never written to SSH config, SQLite,

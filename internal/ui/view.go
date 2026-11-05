@@ -45,6 +45,9 @@ func (m *Model) View() string {
 	if m.notesMode {
 		return joinView(header, filter, m.viewNotes(width), m.viewFooter(width), m.viewStatus(width))
 	}
+	if m.forwardMode {
+		return joinView(header, filter, m.viewForward(width), m.viewFooter(width), m.viewStatus(width))
+	}
 	if m.macroMode {
 		return joinView(header, filter, m.viewMacros(width), m.viewFooter(width), m.viewStatus(width))
 	}
@@ -87,7 +90,7 @@ func (m *Model) viewHeader(width int) string {
 		left += styleDim.Render("  " + path)
 	}
 	modeText := m.modeLabel()
-	if m.record {
+	if m.selectedRecording() {
 		modeText += " · recording"
 	}
 	mode := styleAccent.Render(modeText)
@@ -306,6 +309,26 @@ func (m *Model) viewEdit(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *Model) viewForward(width int) string {
+	lines := []string{
+		styleAccent.Render(" FORWARD / " + m.forwardTarget.Alias),
+		"",
+	}
+	for index, field := range m.forwardFields {
+		prefix := "  "
+		if index == m.forwardFocus {
+			prefix = "> "
+		}
+		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
+	}
+	lines = append(lines,
+		"",
+		styleDim.Render(" Type: local, remote, or dynamic (SOCKS5)"),
+		styleDim.Render(" Destination is ignored for dynamic forwarding"),
+	)
+	return strings.Join(lines, "\n")
+}
+
 func (m *Model) viewNotes(width int) string {
 	lines := []string{
 		styleAccent.Render(" NOTES " + m.notesTarget.Alias),
@@ -356,6 +379,13 @@ func (m *Model) viewAccess(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func recordingLabel(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
+}
+
 func accessChoiceLabel(mode sshconfig.AccessMode) string {
 	switch mode {
 	case sshconfig.AccessLogin:
@@ -388,6 +418,8 @@ func (m *Model) viewHelp(width int) string {
 		"  c             copy selected host",
 		"  e             edit connection",
 		"  n             edit notes",
+		"  p             port forwarding",
+		"  s             SFTP file browser",
 		styleAccent.Render(" SESSIONS"),
 		"  m             run macro",
 		"  R             recording on/off",
@@ -418,6 +450,12 @@ func (m *Model) viewFooter(width int) string {
 		}
 	} else if m.notesMode {
 		hints = []footerHint{{key: "ctrl+s", action: "save"}, {key: "esc", action: "cancel"}}
+	} else if m.forwardMode {
+		hints = []footerHint{
+			{key: "tab/enter", action: "next"},
+			{key: "ctrl+s", action: "start"},
+			{key: "esc", action: "cancel"},
+		}
 	} else if m.diffMode {
 		hints = []footerHint{
 			{key: "enter/y", action: "apply"},

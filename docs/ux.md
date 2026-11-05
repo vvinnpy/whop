@@ -55,6 +55,9 @@ The detail panel is hidden below 96 columns. The list remains the primary surfac
 | `N` | create a host |
 | `c` | copy selected host into the create form |
 | `e` | edit selected host |
+| `p` | configure local/remote/dynamic forwarding |
+| `s` | open the dual-pane SFTP browser |
+| `R` | toggle per-host recording policy |
 | `?` | help overlay |
 | `q` / `ctrl+c` | quit |
 

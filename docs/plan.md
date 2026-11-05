@@ -41,7 +41,7 @@ connector/session abstractions rather than bolted onto the UI.
 - [x] built-in playback with `charmbracelet/x/vt`
 - [x] SQLite FTS5 transcript index with stale-entry reconciliation
 - [x] default plain-text transcript redaction
-- [ ] per-host recording policy
+- [x] per-host recording policy
 
 ### M3 — automation
 
@@ -64,12 +64,18 @@ connector/session abstractions rather than bolted onto the UI.
 - [ ] Serial transport integration
 - [ ] Telnet binary-mode (IAC escaping) support
 
+### M2.5 — SSH forwarding and files
+
+- [x] local/remote/dynamic SOCKS5 forwarding with CLI and TUI
+- [x] dual-pane SFTP browser with guarded upload/download
+- [x] protocol-neutral Connector and FileTransfer interfaces
+
 ### M5 — additional connectors
 
 - Serial connector via `go.bug.st/serial`
 - Telnet connector with RFC 854 negotiation
 - connector schema-driven forms
-- optional SFTP/FTP/WebDAV/S3 file browsers
+- optional FTP/WebDAV/S3 file browsers
 
 ### M6 — distribution
 
@@ -89,16 +95,12 @@ Completed in this iteration:
 - [x] in-process SSH connector using `x/crypto/ssh`
 - [x] key and ssh-agent authentication
 - [x] password and keyboard-interactive prompts
-- [x] single-hop ProxyJump
+- [x] single-hop and multi-hop ProxyJump
 - [x] CLI: `whop`, `whop list`, `whop connect`, `whop version`
 - [x] unit tests and an in-process SSH integration test
 - [x] three-platform CI with `CGO_ENABLED=0`
 
-Deferred to the next milestone:
-
-- [ ] password/keyboard-interactive prompts
-- [ ] ProxyJump
-- [ ] safe config writes and metadata
+No M0 items remain deferred.
 
 ## V1 status
 
@@ -107,11 +109,13 @@ The SSH-first V0.1 scope is functional:
 - responsive nccm-style TUI
 - SSH key/password/keyboard-interactive auth
 - optional ssh-agent integration (disabled by default)
-- single-hop ProxyJump
+- single-hop and multi-hop ProxyJump
+- local/remote/dynamic forwarding from CLI and TUI
+- dual-pane SFTP browser from CLI and TUI
 - structured connection diagnostics (`whop diagnose -json`)
 - safe single-Host config editing with diff preview and stale-preview protection
 - favorites, tags, notes, recents
-- asciicast recording, replay, transcript search
+- asciicast recording, replay, transcript search, per-host recording policy
 - ZMODEM `rz`/`sz` over SSH
 - snippets and batch command execution
 - encrypted local host-password vault with automatic SSH password auth
@@ -121,8 +125,8 @@ The SSH-first V0.1 scope is functional:
 Post-V0.1 work:
 
 - runbook engine
-- automatic ZMODEM detection and Serial/Telnet transports
-- per-host recording policy
+- Serial/Telnet transports
+- snippet parameters
 - distro packaging, signing/notarization, and auto-update
 
 ## M0 architecture
@@ -132,7 +136,7 @@ cmd/whop/          process entry point
 internal/cli/         argument parsing and commands
 internal/sshconfig/   config expansion, parsing, classification
 internal/core/        host filtering and use cases
-internal/connector/   connector interfaces and SSH implementation
+internal/connector/   Connector/FileTransfer interfaces and SSH implementation
 internal/ui/          Bubble Tea model, views, keymaps
 internal/platform/    OS-specific PTY/path helpers (introduced as needed)
 ```
@@ -150,8 +154,9 @@ internal/platform/    OS-specific PTY/path helpers (introduced as needed)
 ## Testing strategy
 
 - unit tests for config expansion, classification, filtering, and TUI state
-- golden-ish view assertions for wide and narrow layouts
-- in-process SSH server integration test; no system `sshd`
+- golden test for the stable main-screen rendering
+- fuzz test for SSH config parsing and Include handling
+- in-process SSH server integration tests, including local/remote/dynamic forwarding and SFTP
 - CLI tests with injected output writers
-- `go vet` and `CGO_ENABLED=0 go build ./...` in CI
-- cross-platform build matrix on every push
+- race tests, `go vet`, `go mod tidy -diff`, and `CGO_ENABLED=0 go build ./...` in CI
+- Linux/macOS/Windows test matrix plus cross-platform build matrix on every push

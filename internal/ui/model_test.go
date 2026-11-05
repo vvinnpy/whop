@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	coreconnector "whop/internal/connector"
 	"whop/internal/sshconfig"
 )
 
@@ -423,6 +424,7 @@ func TestToggleFavorite(t *testing.T) {
 func TestRecordToggle(t *testing.T) {
 	hosts := testHosts()
 	var recorded bool
+	var persisted bool
 	m := New(Options{
 		ConfigPath: "~/.ssh/config",
 		Load: func() ([]sshconfig.Host, error) {
@@ -432,13 +434,17 @@ func TestRecordToggle(t *testing.T) {
 			recorded = record
 			return nil
 		},
+		SetRecord: func(_ sshconfig.Host, enabled bool) error {
+			persisted = enabled
+			return nil
+		},
 	})
 	msg := m.Init()()
 	m.Update(msg)
 
 	sendKey(m, runeKey("R"))
-	if !m.record {
-		t.Fatal("recording should be enabled")
+	if !persisted || !m.allHosts[0].Record {
+		t.Fatal("recording policy should be enabled for the selected host")
 	}
 	if !strings.Contains(plainView(m), "rec") {
 		t.Fatalf("recording badge missing:\n%s", plainView(m))
@@ -1099,5 +1105,95 @@ func TestEditEnterAdvancesFieldsAndLastFieldSaves(t *testing.T) {
 	sendKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.editing {
 		t.Fatal("enter on the last field should save the form")
+	}
+}
+
+func TestForwardFormBuildsLocalSpec(t *testing.T) {
+	hosts := testHosts()
+	var gotHost string
+	var gotSpec coreconnector.ForwardSpec
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		Forward: func(host sshconfig.Host, spec coreconnector.ForwardSpec) tea.Cmd {
+			gotHost = host.Alias
+			gotSpec = spec
+			return tea.Quit
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+
+	sendKey(m, runeKey("p"))
+	if !m.forwardMode || !strings.Contains(plainView(m), "FORWARD / prod-db") {
+		t.Fatalf("forward form missing:\n%s", plainView(m))
+	}
+	cmd := sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("forward submission did not quit the TUI")
+	}
+	if gotHost != "prod-db" {
+		t.Fatalf("host = %q", gotHost)
+	}
+	want := coreconnector.ForwardSpec{Kind: coreconnector.ForwardLocal, BindHost: "127.0.0.1", BindPort: 8080, DestinationHost: "localhost", DestinationPort: 22}
+	if gotSpec != want {
+		t.Fatalf("spec = %#v, want %#v", gotSpec, want)
+	}
+	if m.forwardMode {
+		t.Fatal("forward form stayed open")
+	}
+}
+
+func TestForwardFormSupportsDynamicSOCKS(t *testing.T) {
+	hosts := testHosts()
+	var gotSpec coreconnector.ForwardSpec
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		Forward: func(_ sshconfig.Host, spec coreconnector.ForwardSpec) tea.Cmd {
+			gotSpec = spec
+			return tea.Quit
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("p"))
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	sendKey(m, runeKey("dynamic"))
+	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	sendKey(m, runeKey("127.0.0.1:1080"))
+	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	want := coreconnector.ForwardSpec{Kind: coreconnector.ForwardDynamic, BindHost: "127.0.0.1", BindPort: 1080}
+	if gotSpec != want {
+		t.Fatalf("spec = %#v, want %#v", gotSpec, want)
+	}
+}
+
+func TestSFTPShortcutStartsBrowser(t *testing.T) {
+	hosts := testHosts()
+	var gotHost string
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		SFTP: func(host sshconfig.Host) tea.Cmd {
+			gotHost = host.Alias
+			return tea.Quit
+		},
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	cmd := sendKey(m, runeKey("s"))
+	if cmd == nil || gotHost != "prod-db" {
+		t.Fatalf("SFTP shortcut host=%q cmd=%v", gotHost, cmd)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	gliderssh "github.com/gliderlabs/ssh"
+	"github.com/pkg/sftp"
 	cryptossh "golang.org/x/crypto/ssh"
 
 	"whop/internal/session"
@@ -100,6 +101,22 @@ func newTestSSHServerWithAuth(t *testing.T, allowed cryptossh.PublicKey, passwor
 	server.ChannelHandlers = map[string]gliderssh.ChannelHandler{
 		"session":      gliderssh.DefaultChannelHandlers["session"],
 		"direct-tcpip": gliderssh.DirectTCPIPHandler,
+	}
+	forwardHandler := &gliderssh.ForwardedTCPHandler{}
+	server.RequestHandlers = map[string]gliderssh.RequestHandler{
+		"tcpip-forward":        forwardHandler.HandleSSHRequest,
+		"cancel-tcpip-forward": forwardHandler.HandleSSHRequest,
+	}
+	server.ReversePortForwardingCallback = func(gliderssh.Context, string, uint32) bool { return true }
+	server.SubsystemHandlers = map[string]gliderssh.SubsystemHandler{
+		"sftp": func(session gliderssh.Session) {
+			fileServer, err := sftp.NewServer(session)
+			if err != nil {
+				return
+			}
+			_ = fileServer.Serve()
+			_ = fileServer.Close()
+		},
 	}
 	server.LocalPortForwardingCallback = func(_ gliderssh.Context, destination string, port uint32) bool {
 		ts.mu.Lock()

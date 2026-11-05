@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	coreconnector "whop/internal/connector"
 	"whop/internal/sshconfig"
 )
 
@@ -67,6 +68,8 @@ type Options struct {
 type Connector struct {
 	opts Options
 }
+
+var _ coreconnector.Connector = (*Connector)(nil)
 
 // New creates an SSH connector.
 func New(opts Options) *Connector {

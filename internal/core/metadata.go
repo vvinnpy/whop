@@ -16,6 +16,7 @@ func ApplyMetadata(hosts []sshconfig.Host, metas map[string]store.Meta) []sshcon
 		host.Notes = meta.Notes
 		host.LastConnectedAt = meta.LastConnectedAt
 		host.ConnectCount = meta.ConnectCount
+		host.Record = meta.Record
 		host.AccessMode = sshconfig.AccessModeFromOverride(meta.LoginOverride)
 		host.Tags = store.SortTags(append(append([]string(nil), host.Tags...), meta.Tags...))
 		out[i] = host

@@ -23,11 +23,12 @@ func TestApplyMetadata(t *testing.T) {
 			LastConnectedAt: at,
 			ConnectCount:    3,
 			LoginOverride:   &service,
+			Record:          true,
 		},
 	}
 
 	got := ApplyMetadata(hosts, metas)
-	if !got[0].Favorite || got[0].Notes != "primary" || got[0].ConnectCount != 3 || !got[0].LastConnectedAt.Equal(at) {
+	if !got[0].Favorite || got[0].Notes != "primary" || got[0].ConnectCount != 3 || !got[0].LastConnectedAt.Equal(at) || !got[0].Record {
 		t.Fatalf("metadata not applied: %+v", got[0])
 	}
 	if got[0].AccessMode != sshconfig.AccessService || got[0].IsLoginable() {

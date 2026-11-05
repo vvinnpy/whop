@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"whop/internal/automation"
+	coreconnector "whop/internal/connector"
 	sshconn "whop/internal/connector/ssh"
 	"whop/internal/core"
 	"whop/internal/session"
@@ -49,6 +50,8 @@ type Deps struct {
 	ZmodemGet    func(sshconfig.Host, []sshconfig.Host, []string, string, int64, bool, bool, io.Writer) error
 	RunCommand   func(sshconfig.Host, []sshconfig.Host, string, bool) (string, error)
 	RunMacro     func(context.Context, sshconfig.Host, []sshconfig.Host, automation.Macro, io.Writer, io.Writer, automation.EventFunc, bool) error
+	Forward      func(context.Context, sshconfig.Host, []sshconfig.Host, coreconnector.ForwardSpec, bool, func(coreconnector.ForwardStatus) error) error
+	RunSFTP      func(sshconfig.Host, []sshconfig.Host, bool) error
 	Diagnose     func(sshconfig.Host, []sshconfig.Host, bool) error
 	Password     sshconn.PasswordProvider
 	Relaunch     func() error
@@ -61,6 +64,7 @@ type MetaStore interface {
 	All() (map[string]store.Meta, error)
 	SetFavorite(string, bool) error
 	SetLoginOverride(string, *bool) error
+	SetRecord(string, bool) error
 	SetNotes(string, string) error
 	SetTags(string, []string) error
 	RenameHost(string, string) error
@@ -107,6 +111,12 @@ func NewDeps() Deps {
 		RunMacro: func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, macro automation.Macro, stdout, stderr io.Writer, onEvent automation.EventFunc, useAgent bool) error {
 			return defaultRunMacro(ctx, host, hosts, macro, stdout, stderr, onEvent, useAgent, password)
 		},
+		Forward: func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, spec coreconnector.ForwardSpec, useAgent bool, ready func(coreconnector.ForwardStatus) error) error {
+			return defaultForward(ctx, host, hosts, spec, useAgent, ready, password)
+		},
+		RunSFTP: func(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
+			return defaultRunSFTP(host, hosts, useAgent, password)
+		},
 		Diagnose: func(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
 			return defaultDiagnose(host, hosts, useAgent, password)
 		},
@@ -130,8 +140,14 @@ func Run(args []string, deps Deps) int {
 		return runList(args[1:], deps)
 	case "connect":
 		return runConnect(args[1:], deps)
+	case "forward":
+		return runForward(args[1:], deps)
+	case "sftp":
+		return runSFTP(args[1:], deps)
 	case "favorite":
 		return runFavorite(args[1:], deps)
+	case "record":
+		return runRecord(args[1:], deps)
 	case "access":
 		return runAccess(args[1:], deps)
 	case "note":
@@ -251,6 +267,16 @@ func normalizeDeps(deps Deps) Deps {
 			return defaultRunMacro(ctx, host, hosts, macro, stdout, stderr, onEvent, useAgent, deps.Password)
 		}
 	}
+	if deps.Forward == nil {
+		deps.Forward = func(ctx context.Context, host sshconfig.Host, hosts []sshconfig.Host, spec coreconnector.ForwardSpec, useAgent bool, ready func(coreconnector.ForwardStatus) error) error {
+			return defaultForward(ctx, host, hosts, spec, useAgent, ready, deps.Password)
+		}
+	}
+	if deps.RunSFTP == nil {
+		deps.RunSFTP = func(host sshconfig.Host, hosts []sshconfig.Host, useAgent bool) error {
+			return defaultRunSFTP(host, hosts, useAgent, deps.Password)
+		}
+	}
 	if deps.LookupEnv == nil {
 		deps.LookupEnv = os.LookupEnv
 	}
@@ -291,6 +317,8 @@ func runTUI(args []string, deps Deps) int {
 
 	for {
 		var pendingConnect *connectRequest
+		var pendingForward *forwardRequest
+		var pendingSFTP *sftpRequest
 		var pendingMacro *macroRequest
 		options := ui.Options{
 			ConfigPath:    configPathValue,
@@ -331,6 +359,9 @@ func runTUI(args []string, deps Deps) int {
 			SaveNotes: func(host sshconfig.Host, note string) error {
 				return metaStore.SetNotes(host.Alias, note)
 			},
+			SetRecord: func(host sshconfig.Host, enabled bool) error {
+				return metaStore.SetRecord(host.Alias, enabled)
+			},
 			SetLoginMode: func(host sshconfig.Host, mode sshconfig.AccessMode) error {
 				switch mode {
 				case sshconfig.AccessLogin:
@@ -345,6 +376,14 @@ func runTUI(args []string, deps Deps) int {
 			},
 			Connect: func(host sshconfig.Host, record bool) tea.Cmd {
 				pendingConnect = &connectRequest{host: host, record: record}
+				return tea.Quit
+			},
+			Forward: func(host sshconfig.Host, spec coreconnector.ForwardSpec) tea.Cmd {
+				pendingForward = &forwardRequest{host: host, spec: spec}
+				return tea.Quit
+			},
+			SFTP: func(host sshconfig.Host) tea.Cmd {
+				pendingSFTP = &sftpRequest{host: host}
 				return tea.Quit
 			},
 			LoadMacros: func() ([]string, error) {
@@ -377,6 +416,36 @@ func runTUI(args []string, deps Deps) int {
 			} else {
 				_ = metaStore.RecordConnect(request.host.Alias, time.Now())
 				tuiNotice = "session ended"
+			}
+			return relaunchTUI(deps, tuiNotice)
+
+		case pendingForward != nil:
+			request := *pendingForward
+			pendingForward = nil
+			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
+			if loadErr != nil {
+				tuiNotice = fmt.Sprintf("port forwarding for %s failed: %v", request.host.Alias, loadErr)
+				return relaunchTUI(deps, tuiNotice)
+			}
+			if err := runForwardInteractive(deps, request.host, hosts, request.spec); err != nil {
+				tuiNotice = fmt.Sprintf("port forwarding for %s failed: %v", request.host.Alias, err)
+			} else {
+				tuiNotice = "port forwarding ended"
+			}
+			return relaunchTUI(deps, tuiNotice)
+
+		case pendingSFTP != nil:
+			request := *pendingSFTP
+			pendingSFTP = nil
+			hosts, loadErr := loadHosts(deps, metaStore, configPathValue)
+			if loadErr != nil {
+				tuiNotice = fmt.Sprintf("SFTP for %s failed: %v", request.host.Alias, loadErr)
+				return relaunchTUI(deps, tuiNotice)
+			}
+			if err := deps.RunSFTP(request.host, hosts, deps.UseAgent); err != nil {
+				tuiNotice = fmt.Sprintf("SFTP for %s failed: %v", request.host.Alias, err)
+			} else {
+				tuiNotice = "SFTP browser closed"
 			}
 			return relaunchTUI(deps, tuiNotice)
 
@@ -546,7 +615,7 @@ func runConnect(args []string, deps Deps) int {
 	if *asJSON {
 		stdout, stderr = io.Discard, io.Discard
 	}
-	if err := deps.Connect(host, hosts, deps.Stdin, stdout, stderr, *record, deps.UseAgent); err != nil {
+	if err := deps.Connect(host, hosts, deps.Stdin, stdout, stderr, *record || host.Record, deps.UseAgent); err != nil {
 		if *asJSON {
 			writeDiagnostic(deps, host.Alias, err, true)
 			return 1
@@ -1368,7 +1437,10 @@ Usage:
   whop [flags] [filter...]       open the interactive host list
   whop list [flags]              list hosts
   whop connect [flags] <alias>   connect to a host
+  whop forward [flags] <alias>   local/remote/dynamic port forwarding
+  whop sftp [flags] <alias>      dual-pane SFTP file browser
   whop favorite [flags] <alias> <on|off>
+  whop record [flags] <alias> [on|off]
   whop access [flags] <alias> [auto|login|service]
   whop note [flags] <alias> [text...]
   whop tag [flags] <alias> [tag...]
@@ -1403,6 +1475,20 @@ Flags for connect:
   -config path   path to ssh config
   -record        record the session
   -json          emit a structured connection diagnostic
+
+Flags for record:
+  -config path   path to ssh config
+  -json          emit JSON
+
+Flags for forward:
+  -config path   path to ssh config
+  -L spec        local forward: [bind:]port:host:port (repeatable)
+  -R spec        remote forward: [bind:]port:host:port (repeatable)
+  -D spec        dynamic SOCKS5 forward: [bind:]port (repeatable)
+  -json          emit forwarding status as JSON lines
+
+Flags for sftp:
+  -config path   path to ssh config
 
 Flags for search:
   -dir path       recording directory

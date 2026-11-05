@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"whop/internal/automation"
+	coreconnector "whop/internal/connector"
 )
 
 // StageError adds the failing SSH phase to an error.
@@ -27,12 +28,11 @@ func (e *StageError) Error() string {
 func (e *StageError) Unwrap() error { return e.Err }
 
 // Diagnostic is a machine-readable connection failure summary.
-type Diagnostic struct {
-	Stage    string `json:"stage"`
-	Category string `json:"category"`
-	Host     string `json:"host"`
-	Message  string `json:"message"`
-	Hint     string `json:"hint,omitempty"`
+type Diagnostic = coreconnector.Diagnostic
+
+// Diagnose implements connector.Connector.
+func (c *Connector) Diagnose(host string, err error) Diagnostic {
+	return Diagnose(host, err)
 }
 
 // Diagnose classifies an SSH connection error for humans and agents.

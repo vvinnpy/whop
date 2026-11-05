@@ -40,6 +40,8 @@ Negative:
 - `golang.org/x/crypto/ssh/knownhosts`
 - `golang.org/x/crypto/ssh/agent`
 - `github.com/pkg/sftp`
+- `github.com/anmitsu/go-shlex`
+- `github.com/xx25/go-zmodem`
 - `github.com/kevinburke/ssh_config`
 - `go.bug.st/serial`
 - `github.com/aymanbagabas/go-pty`

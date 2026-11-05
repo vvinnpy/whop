@@ -18,10 +18,11 @@
 11. [审计日志](#11-审计日志)
 12. [ZMODEM 文件传输](#12-zmodem-文件传输)
 13. [连接诊断](#13-连接诊断)
-14. [nccm 配置迁移](#14-nccm-配置迁移)
-15. [当前版本边界](#15-当前版本边界)
-16. [排障速查](#16-排障速查)
-17. [安全模型](#17-安全模型)
+14. [端口转发与 SFTP](#14-端口转发与-sftp)
+15. [nccm 配置迁移](#15-nccm-配置迁移)
+16. [当前版本边界](#16-当前版本边界)
+17. [排障速查](#17-排障速查)
+18. [安全模型](#18-安全模型)
 
 ---
 
@@ -117,8 +118,10 @@ whop prod
 | `c` | 复制当前 Host |
 | `e` | 编辑 Host |
 | `n` | 编辑备注 |
+| `p` | 配置本地 / 远程 / 动态端口转发 |
+| `s` | 打开 SFTP 双窗格文件浏览器 |
 | `m` | 选择并运行宏 |
-| `R` | 为下一次会话切换录制 |
+| `R` | 切换当前主机的录制策略 |
 | `?` | 打开帮助 |
 | `tab` / `esc` | 在过滤输入模式下应用过滤并返回列表操作 |
 | `esc` | 在列表操作模式下清空过滤 |
@@ -382,6 +385,7 @@ WHOP_VAULT_PASSWORD='master-password' WHOP_HOST_PASSWORD='host-password' whop va
 whop favorite prod-db on
 whop tag prod-db prod db
 whop note prod-db "primary database"
+whop record prod-db on
 whop access github.com service
 ```
 
@@ -425,9 +429,12 @@ TUI：
 CLI：
 
 ```bash
-whop -record
+whop record prod-db on
+whop connect prod-db
 whop connect -record prod-db
 ```
+
+`R` 修改的是当前主机的持久化录制策略；`whop record <alias> on|off` 提供等价的 CLI 操作。`-record` 仍然可以作为单次显式覆盖。
 
 默认目录：
 
@@ -722,7 +729,60 @@ whop macro run -json health prod-db
 
 ---
 
-## 14. nccm 配置迁移
+## 14. 端口转发与 SFTP
+
+### 端口转发
+
+本地转发：
+
+```bash
+whop forward -L 127.0.0.1:8080:db.internal:5432 prod-db
+```
+
+远程转发：
+
+```bash
+whop forward -R 9000:localhost:3000 prod-db
+```
+
+动态 SOCKS5 转发：
+
+```bash
+whop forward -D 127.0.0.1:1080 prod-db
+```
+
+语法与 OpenSSH 类似：
+
+- `-L [bind:]port:host:port`
+- `-R [bind:]port:host:port`
+- `-D [bind:]port`
+
+默认绑定 `127.0.0.1`。绑定到 `0.0.0.0` 或 `::` 会把服务暴露给其他机器，动态转发本身不带认证，必须显式确认网络边界。多个 `-L` / `-R` / `-D` 可以同时给出；进程运行到收到 `Ctrl+C` 为止。
+
+TUI 中选中主机按 `p`，填写类型、绑定地址和目标地址后按 `ctrl+s` 启动；退出转发后会自动回到主机列表。
+
+### SFTP 双窗格
+
+```bash
+whop sftp prod-db
+```
+
+也可以在主列表按 `s`。浏览器左侧是本地目录，右侧是远端目录：
+
+- `tab`：切换窗格；
+- `j/k`、方向键：移动；
+- `enter` / `right`：进入目录；
+- `backspace` / `left`：返回上级；
+- `u`：上传当前本地文件；
+- `d`：下载当前远端文件；
+- `r`：刷新；
+- `q` / `esc`：关闭。
+
+上传和下载都拒绝覆盖已有目标文件；失败时会清理未完成的临时目标。远端路径使用 SFTP 服务的当前目录作为默认起点。
+
+---
+
+## 15. nccm 配置迁移
 
 如果你有 nccm YAML：
 
@@ -747,7 +807,7 @@ whop import nccm --apply
 
 ---
 
-## 15. 当前版本边界
+## 16. 当前版本边界
 
 必须区分“路线图”与“当前二进制实际可用能力”。
 
@@ -755,11 +815,13 @@ whop import nccm --apply
 
 - SSH 交互连接；
 - ProxyJump 单跳/多跳；
+- 本地 / 远程 / 动态 SOCKS5 端口转发（CLI + TUI）；
+- SFTP 双窗格浏览与上传下载（CLI + TUI）；
 - 密码/私钥/keyboard-interactive 认证；
 - ssh-agent（可选）；
 - Host 新建、编辑、重命名、diff 预览；
 - vault；
-- 录制、回放、FTS5 搜索；
+- 主机级录制策略、录制、回放、FTS5 搜索；
 - Snippet、批量执行；
 - Macro/expect；
 - 审计日志；
@@ -769,18 +831,16 @@ whop import nccm --apply
 
 当前版本尚未提供用户可用的：
 
-- SFTP 双窗格文件浏览器；
-- 手动的本地/远程/动态端口转发命令或 TUI 面板；
 - `ProxyCommand` / `Match exec`；
 - PKCS#11、GSSAPI、FIDO2、X11 forwarding；
 - RDP/VNC；
 - 云账号同步或团队托管。
 
-README 的 V1 scope 中列出了部分后续目标；以本文“当前已可用/尚未提供”和实际 `whop help` 为准。
+README 的 V1 scope 和本文的“当前已可用/尚未提供”以实际 `whop help` 为准。
 
 ---
 
-## 16. 排障速查
+## 17. 排障速查
 
 | 现象 | 先检查 |
 |---|---|
@@ -793,11 +853,13 @@ README 的 V1 scope 中列出了部分后续目标；以本文“当前已可用
 | 搜不到会话 | 是否录过会话；`whop index`；查询在 `.txt` 中是否存在 |
 | 宏超时 | 用 `whop macro show` 检查 pattern；设备 prompt 是否变化 |
 | ZMODEM 失败 | 远端是否有 `rz`/`sz`；权限、磁盘空间、目标目录 |
+| 端口转发连不上 | 监听地址是否正确；代理端是否允许 TCP forwarding；目标地址是否从远端可达 |
+| SFTP 打不开 | 服务端是否启用 SFTP subsystem；目标路径权限是否足够 |
 | Git/Auth 主机无法交互 | 用 `whop run github.com help`，或 `whop access github.com service` 标记为服务端点 |
 
 ---
 
-## 17. 安全模型
+## 18. 安全模型
 
 whop 的底线：
 
@@ -805,6 +867,7 @@ whop 的底线：
 - 不把密码写进 SQLite、日志、审计事件或命令行参数；
 - 密码 vault 默认需要 master password；
 - 主机 key 校验默认开启；
+- 动态转发默认绑定 loopback，不内置 SOCKS 认证；
 - 编辑配置前预览 diff；
 - 配置写入使用锁、备份、fsync 和原子替换；
 - 核心功能不依赖外部 `ssh`、`scp`、`sftp`、`asciinema` 等程序。
@@ -839,6 +902,7 @@ whop diagnose -json prod-db
 whop favorite prod-db on
 whop tag prod-db prod db
 whop note prod-db "primary database"
+whop record prod-db on
 
 # vault
 whop vault init
@@ -847,6 +911,12 @@ whop vault set prod-db
 whop vault list
 whop vault status
 whop vault delete prod-db
+
+# 转发 / 文件
+whop forward -L 127.0.0.1:8080:db.internal:5432 prod-db
+whop forward -R 9000:localhost:3000 prod-db
+whop forward -D 127.0.0.1:1080 prod-db
+whop sftp prod-db
 
 # 录制 / 搜索
 whop connect -record prod-db
