@@ -25,6 +25,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gofmt
+        if: runner.os == 'Linux'
         shell: bash
         run: test -z "$(gofmt -l .)"
       - name: mod tidy
@@ -33,7 +34,23 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: test
-        run: go test ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -json ./... | tee gotest.jsonl
+      - name: report test failures
+        if: failure()
+        shell: bash
+        run: |
+          if [ ! -f gotest.jsonl ]; then
+            exit 0
+          fi
+          grep -E '"Action":"fail"' gotest.jsonl | tail -50 | while IFS= read -r line; do
+            echo "::error title=go test failure::$line"
+          done
+          grep '"Action":"output"' gotest.jsonl | grep -E -- '--- FAIL|panic:|Error Trace|FAIL' | tail -50 | while IFS= read -r line; do
+            echo "::error title=go test output::$line"
+          done
       - name: build
         shell: bash
         run: CGO_ENABLED=0 go build ./...
