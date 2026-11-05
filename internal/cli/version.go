@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// versionString prefers a release tag injected at build time. Otherwise it
+// uses Go's VCS-stamped module version: an exact tag at tagged commits, a
+// canonical pseudo-version after a tag, or v0.0.0-<timestamp>-<revision> in an
+// untagged repository.
 func versionString() string {
 	if version := strings.TrimSpace(Version); version != "" {
 		return version

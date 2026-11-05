@@ -1,8 +1,10 @@
 .PHONY: build test vet race cross clean
 
 BINARY := whop
-VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
-LDFLAGS ?= -X whop/internal/cli.Version=$(VERSION)
+TAG := $(shell git describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null)
+DIRTY := $(shell test -n "$$(git status --porcelain --untracked-files=no 2>/dev/null)" && printf '+dirty')
+VERSION ?= $(if $(TAG),$(TAG)$(DIRTY),)
+LDFLAGS ?= $(if $(VERSION),-X whop/internal/cli.Version=$(VERSION),)
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/whop
