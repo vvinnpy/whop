@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	coreconnector "whop/internal/connector"
 	"whop/internal/sshconfig"
 )
 
@@ -310,23 +311,71 @@ func (m *Model) viewEdit(width int) string {
 }
 
 func (m *Model) viewForward(width int) string {
+	kind := m.forwardKind()
 	lines := []string{
 		styleAccent.Render(" FORWARD / " + m.forwardTarget.Alias),
 		"",
 	}
-	for index, field := range m.forwardFields {
-		prefix := "  "
-		if index == m.forwardFocus {
-			prefix = "> "
-		}
-		lines = append(lines, ansi.Truncate(prefix+field.View(), width, "~"))
+	typePrefix := "  "
+	if m.forwardFocus == 0 {
+		typePrefix = "> "
 	}
-	lines = append(lines,
-		"",
-		styleDim.Render(" Type: local, remote, or dynamic (SOCKS5)"),
-		styleDim.Render(" Destination is ignored for dynamic forwarding"),
-	)
+	lines = append(lines, ansi.Truncate(typePrefix+m.viewForwardType(), width, "~"))
+	lines = append(lines, styleDim.Render("   left/right or 1/2/3 to choose type"), "")
+
+	bindPrefix := "  "
+	if m.forwardFocus == 1 {
+		bindPrefix = "> "
+	}
+	lines = append(lines, ansi.Truncate(bindPrefix+m.forwardFields[0].View(), width, "~"))
+	if kind == coreconnector.ForwardDynamic {
+		lines = append(lines, styleDim.Render("   Destination: none (chosen by each SOCKS5 request)"))
+	} else {
+		destinationPrefix := "  "
+		if m.forwardFocus == 2 {
+			destinationPrefix = "> "
+		}
+		lines = append(lines, ansi.Truncate(destinationPrefix+m.forwardFields[1].View(), width, "~"))
+	}
+
+	lines = append(lines, "")
+	switch kind {
+	case coreconnector.ForwardRemote:
+		lines = append(lines,
+			styleDim.Render("   Listener: remote SSH host"),
+			styleDim.Render("   Destination: dialed from this machine"),
+		)
+	case coreconnector.ForwardDynamic:
+		lines = append(lines,
+			styleDim.Render("   Listener: this machine (SOCKS5 proxy)"),
+			styleDim.Render("   Destination: supplied by each SOCKS5 client"),
+		)
+	default:
+		lines = append(lines,
+			styleDim.Render("   Listener: this machine"),
+			styleDim.Render("   Destination: dialed from the remote SSH host"),
+		)
+	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *Model) viewForwardType() string {
+	parts := make([]string, 0, len(m.forwardType.options))
+	for index, option := range m.forwardType.options {
+		label := fmt.Sprintf("%d %s", index+1, option)
+		if index == m.forwardType.selected {
+			label = "[" + label + "]"
+			if m.forwardType.focused {
+				label = styleSelected.Render(label)
+			} else {
+				label = styleAccent.Render(label)
+			}
+		} else {
+			label = styleDim.Render(" " + label + " ")
+		}
+		parts = append(parts, label)
+	}
+	return m.forwardType.label + ":   " + strings.Join(parts, " ")
 }
 
 func (m *Model) viewNotes(width int) string {
@@ -451,10 +500,20 @@ func (m *Model) viewFooter(width int) string {
 	} else if m.notesMode {
 		hints = []footerHint{{key: "ctrl+s", action: "save"}, {key: "esc", action: "cancel"}}
 	} else if m.forwardMode {
-		hints = []footerHint{
-			{key: "tab/enter", action: "next"},
-			{key: "ctrl+s", action: "start"},
-			{key: "esc", action: "cancel"},
+		if m.forwardFocus == 0 {
+			hints = []footerHint{
+				{key: "left/right", action: "type"},
+				{key: "1/2/3", action: "type"},
+				{key: "tab/enter", action: "next"},
+				{key: "ctrl+s", action: "start"},
+				{key: "esc", action: "cancel"},
+			}
+		} else {
+			hints = []footerHint{
+				{key: "tab/enter", action: "next"},
+				{key: "ctrl+s", action: "start"},
+				{key: "esc", action: "cancel"},
+			}
 		}
 	} else if m.diffMode {
 		hints = []footerHint{

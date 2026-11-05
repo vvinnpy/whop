@@ -221,9 +221,9 @@ whop forward \
 
 | 字段 | 填写内容 |
 |---|---|
-| Type | `local`、`remote` 或 `dynamic` |
+| Type | 选择 `local`、`remote` 或 `dynamic`；使用 `left/right` 或数字 `1/2/3`，不要手动输入 |
 | Bind | 监听侧地址，例如 `127.0.0.1:8080` |
-| Destination | 固定目标，例如 `db.internal:5432`；dynamic 留空 |
+| Destination | 固定目标，例如 `db.internal:5432`；选择 dynamic 后该字段隐藏并自动跳过 |
 
 对应关系：
 
@@ -233,7 +233,7 @@ remote  -> ssh -R
 dynamic -> ssh -D
 ```
 
-提交是 `ctrl+s`，取消是 `esc`。启动后按 `Ctrl+C` 停止并返回 whop。
+提交是 `ctrl+s`，取消是 `esc`。Type 始终是选择器，避免把枚举值当普通文本输入；dynamic 没有固定 Destination，所以 Tab 导航只经过 Type 和 Bind。启动后按 `Ctrl+C` 停止并返回 whop。
 
 ## 7. 与 OpenSSH 的差异和当前边界
 

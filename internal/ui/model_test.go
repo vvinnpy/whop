@@ -1164,8 +1164,10 @@ func TestForwardFormSupportsDynamicSOCKS(t *testing.T) {
 	msg := m.Init()()
 	m.Update(msg)
 	sendKey(m, runeKey("p"))
-	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	sendKey(m, runeKey("dynamic"))
+	sendKey(m, runeKey("3"))
+	if got := m.forwardKind(); got != coreconnector.ForwardDynamic {
+		t.Fatalf("kind = %q, want dynamic", got)
+	}
 	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
 	sendKey(m, tea.KeyMsg{Type: tea.KeyCtrlU})
 	sendKey(m, runeKey("127.0.0.1:1080"))
@@ -1195,5 +1197,60 @@ func TestSFTPShortcutStartsBrowser(t *testing.T) {
 	cmd := sendKey(m, runeKey("s"))
 	if cmd == nil || gotHost != "prod-db" {
 		t.Fatalf("SFTP shortcut host=%q cmd=%v", gotHost, cmd)
+	}
+}
+
+func TestForwardTypeUsesSelectorAndSkipsDynamicDestination(t *testing.T) {
+	hosts := testHosts()
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return hosts, nil
+		},
+		Connect: func(sshconfig.Host, bool) tea.Cmd { return nil },
+		Forward: func(sshconfig.Host, coreconnector.ForwardSpec) tea.Cmd { return nil },
+	})
+	msg := m.Init()()
+	m.Update(msg)
+	sendKey(m, runeKey("p"))
+
+	if m.forwardFocus != 0 || m.forwardKind() != coreconnector.ForwardLocal {
+		t.Fatalf("initial selector focus=%d kind=%q", m.forwardFocus, m.forwardKind())
+	}
+	if m.forwardFields[0].label != "Bind (local)" || m.forwardFields[1].label != "Destination (remote)" {
+		t.Fatalf("local labels = %q / %q", m.forwardFields[0].label, m.forwardFields[1].label)
+	}
+	if view := plainView(m); !strings.Contains(view, "[1 local]") || !strings.Contains(view, "2 remote") || !strings.Contains(view, "3 dynamic") {
+		t.Fatalf("type selector missing:\n%s", view)
+	}
+
+	sendKey(m, tea.KeyMsg{Type: tea.KeyRight})
+	if m.forwardKind() != coreconnector.ForwardRemote {
+		t.Fatalf("right did not select remote: %q", m.forwardKind())
+	}
+	sendKey(m, runeKey("3"))
+	if m.forwardKind() != coreconnector.ForwardDynamic {
+		t.Fatalf("3 did not select dynamic: %q", m.forwardKind())
+	}
+	if m.forwardFields[0].label != "Bind (local)" {
+		t.Fatalf("dynamic bind label = %q", m.forwardFields[0].label)
+	}
+	if m.forwardFieldCount() != 2 {
+		t.Fatalf("dynamic field count = %d, want 2", m.forwardFieldCount())
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.forwardFocus != 1 {
+		t.Fatalf("tab focus = %d, want bind field", m.forwardFocus)
+	}
+	sendKey(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.forwardFocus != 0 {
+		t.Fatalf("tab should skip destination and wrap to type, got %d", m.forwardFocus)
+	}
+	if view := plainView(m); !strings.Contains(view, "Destination: none") {
+		t.Fatalf("dynamic destination hint missing:\n%s", view)
+	}
+	sendKey(m, runeKey("1"))
+	if m.forwardKind() != coreconnector.ForwardLocal {
+		t.Fatalf("1 did not select local: %q", m.forwardKind())
 	}
 }

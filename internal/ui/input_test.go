@@ -76,3 +76,30 @@ func TestTextFieldSelectAllReplacesValue(t *testing.T) {
 		t.Fatalf("moving the cursor should clear selection: %q", field.Value())
 	}
 }
+
+func TestChoiceFieldSelection(t *testing.T) {
+	field := newChoiceField("Type", []string{"local", "remote", "dynamic"}, 0)
+	if field.Value() != "local" {
+		t.Fatalf("initial = %q", field.Value())
+	}
+	if !field.Update(key("3")) || field.Value() != "dynamic" {
+		t.Fatalf("number selection = %q", field.Value())
+	}
+	if !field.Update(tea.KeyMsg{Type: tea.KeyLeft}) || field.Value() != "remote" {
+		t.Fatalf("left selection = %q", field.Value())
+	}
+	if field.Update(key("typed text")) {
+		t.Fatal("free-form text should not change a choice field")
+	}
+	field.Select(0)
+	field.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if field.Value() != "local" {
+		t.Fatalf("left should clamp at first option, got %q", field.Value())
+	}
+	field.Update(tea.KeyMsg{Type: tea.KeyRight})
+	field.Update(tea.KeyMsg{Type: tea.KeyRight})
+	field.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if field.Value() != "dynamic" {
+		t.Fatalf("right should clamp at last option, got %q", field.Value())
+	}
+}

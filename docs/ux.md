@@ -9,6 +9,9 @@
 5. **Progressive detail.** A compact right-side detail panel on wide terminals; a single
    summary line on narrow terminals.
 6. **Predictable keys.** Vim-style navigation plus nccm-compatible filter behavior.
+7. **Choices over typing.** Fields with a finite set of values (forward type, access
+   mode, and similar enums) must use a selector, never require users to type the
+   enum value.
 
 ## Main screen
 

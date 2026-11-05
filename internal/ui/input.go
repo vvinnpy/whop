@@ -129,3 +129,70 @@ func (f *textField) View() string {
 }
 
 func (f *textField) String() string { return strings.TrimSpace(string(f.value)) }
+
+// choiceField is a fixed-option selector used instead of free-form text input.
+// It is intentionally keyboard-only and keeps the selected option explicit in
+// rendered output, so it remains understandable without color.
+type choiceField struct {
+	label    string
+	options  []string
+	selected int
+	focused  bool
+}
+
+func newChoiceField(label string, options []string, selected int) choiceField {
+	if selected < 0 || selected >= len(options) {
+		selected = 0
+	}
+	return choiceField{
+		label:    label,
+		options:  append([]string(nil), options...),
+		selected: selected,
+	}
+}
+
+func (f *choiceField) Focus() { f.focused = true }
+func (f *choiceField) Blur()  { f.focused = false }
+
+func (f *choiceField) Value() string {
+	if len(f.options) == 0 {
+		return ""
+	}
+	return f.options[f.selected]
+}
+
+func (f *choiceField) Move(delta int) {
+	if len(f.options) == 0 {
+		return
+	}
+	next := f.selected + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(f.options) {
+		next = len(f.options) - 1
+	}
+	f.selected = next
+}
+
+func (f *choiceField) Select(index int) {
+	if index >= 0 && index < len(f.options) {
+		f.selected = index
+	}
+}
+
+// Update handles selection keys and returns true when the selection changed.
+func (f *choiceField) Update(msg tea.KeyMsg) bool {
+	before := f.selected
+	switch msg.String() {
+	case "left", "up", "k":
+		f.Move(-1)
+	case "right", "down", "j":
+		f.Move(1)
+	default:
+		if len(msg.Runes) == 1 && msg.Runes[0] >= '1' && msg.Runes[0] <= '9' {
+			f.Select(int(msg.Runes[0] - '1'))
+		}
+	}
+	return f.selected != before
+}

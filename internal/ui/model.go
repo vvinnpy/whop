@@ -149,6 +149,7 @@ type Model struct {
 	notesTarget sshconfig.Host
 
 	forwardMode   bool
+	forwardType   choiceField
 	forwardFields []textField
 	forwardFocus  int
 	forwardTarget sshconfig.Host
@@ -483,13 +484,13 @@ func (m *Model) startForwardForm() {
 	if width < 20 {
 		width = 20
 	}
+	m.forwardType = newChoiceField("Type", []string{"local", "remote", "dynamic"}, 0)
 	m.forwardFields = []textField{
-		newTextField("Type", "local", width),
-		newTextField("Bind", "127.0.0.1:8080", width),
-		newTextField("Destination", "localhost:22", width),
+		newTextField("Bind (local)", "127.0.0.1:8080", width),
+		newTextField("Destination (remote)", "localhost:22", width),
 	}
 	m.forwardFocus = 0
-	m.forwardFields[0].Focus()
+	m.forwardType.Focus()
 	m.forwardTarget = host
 	m.forwardMode = true
 	m.err = nil
@@ -509,7 +510,7 @@ func (m *Model) updateForward(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focusForwardField(-1)
 		return m, nil
 	case "enter":
-		if m.forwardFocus < len(m.forwardFields)-1 {
+		if m.forwardFocus < m.forwardFieldCount()-1 {
 			m.focusForwardField(1)
 			return m, nil
 		}
@@ -517,17 +518,60 @@ func (m *Model) updateForward(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		return m.submitForward()
 	}
-	return m, m.forwardFields[m.forwardFocus].Update(msg)
+	if m.forwardFocus == 0 {
+		if m.forwardType.Update(msg) {
+			m.updateForwardLabels()
+		}
+		return m, nil
+	}
+	return m, m.forwardFields[m.forwardFocus-1].Update(msg)
+}
+
+func (m *Model) forwardKind() coreconnector.ForwardKind {
+	return coreconnector.ForwardKind(m.forwardType.Value())
+}
+func (m *Model) updateForwardLabels() {
+	bindSide := "local"
+	destinationSide := "remote"
+	if m.forwardKind() == coreconnector.ForwardRemote {
+		bindSide = "remote"
+		destinationSide = "local"
+	}
+	m.forwardFields[0].label = "Bind (" + bindSide + ")"
+	m.forwardFields[1].label = "Destination (" + destinationSide + ")"
+}
+
+func (m *Model) forwardFieldCount() int {
+	if m.forwardKind() == coreconnector.ForwardDynamic {
+		return 2
+	}
+	return 3
 }
 
 func (m *Model) focusForwardField(delta int) {
-	if len(m.forwardFields) == 0 {
+	count := m.forwardFieldCount()
+	if count == 0 {
 		return
 	}
-	next := (m.forwardFocus + delta + len(m.forwardFields)) % len(m.forwardFields)
-	m.forwardFields[m.forwardFocus].Blur()
-	m.forwardFocus = next
-	m.forwardFields[m.forwardFocus].Focus()
+	next := (m.forwardFocus + delta + count) % count
+	m.setForwardFocus(next)
+}
+
+func (m *Model) setForwardFocus(index int) {
+	if index < 0 || index >= m.forwardFieldCount() {
+		return
+	}
+	if m.forwardFocus == 0 {
+		m.forwardType.Blur()
+	} else {
+		m.forwardFields[m.forwardFocus-1].Blur()
+	}
+	m.forwardFocus = index
+	if index == 0 {
+		m.forwardType.Focus()
+		return
+	}
+	m.forwardFields[index-1].Focus()
 }
 
 func (m *Model) submitForward() (tea.Model, tea.Cmd) {
@@ -536,11 +580,11 @@ func (m *Model) submitForward() (tea.Model, tea.Cmd) {
 		m.status = "forwarding failed"
 		return m, nil
 	}
-	kind := coreconnector.ForwardKind(strings.ToLower(strings.TrimSpace(m.forwardFields[0].Value())))
-	bind := strings.TrimSpace(m.forwardFields[1].Value())
-	destination := strings.TrimSpace(m.forwardFields[2].Value())
+	kind := m.forwardKind()
+	bind := strings.TrimSpace(m.forwardFields[0].Value())
 	raw := bind
 	if kind != coreconnector.ForwardDynamic {
+		destination := strings.TrimSpace(m.forwardFields[1].Value())
 		raw += ":" + destination
 	}
 	spec, err := coreconnector.ParseForwardSpec(kind, raw)
