@@ -81,13 +81,25 @@ Releases are tag-driven and gated by CI. A release tag must be valid SemVer
 The `release` workflow then runs the full CI suite, verifies that the tag is on
 `main`, and only after those checks pass runs GoReleaser. GoReleaser publishes
 Linux, macOS, and Windows archives for `amd64` and `arm64`, plus
-`checksums.txt`.
+`checksums.txt`. When the `AUR_SSH_PRIVATE_KEY` repository secret is configured,
+it also updates the `whop-bin` AUR package.
+
+The initial AUR package must be submitted manually; see
+[`packaging/aur/README.md`](packaging/aur/README.md) for the setup steps.
 
 To validate release packaging locally without publishing:
 
 ```bash
 goreleaser check
 goreleaser release --snapshot --clean
+```
+
+## Arch Linux (AUR)
+
+Once `whop-bin` has been submitted to the AUR:
+
+```bash
+yay -S whop-bin
 ```
 
 ## Usage
