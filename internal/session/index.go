@@ -23,7 +23,14 @@ type TranscriptDocument struct {
 	Path      string
 	Host      string
 	StartedAt time.Time
-	Text      string
+	// Size and ModTime identify the source file so repeated index scans can
+	// skip files that have not changed.
+	Size    int64
+	ModTime time.Time
+	// Skipped is true when IndexOptions.SkipText matched. Such documents have
+	// empty Text but still carry path metadata for index reconciliation.
+	Skipped bool
+	Text    string
 }
 
 // IndexOptions controls transcript directory indexing.
@@ -31,6 +38,9 @@ type IndexOptions struct {
 	// SkipInvalid ignores unreadable or malformed recording pairs instead of
 	// failing the whole scan. Directory traversal errors are still returned.
 	SkipInvalid bool
+	// SkipText can return true for an unchanged transcript. The document is
+	// still returned with its path metadata, but its text is not read.
+	SkipText func(path string, info fs.FileInfo) bool
 }
 
 // IndexDirectory scans dir recursively for .txt transcripts with a matching
@@ -77,14 +87,14 @@ func IndexDirectoryWithOptions(dir string, opts IndexOptions) ([]TranscriptDocum
 			return nil
 		}
 
-		document, err := indexTranscriptPair(root, rootID, path)
+		document, err := indexTranscriptPair(root, rootID, path, opts)
 		if err != nil {
 			if opts.SkipInvalid {
 				return nil
 			}
 			return err
 		}
-		if strings.TrimSpace(document.Text) != "" {
+		if document.Skipped || strings.TrimSpace(document.Text) != "" {
 			documents = append(documents, document)
 		}
 		return nil
@@ -105,7 +115,7 @@ func IndexDirectoryWithOptions(dir string, opts IndexOptions) ([]TranscriptDocum
 	return documents, nil
 }
 
-func indexTranscriptPair(root, rootID, transcriptPath string) (TranscriptDocument, error) {
+func indexTranscriptPair(root, rootID, transcriptPath string, opts IndexOptions) (TranscriptDocument, error) {
 	resolvedTranscript, err := resolvePathWithin(root, transcriptPath)
 	if err != nil {
 		return TranscriptDocument{}, fmt.Errorf("session: index transcript %s: %w", transcriptPath, err)
@@ -122,19 +132,31 @@ func indexTranscriptPair(root, rootID, transcriptPath string) (TranscriptDocumen
 	if err != nil {
 		return TranscriptDocument{}, fmt.Errorf("session: index transcript %s: stat text: %w", transcriptPath, err)
 	}
-	if info.Size() > maxTranscriptFileBytes {
-		return TranscriptDocument{}, fmt.Errorf("transcript exceeds %d bytes", maxTranscriptFileBytes)
-	}
-	text, err := os.ReadFile(resolvedTranscript)
-	if err != nil {
-		return TranscriptDocument{}, fmt.Errorf("session: index transcript %s: read text: %w", transcriptPath, err)
-	}
 
 	base := strings.TrimSuffix(relative, filepath.Ext(relative))
 	if base == "" {
 		base = relative
 	}
 	sessionID := rootID + ":" + filepath.ToSlash(base)
+
+	document := TranscriptDocument{
+		SessionID: sessionID,
+		Path:      filepath.Clean(resolvedTranscript),
+		Host:      hostFromBase(base),
+		StartedAt: fileStartedAt(base, indexCastMeta{}, false, info.ModTime()),
+		Size:      info.Size(),
+		ModTime:   info.ModTime().UTC(),
+	}
+	if document.Host == "" {
+		document.Host = "unknown"
+	}
+	// Check the cheap filename/stat fingerprint before opening the cast file.
+	// Unchanged transcripts keep their existing index row and only contribute
+	// their path to stale-entry reconciliation.
+	if opts.SkipText != nil && opts.SkipText(resolvedTranscript, info) {
+		document.Skipped = true
+		return document, nil
+	}
 
 	castPath := strings.TrimSuffix(resolvedTranscript, filepath.Ext(resolvedTranscript)) + ".cast"
 	resolvedCast, castResolveErr := resolvePathWithin(root, castPath)
@@ -147,22 +169,19 @@ func indexTranscriptPair(root, rootID, transcriptPath string) (TranscriptDocumen
 		return TranscriptDocument{}, fmt.Errorf("session: index transcript %s: read cast %s: %w", transcriptPath, castPath, castErr)
 	}
 
-	startedAt := fileStartedAt(base, meta, castErr == nil, info.ModTime())
-	host := strings.TrimSpace(meta.Env["WHOP_HOST"])
-	if host == "" {
-		host = hostFromBase(base)
+	document.StartedAt = fileStartedAt(base, meta, castErr == nil, info.ModTime())
+	if host := strings.TrimSpace(meta.Env["WHOP_HOST"]); host != "" {
+		document.Host = host
 	}
-	if host == "" {
-		host = "unknown"
+	if info.Size() > maxTranscriptFileBytes {
+		return TranscriptDocument{}, fmt.Errorf("transcript exceeds %d bytes", maxTranscriptFileBytes)
 	}
-
-	return TranscriptDocument{
-		SessionID: sessionID,
-		Path:      filepath.Clean(resolvedTranscript),
-		Host:      host,
-		StartedAt: startedAt,
-		Text:      string(text),
-	}, nil
+	text, err := os.ReadFile(resolvedTranscript)
+	if err != nil {
+		return TranscriptDocument{}, fmt.Errorf("session: index transcript %s: read text: %w", transcriptPath, err)
+	}
+	document.Text = string(text)
+	return document, nil
 }
 
 const maxTranscriptFileBytes = 64 << 20

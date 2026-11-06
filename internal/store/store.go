@@ -84,7 +84,9 @@ func (s *Store) init() error {
 			session_id TEXT NOT NULL UNIQUE,
 			path TEXT NOT NULL,
 			host TEXT NOT NULL,
-			started_at TEXT NOT NULL
+			started_at TEXT NOT NULL,
+			file_size INTEGER NOT NULL DEFAULT -1,
+			file_mtime INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS transcript_index_started_at
 			ON transcript_index(started_at DESC)`,
@@ -104,13 +106,52 @@ func (s *Store) init() error {
 	if err := s.ensureHostMetaColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureTranscriptColumns(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (s *Store) ensureHostMetaColumns() error {
-	rows, err := s.db.Query(`PRAGMA table_info(host_meta)`)
+	columns, err := s.tableColumns("host_meta")
 	if err != nil {
 		return fmt.Errorf("store: inspect host_meta: %w", err)
+	}
+	if !columns["login_override"] {
+		if _, err := s.db.Exec(`ALTER TABLE host_meta ADD COLUMN login_override INTEGER`); err != nil {
+			return fmt.Errorf("store: add login_override: %w", err)
+		}
+	}
+	if !columns["record"] {
+		if _, err := s.db.Exec(`ALTER TABLE host_meta ADD COLUMN record INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("store: add record: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureTranscriptColumns() error {
+	columns, err := s.tableColumns("transcript_index")
+	if err != nil {
+		return fmt.Errorf("store: inspect transcript_index: %w", err)
+	}
+	if !columns["file_size"] {
+		if _, err := s.db.Exec(`ALTER TABLE transcript_index ADD COLUMN file_size INTEGER NOT NULL DEFAULT -1`); err != nil {
+			return fmt.Errorf("store: add file_size: %w", err)
+		}
+	}
+	if !columns["file_mtime"] {
+		if _, err := s.db.Exec(`ALTER TABLE transcript_index ADD COLUMN file_mtime INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("store: add file_mtime: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) tableColumns(table string) (map[string]bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -125,24 +166,14 @@ func (s *Store) ensureHostMetaColumns() error {
 			pk        int
 		)
 		if err := rows.Scan(&cid, &name, &columnTyp, &notNull, &defaultV, &pk); err != nil {
-			return fmt.Errorf("store: inspect host_meta column: %w", err)
+			return nil, err
 		}
 		columns[name] = true
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("store: inspect host_meta: %w", err)
+		return nil, err
 	}
-	if !columns["login_override"] {
-		if _, err := s.db.Exec(`ALTER TABLE host_meta ADD COLUMN login_override INTEGER`); err != nil {
-			return fmt.Errorf("store: add login_override: %w", err)
-		}
-	}
-	if !columns["record"] {
-		if _, err := s.db.Exec(`ALTER TABLE host_meta ADD COLUMN record INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return fmt.Errorf("store: add record: %w", err)
-		}
-	}
-	return nil
+	return columns, nil
 }
 
 // Close closes the database.

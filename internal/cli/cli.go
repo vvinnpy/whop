@@ -86,7 +86,8 @@ type MetaStore interface {
 	SetSnippet(string, string) error
 	Snippets() (map[string]string, error)
 	DeleteSnippet(string) error
-	IndexTranscript(store.Transcript) error
+	IndexTranscript(store.Transcript) (bool, error)
+	TranscriptFingerprints() (map[string]store.TranscriptFingerprint, error)
 	ReconcileTranscriptRoot(string, []string) (int, error)
 	SearchTranscripts(string) ([]store.TranscriptMatch, error)
 	SetMacroDefinition(string, []byte) error

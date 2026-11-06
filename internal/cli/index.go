@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -20,39 +22,63 @@ type indexResult struct {
 	Removed   int    `json:"removed"`
 }
 
-func syncTranscriptIndex(metaStore MetaStore, dir string, skipInvalid, prune bool) ([]session.TranscriptDocument, int, error) {
+func syncTranscriptIndex(metaStore MetaStore, dir string, skipInvalid, prune bool) (int, int, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
-		return nil, 0, fmt.Errorf("stat recording directory: %w", err)
+		return 0, 0, fmt.Errorf("stat recording directory: %w", err)
 	}
 	if !info.IsDir() {
-		return nil, 0, fmt.Errorf("%s is not a directory", dir)
+		return 0, 0, fmt.Errorf("%s is not a directory", dir)
 	}
-	documents, err := session.IndexDirectoryWithOptions(dir, session.IndexOptions{SkipInvalid: skipInvalid})
+	fingerprints, err := metaStore.TranscriptFingerprints()
 	if err != nil {
-		return nil, 0, err
+		return 0, 0, fmt.Errorf("load transcript fingerprints: %w", err)
+	}
+	documents, err := session.IndexDirectoryWithOptions(dir, session.IndexOptions{
+		SkipInvalid: skipInvalid,
+		SkipText: func(path string, info fs.FileInfo) bool {
+			fingerprint, ok := fingerprints[filepath.Clean(path)]
+			if !ok {
+				return false
+			}
+			return fingerprint.Size == info.Size() &&
+				fingerprint.ModTime.UnixNano() == info.ModTime().UTC().UnixNano()
+		},
+	})
+	if err != nil {
+		return 0, 0, err
 	}
 	paths := make([]string, 0, len(documents))
+	indexed := 0
 	for _, document := range documents {
-		if err := metaStore.IndexTranscript(store.Transcript{
+		paths = append(paths, document.Path)
+		if document.Skipped {
+			continue
+		}
+		changed, err := metaStore.IndexTranscript(store.Transcript{
 			SessionID: document.SessionID,
 			Path:      document.Path,
 			Host:      document.Host,
 			StartedAt: document.StartedAt,
+			Size:      document.Size,
+			ModTime:   document.ModTime,
 			Text:      document.Text,
-		}); err != nil {
-			return nil, 0, fmt.Errorf("index %s: %w", document.Path, err)
+		})
+		if err != nil {
+			return 0, 0, fmt.Errorf("index %s: %w", document.Path, err)
 		}
-		paths = append(paths, document.Path)
+		if changed {
+			indexed++
+		}
 	}
 	removed := 0
 	if prune {
 		removed, err = metaStore.ReconcileTranscriptRoot(dir, paths)
 		if err != nil {
-			return nil, 0, err
+			return 0, 0, err
 		}
 	}
-	return documents, removed, nil
+	return indexed, removed, nil
 }
 
 func runIndex(args []string, deps Deps) int {
@@ -77,12 +103,12 @@ func runIndex(args []string, deps Deps) int {
 		return 1
 	}
 	defer metaStore.Close()
-	documents, removed, err := syncTranscriptIndex(metaStore, *dir, *skipInvalid, !*noPrune)
+	indexed, removed, err := syncTranscriptIndex(metaStore, *dir, *skipInvalid, !*noPrune)
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
-	result := indexResult{Directory: *dir, Indexed: len(documents), Removed: removed}
+	result := indexResult{Directory: *dir, Indexed: indexed, Removed: removed}
 	if *asJSON {
 		encoded, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {

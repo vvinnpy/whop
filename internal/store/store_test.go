@@ -260,7 +260,7 @@ func TestTranscriptIndexSearchAndPersistence(t *testing.T) {
 	}
 
 	started := time.Date(2026, 11, 3, 10, 0, 0, 123456789, time.UTC)
-	if err := db.IndexTranscript(Transcript{
+	if _, err := db.IndexTranscript(Transcript{
 		SessionID: "prod-db-1",
 		Path:      "/recordings/prod-db-1.txt",
 		Host:      "prod-db",
@@ -269,7 +269,7 @@ func TestTranscriptIndexSearchAndPersistence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.IndexTranscript(Transcript{
+	if _, err := db.IndexTranscript(Transcript{
 		SessionID: "staging-1",
 		Path:      "/recordings/staging-1.txt",
 		Host:      "staging",
@@ -306,7 +306,7 @@ func TestTranscriptIndexSearchAndPersistence(t *testing.T) {
 		t.Fatalf("unexpected snippet: %q", prod.Snippet)
 	}
 
-	if err := db.IndexTranscript(Transcript{
+	if _, err := db.IndexTranscript(Transcript{
 		SessionID: "prod-db-1",
 		Path:      "/recordings/prod-db-1.txt",
 		Host:      "prod-db",
@@ -376,7 +376,7 @@ func TestTranscriptIndexValidation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			transcript := valid
 			test.mutate(&transcript)
-			if err := db.IndexTranscript(transcript); err == nil {
+			if _, err := db.IndexTranscript(transcript); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
@@ -389,7 +389,7 @@ func TestTranscriptQueryValidationAndEscaping(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := db.IndexTranscript(Transcript{
+	if _, err := db.IndexTranscript(Transcript{
 		SessionID: "session",
 		Path:      "session.txt",
 		Host:      "host",
@@ -485,5 +485,113 @@ func TestAllIncludesTagsForMultipleHosts(t *testing.T) {
 	}
 	if all["staging"].Notes != "test box" || len(all["staging"].Tags) != 0 {
 		t.Fatalf("staging metadata = %#v", all["staging"])
+	}
+}
+
+func TestTranscriptIndexSkipsUnchangedFingerprint(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	started := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+	modTime := time.Date(2026, 11, 3, 10, 5, 0, 0, time.UTC)
+	transcript := Transcript{
+		SessionID: "session-1",
+		Path:      "session-1.txt",
+		Host:      "prod",
+		StartedAt: started,
+		Size:      1234,
+		ModTime:   modTime,
+		Text:      "backup completed\n",
+	}
+	changed, err := db.IndexTranscript(transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("first index should write the FTS row")
+	}
+	changed, err = db.IndexTranscript(transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("unchanged transcript should be skipped")
+	}
+	fingerprints, err := db.TranscriptFingerprints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, ok := fingerprints["session-1.txt"]
+	if !ok || fingerprint.Size != 1234 || !fingerprint.ModTime.Equal(modTime) {
+		t.Fatalf("unexpected fingerprints: %#v", fingerprints)
+	}
+
+	transcript.Text = "backup failed\n"
+	transcript.ModTime = modTime.Add(time.Minute)
+	changed, err = db.IndexTranscript(transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("changed transcript should be reindexed")
+	}
+	oldMatches, err := db.SearchTranscripts("completed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldMatches) != 0 {
+		t.Fatalf("old content survived reindex: %#v", oldMatches)
+	}
+	newMatches, err := db.SearchTranscripts("failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newMatches) != 1 {
+		t.Fatalf("new content missing: %#v", newMatches)
+	}
+}
+
+func TestOpenMigratesLegacyTranscriptIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-transcripts.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE transcript_index (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL UNIQUE,
+		path TEXT NOT NULL,
+		host TEXT NOT NULL,
+		started_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	changed, err := db.IndexTranscript(Transcript{
+		SessionID: "session-1",
+		Path:      "session-1.txt",
+		Host:      "prod",
+		StartedAt: time.Now(),
+		Size:      42,
+		ModTime:   time.Now(),
+		Text:      "migration works\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("first index after migration should write the FTS row")
 	}
 }

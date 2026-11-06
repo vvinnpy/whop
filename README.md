@@ -148,9 +148,9 @@ whop sftp prod-db
 whop -record
 whop connect -record prod-db
 whop replay ~/.config/whop/recordings/prod-db-*.cast
-whop index                        # rebuild and prune the FTS5 index
-whop index --no-prune             # rebuild without removing stale entries
-whop search "error"               # sync, then search the SQLite index
+whop index                        # sync changed transcripts and prune the index
+whop index --no-prune             # sync changed transcripts without pruning
+whop search "error"               # sync changed transcripts, then search
 whop search --no-sync "error"     # fast search using the existing index
 whop search --files "error"       # compatibility fallback: raw line scan
 whop search --json "error"
@@ -398,7 +398,9 @@ The transcript applies backspace/delete line editing so deleted input is not
 concatenated, while the cast retains the original terminal stream.
 The FTS5 index uses the trigram tokenizer, so English and CJK substrings can be
 searched. Indexed transcript IDs are scoped to their recording root, preventing
-same-named files in different directories from overwriting each other.
+same-named files in different directories from overwriting each other. Index
+syncs compare source file size and modification time, so unchanged transcripts
+are skipped without being read or re-indexed.
 Password authentication input is not recorded, but avoid typing secrets into an
 interactive shell when recording is enabled.
 

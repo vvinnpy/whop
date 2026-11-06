@@ -1034,3 +1034,43 @@ func TestDefaultZmodemOptionsDebugEnv(t *testing.T) {
 		t.Fatal("progress writer is nil")
 	}
 }
+
+func TestIndexCommandSkipsUnchangedTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "prod-db-20261103-100000.000")
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"WHOP_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".txt", []byte("backup completed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	td := newTestDeps()
+	td.deps.RecordingDir = dir
+
+	run := func() indexResult {
+		t.Helper()
+		td.stdout.Reset()
+		if code := Run([]string{"index", "-json"}, td.deps); code != 0 {
+			t.Fatalf("index exit = %d: %s", code, td.stderr.String())
+		}
+		var result indexResult
+		if err := json.Unmarshal(td.stdout.Bytes(), &result); err != nil {
+			t.Fatalf("invalid JSON: %v\n%s", err, td.stdout.String())
+		}
+		return result
+	}
+
+	if result := run(); result.Indexed != 1 {
+		t.Fatalf("first index = %+v", result)
+	}
+	if result := run(); result.Indexed != 0 {
+		t.Fatalf("unchanged index = %+v", result)
+	}
+
+	if err := os.WriteFile(base+".txt", []byte("backup failed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result := run(); result.Indexed != 1 {
+		t.Fatalf("changed index = %+v", result)
+	}
+}

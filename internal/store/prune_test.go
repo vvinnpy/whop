@@ -30,7 +30,7 @@ func TestReconcileTranscriptRootRemovesStaleRecords(t *testing.T) {
 		{SessionID: "stale", Path: stale, Host: "stale", StartedAt: time.Now(), Text: "stale database"},
 		{SessionID: "outside", Path: outside, Host: "outside", StartedAt: time.Now(), Text: "outside database"},
 	} {
-		if err := db.IndexTranscript(transcript); err != nil {
+		if _, err := db.IndexTranscript(transcript); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -80,7 +80,7 @@ func TestSearchTranscriptsSupportsCJKSubstringsAndShortQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := db.IndexTranscript(Transcript{
+	if _, err := db.IndexTranscript(Transcript{
 		SessionID: "cjk",
 		Path:      "/recordings/cjk.txt",
 		Host:      "prod-db",

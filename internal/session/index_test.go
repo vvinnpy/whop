@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -412,5 +413,44 @@ func TestIndexDirectoryFollowsRootSymlink(t *testing.T) {
 	}
 	if len(documents) != 1 || !strings.Contains(documents[0].Path, "symlink-root-20261103-100000.000.txt") {
 		t.Fatalf("documents = %#v", documents)
+	}
+}
+
+func TestIndexDirectorySkipText(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "prod-db-20261103-100000.000")
+	writeIndexTranscript(t, base+".txt", "backup started\n")
+	if err := os.WriteFile(base+".cast", []byte(`{"version":2,"timestamp":1762164000,"env":{"WHOP_HOST":"prod-db"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		skipped   bool
+		removeErr error
+	)
+	documents, err := IndexDirectoryWithOptions(dir, IndexOptions{
+		SkipText: func(path string, _ fs.FileInfo) bool {
+			skipped = true
+			// Removing the file proves the text is not read after the skip
+			// decision; a read would fail the index operation.
+			removeErr = os.Remove(path)
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !skipped || removeErr != nil {
+		t.Fatalf("SkipText not honored: skipped=%v err=%v", skipped, removeErr)
+	}
+	if len(documents) != 1 {
+		t.Fatalf("documents = %#v", documents)
+	}
+	document := documents[0]
+	if !document.Skipped || document.Text != "" || document.Path != filepath.Join(dir, "prod-db-20261103-100000.000.txt") {
+		t.Fatalf("unexpected skipped document: %+v", document)
+	}
+	if document.Size == 0 || document.ModTime.IsZero() || document.Host != "prod-db" {
+		t.Fatalf("skipped document lost metadata: %+v", document)
 	}
 }
