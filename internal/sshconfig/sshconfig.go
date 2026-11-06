@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -101,13 +102,16 @@ func ParseAccessMode(value string) (AccessMode, bool) {
 	}
 }
 
-// Address returns host:port for direct dialing.
+// Address returns host:port for direct dialing. IPv6 literals are bracketed.
 func (h Host) Address() string {
 	host := h.HostName
 	if host == "" {
 		host = h.Alias
 	}
-	return fmt.Sprintf("%s:%d", host, h.Port)
+	if len(host) > 1 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+	return net.JoinHostPort(host, strconv.Itoa(h.Port))
 }
 
 // Load reads path, expands Include directives, and returns concrete aliases.

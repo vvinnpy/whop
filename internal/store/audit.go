@@ -41,21 +41,6 @@ type AuditEvent struct {
 	Message string    `json:"message"`
 }
 
-// ensureAuditTable creates the audit table on demand. Keeping this separate
-// from Store.init allows the audit API to work with stores opened before the
-// table was introduced.
-func (s *Store) ensureAuditTable() error {
-	for _, statement := range []string{
-		auditEventsTableDDL,
-		`CREATE INDEX IF NOT EXISTS audit_events_at ON audit_events(at DESC, id DESC)`,
-	} {
-		if _, err := s.db.Exec(statement); err != nil {
-			return fmt.Errorf("store: init audit events: %w", err)
-		}
-	}
-	return nil
-}
-
 // AppendAudit stores an audit event. A zero timestamp is replaced with the
 // current UTC time. Type is required. Callers must not put secrets or
 // transmitted/received content in Message.
@@ -66,10 +51,6 @@ func (s *Store) AppendAudit(event AuditEvent) error {
 	if event.Time.IsZero() {
 		event.Time = time.Now()
 	}
-	if err := s.ensureAuditTable(); err != nil {
-		return err
-	}
-
 	if _, err := s.db.Exec(
 		`INSERT INTO audit_events(
 			at, type, host, macro, step, rule, attempt, bytes, message
@@ -99,10 +80,6 @@ func (s *Store) AuditEvents(limit int) ([]AuditEvent, error) {
 	if limit > maxAuditEventLimit {
 		limit = maxAuditEventLimit
 	}
-	if err := s.ensureAuditTable(); err != nil {
-		return nil, err
-	}
-
 	rows, err := s.db.Query(
 		`SELECT at, type, host, macro, step, rule, attempt, bytes, message
 		 FROM audit_events
@@ -151,9 +128,6 @@ func (s *Store) AuditEvents(limit int) ([]AuditEvent, error) {
 
 // ClearAudit removes all audit events.
 func (s *Store) ClearAudit() error {
-	if err := s.ensureAuditTable(); err != nil {
-		return err
-	}
 	if _, err := s.db.Exec(`DELETE FROM audit_events`); err != nil {
 		return fmt.Errorf("store: clear audit events: %w", err)
 	}

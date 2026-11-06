@@ -203,9 +203,10 @@ func (c *Connector) dialJumpHop(ctx context.Context, host sshconfig.Host, via *s
 }
 
 func (c *Connector) dialTargetThrough(ctx context.Context, host sshconfig.Host, jumpClient *ssh.Client, jumpName string) (*ssh.Client, error) {
-	targetConn, err := jumpClient.Dial("tcp", host.Address())
+	address := host.Address()
+	targetConn, err := jumpClient.Dial("tcp", address)
 	if err != nil {
-		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("open %s via %s: %w", host.Address(), jumpName, err)}
+		return nil, &StageError{Stage: "jump", Host: host.Alias, Err: fmt.Errorf("open %s via %s: %w", address, jumpName, err)}
 	}
 
 	cfg, cleanup, err := c.newClientConfig(host)
@@ -215,10 +216,10 @@ func (c *Connector) dialTargetThrough(ctx context.Context, host sshconfig.Host, 
 	}
 	defer cleanup()
 
-	conn, chans, reqs, err := ssh.NewClientConn(targetConn, host.Address(), cfg)
+	conn, chans, reqs, err := ssh.NewClientConn(targetConn, address, cfg)
 	if err != nil {
 		_ = targetConn.Close()
-		return nil, &StageError{Stage: "handshake", Host: host.Alias, Err: fmt.Errorf("ssh handshake %s via %s: %w", host.Address(), jumpName, err)}
+		return nil, &StageError{Stage: "handshake", Host: host.Alias, Err: fmt.Errorf("ssh handshake %s via %s: %w", address, jumpName, err)}
 	}
 	return ssh.NewClient(conn, chans, reqs), nil
 }

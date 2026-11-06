@@ -92,6 +92,9 @@ func (s *Store) init() error {
 			text,
 			tokenize = 'trigram'
 		)`,
+		auditEventsTableDDL,
+		`CREATE INDEX IF NOT EXISTS audit_events_at ON audit_events(at DESC, id DESC)`,
+		macroTableDDL,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -198,7 +201,14 @@ func (s *Store) Get(alias string) (Meta, error) {
 
 // All returns all metadata keyed by alias.
 func (s *Store) All() (map[string]Meta, error) {
-	rows, err := s.db.Query(`SELECT alias, favorite, notes, last_connected_at, connect_count, login_override, record FROM host_meta`)
+	// Join tags in the same query so a large config does not need one query
+	// per host. LEFT JOIN keeps hosts that have no tags.
+	rows, err := s.db.Query(`
+		SELECT m.alias, m.favorite, m.notes, m.last_connected_at,
+		       m.connect_count, m.login_override, m.record, t.tag
+		  FROM host_meta AS m
+		  LEFT JOIN host_tags AS t ON t.alias = m.alias
+		 ORDER BY m.alias, t.tag`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list metadata: %w", err)
 	}
@@ -214,41 +224,36 @@ func (s *Store) All() (map[string]Meta, error) {
 			count         int
 			loginOverride sql.NullInt64
 			record        int
+			tag           sql.NullString
 		)
-		if err := rows.Scan(&alias, &favorite, &notes, &last, &count, &loginOverride, &record); err != nil {
+		if err := rows.Scan(&alias, &favorite, &notes, &last, &count, &loginOverride, &record, &tag); err != nil {
 			return nil, fmt.Errorf("store: scan metadata: %w", err)
 		}
-		meta := Meta{
-			Favorite:     favorite != 0,
-			Notes:        notes,
-			ConnectCount: count,
-			Record:       record != 0,
-		}
-		if loginOverride.Valid {
-			value := loginOverride.Int64 != 0
-			meta.LoginOverride = &value
-		}
-		if last.Valid {
-			if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
-				meta.LastConnectedAt = parsed
+		meta, seen := result[alias]
+		if !seen {
+			meta = Meta{
+				Favorite:     favorite != 0,
+				Notes:        notes,
+				ConnectCount: count,
+				Record:       record != 0,
 			}
+			if loginOverride.Valid {
+				value := loginOverride.Int64 != 0
+				meta.LoginOverride = &value
+			}
+			if last.Valid {
+				if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
+					meta.LastConnectedAt = parsed
+				}
+			}
+		}
+		if tag.Valid {
+			meta.Tags = append(meta.Tags, tag.String)
 		}
 		result[alias] = meta
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: iterate metadata: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("store: close metadata rows: %w", err)
-	}
-	for alias := range result {
-		tags, err := s.tags(alias)
-		if err != nil {
-			return nil, err
-		}
-		meta := result[alias]
-		meta.Tags = tags
-		result[alias] = meta
 	}
 	return result, nil
 }

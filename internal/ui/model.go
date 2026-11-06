@@ -246,7 +246,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status.fail(fmt.Sprintf("load hosts: %v", msg.err), "")
 			return m, nil
 		}
-		m.allHosts = msg.hosts
+		m.allHosts = core.SortHosts(msg.hosts)
 		m.applyFilter()
 		if m.initialSelected != "" {
 			m.selectAlias(m.initialSelected)
@@ -1323,6 +1323,9 @@ func (m *Model) toggleSelectedFavorite() {
 			m.allHosts[i].Favorite = next
 		}
 	}
+	// Favorites are the primary sort key, so re-sort once here rather than on
+	// every filter keystroke.
+	m.allHosts = core.SortHosts(m.allHosts)
 	m.applyFilter()
 	if next {
 		m.status.result(fmt.Sprintf("favorite on · %s", host.Alias), host.Alias)
@@ -1353,7 +1356,6 @@ func (m *Model) applyFilter() {
 	if !m.showAll {
 		source = sshconfig.Servers(source)
 	}
-	source = core.SortHosts(source)
 	m.filtered = core.Filter(source, m.filter)
 	m.cursor = 0
 	m.selectAlias(previous)

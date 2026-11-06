@@ -454,3 +454,36 @@ func TestRenameHostMovesMetadataAndTags(t *testing.T) {
 		t.Fatal("expected target metadata conflict")
 	}
 }
+
+func TestAllIncludesTagsForMultipleHosts(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SetFavorite("prod-db", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetTags("prod-db", []string{"prod", "db"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetNotes("staging", "test box"); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := db.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("all metadata = %#v", all)
+	}
+	if !all["prod-db"].Favorite || len(all["prod-db"].Tags) != 2 ||
+		all["prod-db"].Tags[0] != "db" || all["prod-db"].Tags[1] != "prod" {
+		t.Fatalf("prod-db metadata = %#v", all["prod-db"])
+	}
+	if all["staging"].Notes != "test box" || len(all["staging"].Tags) != 0 {
+		t.Fatalf("staging metadata = %#v", all["staging"])
+	}
+}

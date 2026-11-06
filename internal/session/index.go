@@ -147,7 +147,7 @@ func indexTranscriptPair(root, rootID, transcriptPath string) (TranscriptDocumen
 		return TranscriptDocument{}, fmt.Errorf("session: index transcript %s: read cast %s: %w", transcriptPath, castPath, castErr)
 	}
 
-	startedAt := fileStartedAt(resolvedTranscript, base, meta, castErr == nil)
+	startedAt := fileStartedAt(base, meta, castErr == nil, info.ModTime())
 	host := strings.TrimSpace(meta.Env["WHOP_HOST"])
 	if host == "" {
 		host = hostFromBase(base)
@@ -227,16 +227,15 @@ func hostFromBase(base string) string {
 	return strings.TrimSpace(match[1])
 }
 
-func fileStartedAt(transcriptPath, base string, meta indexCastMeta, haveCast bool) time.Time {
+func fileStartedAt(base string, meta indexCastMeta, haveCast bool, modTime time.Time) time.Time {
 	if haveCast && meta.Timestamp > 0 {
 		return time.Unix(meta.Timestamp, 0).UTC()
 	}
 	if started, ok := startedAtFromBase(base); ok {
 		return started.UTC()
 	}
-	info, err := os.Stat(transcriptPath)
-	if err == nil && !info.ModTime().IsZero() {
-		return info.ModTime().UTC()
+	if !modTime.IsZero() {
+		return modTime.UTC()
 	}
 	return time.Time{}
 }

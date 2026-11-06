@@ -302,30 +302,25 @@ func (m *Model) hostBadges(host sshconfig.Host) []hostBadge {
 	return badges
 }
 
-func (m *Model) hasHostBadges() bool {
-	for _, host := range m.allHosts {
-		if len(m.hostBadges(host)) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func (m *Model) flagsColumnWidth(compact bool) int {
-	if !m.hasHostBadges() {
-		return 0
-	}
 	header := "FLAGS"
 	limit := 8
 	if compact {
 		header = "FLG"
 		limit = 4
 	}
-	width := ansi.StringWidth(header)
+	width := 0
 	for _, host := range m.allHosts {
-		width = max(width, ansi.StringWidth(renderHostBadges(m.hostBadges(host), compact, limit)))
+		badges := m.hostBadges(host)
+		if len(badges) == 0 {
+			continue
+		}
+		width = max(width, ansi.StringWidth(renderHostBadges(badges, compact, limit)))
 	}
-	return width
+	if width == 0 {
+		return 0
+	}
+	return max(width, ansi.StringWidth(header))
 }
 
 func renderHostBadges(badges []hostBadge, compact bool, limit int) string {

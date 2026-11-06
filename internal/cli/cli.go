@@ -787,6 +787,19 @@ func runConnect(args []string, deps Deps) int {
 	return 0
 }
 
+func loadHostsWithStore(deps Deps, configPath string) ([]sshconfig.Host, MetaStore, error) {
+	metaStore, err := deps.OpenStore()
+	if err != nil {
+		return nil, nil, fmt.Errorf("open metadata: %w", err)
+	}
+	hosts, err := loadHosts(deps, metaStore, configPath)
+	if err != nil {
+		_ = metaStore.Close()
+		return nil, nil, err
+	}
+	return hosts, metaStore, nil
+}
+
 func loadHosts(deps Deps, metaStore MetaStore, configPath string) ([]sshconfig.Host, error) {
 	hosts, err := deps.LoadConfig(configPath)
 	if err != nil {
@@ -819,11 +832,12 @@ func runFavorite(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: whop favorite [flags] <alias> <on|off>")
 		return 2
 	}
-	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	hosts, metaStore, err := loadHostsWithStore(deps, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
+	defer metaStore.Close()
 	alias := fs.Arg(0)
 	if _, ok := sshconfig.Find(hosts, alias); !ok {
 		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
@@ -835,12 +849,6 @@ func runFavorite(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: favorite value must be on/off")
 		return 2
 	}
-	metaStore, err := deps.OpenStore()
-	if err != nil {
-		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
-		return 1
-	}
-	defer metaStore.Close()
 	if err := metaStore.SetFavorite(alias, favorite); err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
@@ -862,11 +870,12 @@ func runAccess(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: whop access [flags] <alias> [auto|login|service]")
 		return 2
 	}
-	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	hosts, metaStore, err := loadHostsWithStore(deps, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
+	defer metaStore.Close()
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
 		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
@@ -882,12 +891,6 @@ func runAccess(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: access must be auto, login, or service")
 		return 2
 	}
-	metaStore, err := deps.OpenStore()
-	if err != nil {
-		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
-		return 1
-	}
-	defer metaStore.Close()
 	var override *bool
 	switch mode {
 	case sshconfig.AccessLogin:
@@ -919,23 +922,18 @@ func runNote(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: whop note [flags] <alias> [text...]")
 		return 2
 	}
-	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	hosts, metaStore, err := loadHostsWithStore(deps, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
+	defer metaStore.Close()
 	alias := fs.Arg(0)
 	host, ok := sshconfig.Find(hosts, alias)
 	if !ok {
 		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 		return 1
 	}
-	metaStore, err := deps.OpenStore()
-	if err != nil {
-		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
-		return 1
-	}
-	defer metaStore.Close()
 	if fs.NArg() > 1 {
 		if err := metaStore.SetNotes(alias, strings.Join(fs.Args()[1:], " ")); err != nil {
 			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
@@ -961,23 +959,18 @@ func runTag(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: whop tag [flags] <alias> [tag...]")
 		return 2
 	}
-	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	hosts, metaStore, err := loadHostsWithStore(deps, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
+	defer metaStore.Close()
 	alias := fs.Arg(0)
 	host, ok := sshconfig.Find(hosts, alias)
 	if !ok {
 		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", alias)
 		return 1
 	}
-	metaStore, err := deps.OpenStore()
-	if err != nil {
-		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
-		return 1
-	}
-	defer metaStore.Close()
 	if fs.NArg() > 1 {
 		if err := metaStore.SetTags(alias, fs.Args()[1:]); err != nil {
 			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)

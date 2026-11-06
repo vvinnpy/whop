@@ -33,6 +33,7 @@ func Search(dir, query string) ([]Match, error) {
 		return nil, fmt.Errorf("session: %s is not a directory", dir)
 	}
 
+	queryLower := strings.ToLower(query)
 	var matches []Match
 	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -53,7 +54,7 @@ func Search(dir, query string) ([]Match, error) {
 		for scanner.Scan() {
 			lineNumber++
 			line := scanner.Text()
-			if strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
+			if strings.Contains(strings.ToLower(line), queryLower) {
 				matches = append(matches, Match{Path: path, Line: lineNumber, Text: line})
 			}
 		}

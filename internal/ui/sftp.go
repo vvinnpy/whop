@@ -735,12 +735,24 @@ func readLocalDir(dir string) ([]coreconnector.FileEntry, error) {
 }
 
 func sortEntries(entries []coreconnector.FileEntry) {
-	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].Directory != entries[j].Directory {
-			return entries[i].Directory
+	// Precompute folded names once instead of lowercasing on every comparison.
+	type keyedEntry struct {
+		entry coreconnector.FileEntry
+		name  string
+	}
+	keyed := make([]keyedEntry, len(entries))
+	for i, entry := range entries {
+		keyed[i] = keyedEntry{entry: entry, name: strings.ToLower(entry.Name)}
+	}
+	sort.SliceStable(keyed, func(i, j int) bool {
+		if keyed[i].entry.Directory != keyed[j].entry.Directory {
+			return keyed[i].entry.Directory
 		}
-		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+		return keyed[i].name < keyed[j].name
 	})
+	for i := range keyed {
+		entries[i] = keyed[i].entry
+	}
 }
 
 func uploadFile(ctx context.Context, localPath, remotePath string, transfer coreconnector.FileTransfer) error {

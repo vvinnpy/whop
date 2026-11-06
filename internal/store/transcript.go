@@ -114,12 +114,13 @@ func (s *Store) IndexTranscript(transcript Transcript) error {
 // SearchTranscripts searches indexed transcript text. User input is treated as
 // a literal phrase rather than raw FTS5 syntax.
 func (s *Store) SearchTranscripts(query string) ([]TranscriptMatch, error) {
-	matchQuery, err := transcriptFTSQuery(query)
+	normalized := strings.Join(strings.Fields(query), " ")
+	matchQuery, err := transcriptFTSQuery(normalized)
 	if err != nil {
 		return nil, err
 	}
-	if utf8.RuneCountInString(strings.Join(strings.Fields(query), " ")) < 3 {
-		return s.searchShortTranscriptQuery(strings.Join(strings.Fields(query), " "))
+	if utf8.RuneCountInString(normalized) < 3 {
+		return s.searchShortTranscriptQuery(normalized)
 	}
 	rows, err := s.db.Query(
 		`SELECT transcript_index.path,

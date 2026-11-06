@@ -29,11 +29,12 @@ func runRecord(args []string, deps Deps) int {
 		fmt.Fprintln(deps.Stderr, "usage: whop record [flags] <alias> [on|off]")
 		return 2
 	}
-	hosts, err := loadHosts(deps, nil, resolvePath(*configPath))
+	hosts, metaStore, err := loadHostsWithStore(deps, resolvePath(*configPath))
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 		return 1
 	}
+	defer metaStore.Close()
 	host, ok := sshconfig.Find(hosts, fs.Arg(0))
 	if !ok {
 		fmt.Fprintf(deps.Stderr, "whop: host %q not found\n", fs.Arg(0))
@@ -45,12 +46,6 @@ func runRecord(args []string, deps Deps) int {
 			fmt.Fprintln(deps.Stderr, "usage: recording value must be on/off")
 			return 2
 		}
-		metaStore, err := deps.OpenStore()
-		if err != nil {
-			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
-			return 1
-		}
-		defer metaStore.Close()
 		if err := metaStore.SetRecord(host.Alias, enabled); err != nil {
 			fmt.Fprintf(deps.Stderr, "whop: %v\n", err)
 			return 1

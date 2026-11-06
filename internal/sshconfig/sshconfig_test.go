@@ -250,3 +250,23 @@ func TestAccessModeFromOverride(t *testing.T) {
 		t.Fatalf("false override = %q", got)
 	}
 }
+
+func TestHostAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		host Host
+		want string
+	}{
+		{name: "ipv4", host: Host{HostName: "10.0.0.11", Port: 2222}, want: "10.0.0.11:2222"},
+		{name: "alias fallback", host: Host{Alias: "prod", Port: 22}, want: "prod:22"},
+		{name: "ipv6", host: Host{HostName: "::1", Port: 22}, want: "[::1]:22"},
+		{name: "bracketed ipv6", host: Host{HostName: "[2001:db8::1]", Port: 2222}, want: "[2001:db8::1]:2222"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.host.Address(); got != tt.want {
+				t.Fatalf("Address() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
