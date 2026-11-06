@@ -53,29 +53,52 @@ func IndexDirectory(dir string) ([]TranscriptDocument, error) {
 
 // IndexDirectoryWithOptions is IndexDirectory with explicit failure handling.
 func IndexDirectoryWithOptions(dir string, opts IndexOptions) ([]TranscriptDocument, error) {
+	var documents []TranscriptDocument
+	if err := WalkDirectoryWithOptions(dir, opts, func(document TranscriptDocument) error {
+		documents = append(documents, document)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(documents, func(i, j int) bool {
+		if !documents[i].StartedAt.Equal(documents[j].StartedAt) {
+			return documents[i].StartedAt.After(documents[j].StartedAt)
+		}
+		if documents[i].SessionID != documents[j].SessionID {
+			return documents[i].SessionID < documents[j].SessionID
+		}
+		return documents[i].Path < documents[j].Path
+	})
+	return documents, nil
+}
+
+// WalkDirectoryWithOptions scans dir recursively and calls visit for every
+// indexable transcript. Unlike IndexDirectoryWithOptions it does not retain all
+// transcript text in memory, which keeps large recording directories bounded
+// to one file at a time.
+func WalkDirectoryWithOptions(dir string, opts IndexOptions, visit func(TranscriptDocument) error) error {
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil
 		}
-		return nil, fmt.Errorf("session: stat recording directory: %w", err)
+		return fmt.Errorf("session: stat recording directory: %w", err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("session: %s is not a directory", dir)
+		return fmt.Errorf("session: %s is not a directory", dir)
 	}
 
 	root, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, fmt.Errorf("session: resolve recording directory: %w", err)
+		return fmt.Errorf("session: resolve recording directory: %w", err)
 	}
 	root, err = filepath.EvalSymlinks(filepath.Clean(root))
 	if err != nil {
-		return nil, fmt.Errorf("session: resolve recording directory symlink: %w", err)
+		return fmt.Errorf("session: resolve recording directory symlink: %w", err)
 	}
 	root = filepath.Clean(root)
 	rootID := fmt.Sprintf("%x", sha256.Sum256([]byte(root)))[:16]
 
-	var documents []TranscriptDocument
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -94,25 +117,15 @@ func IndexDirectoryWithOptions(dir string, opts IndexOptions) ([]TranscriptDocum
 			}
 			return err
 		}
-		if document.Skipped || strings.TrimSpace(document.Text) != "" {
-			documents = append(documents, document)
+		if !document.Skipped && strings.TrimSpace(document.Text) == "" {
+			return nil
 		}
-		return nil
+		return visit(document)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("session: index recording directory: %w", err)
+		return fmt.Errorf("session: index recording directory: %w", err)
 	}
-
-	sort.SliceStable(documents, func(i, j int) bool {
-		if !documents[i].StartedAt.Equal(documents[j].StartedAt) {
-			return documents[i].StartedAt.After(documents[j].StartedAt)
-		}
-		if documents[i].SessionID != documents[j].SessionID {
-			return documents[i].SessionID < documents[j].SessionID
-		}
-		return documents[i].Path < documents[j].Path
-	})
-	return documents, nil
+	return nil
 }
 
 func indexTranscriptPair(root, rootID, transcriptPath string, opts IndexOptions) (TranscriptDocument, error) {

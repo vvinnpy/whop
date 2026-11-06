@@ -400,7 +400,8 @@ The FTS5 index uses the trigram tokenizer, so English and CJK substrings can be
 searched. Indexed transcript IDs are scoped to their recording root, preventing
 same-named files in different directories from overwriting each other. Index
 syncs compare source file size and modification time, so unchanged transcripts
-are skipped without being read or re-indexed.
+are skipped without being read or re-indexed. Changed transcripts are streamed
+through the sync one file at a time instead of being held in memory together.
 Password authentication input is not recorded, but avoid typing secrets into an
 interactive shell when recording is enabled.
 

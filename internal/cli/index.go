@@ -34,7 +34,9 @@ func syncTranscriptIndex(metaStore MetaStore, dir string, skipInvalid, prune boo
 	if err != nil {
 		return 0, 0, fmt.Errorf("load transcript fingerprints: %w", err)
 	}
-	documents, err := session.IndexDirectoryWithOptions(dir, session.IndexOptions{
+	var paths []string
+	indexed := 0
+	err = session.WalkDirectoryWithOptions(dir, session.IndexOptions{
 		SkipInvalid: skipInvalid,
 		SkipText: func(path string, info fs.FileInfo) bool {
 			fingerprint, ok := fingerprints[filepath.Clean(path)]
@@ -44,16 +46,10 @@ func syncTranscriptIndex(metaStore MetaStore, dir string, skipInvalid, prune boo
 			return fingerprint.Size == info.Size() &&
 				fingerprint.ModTime.UnixNano() == info.ModTime().UTC().UnixNano()
 		},
-	})
-	if err != nil {
-		return 0, 0, err
-	}
-	paths := make([]string, 0, len(documents))
-	indexed := 0
-	for _, document := range documents {
+	}, func(document session.TranscriptDocument) error {
 		paths = append(paths, document.Path)
 		if document.Skipped {
-			continue
+			return nil
 		}
 		changed, err := metaStore.IndexTranscript(store.Transcript{
 			SessionID: document.SessionID,
@@ -65,11 +61,15 @@ func syncTranscriptIndex(metaStore MetaStore, dir string, skipInvalid, prune boo
 			Text:      document.Text,
 		})
 		if err != nil {
-			return 0, 0, fmt.Errorf("index %s: %w", document.Path, err)
+			return fmt.Errorf("index %s: %w", document.Path, err)
 		}
 		if changed {
 			indexed++
 		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
 	}
 	removed := 0
 	if prune {

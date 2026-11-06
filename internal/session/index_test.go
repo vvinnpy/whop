@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -452,5 +453,27 @@ func TestIndexDirectorySkipText(t *testing.T) {
 	}
 	if document.Size == 0 || document.ModTime.IsZero() || document.Host != "prod-db" {
 		t.Fatalf("skipped document lost metadata: %+v", document)
+	}
+}
+
+func TestWalkDirectoryStreamsDocuments(t *testing.T) {
+	dir := t.TempDir()
+	writeIndexTranscript(t, filepath.Join(dir, "one.txt"), "first transcript\n")
+	writeIndexTranscript(t, filepath.Join(dir, "two.txt"), "second transcript\n")
+
+	var paths []string
+	err := WalkDirectoryWithOptions(dir, IndexOptions{}, func(document TranscriptDocument) error {
+		if document.Text == "" {
+			t.Fatalf("streamed document lost text: %+v", document)
+		}
+		paths = append(paths, filepath.Base(document.Path))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(paths)
+	if len(paths) != 2 || paths[0] != "one.txt" || paths[1] != "two.txt" {
+		t.Fatalf("visited paths = %#v", paths)
 	}
 }
