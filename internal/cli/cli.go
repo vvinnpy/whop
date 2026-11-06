@@ -34,6 +34,8 @@ const (
 	tuiNoticeScopeEnv = "WHOP_TUI_NOTICE_SCOPE"
 	tuiMacroPauseEnv  = "WHOP_TUI_MACRO_PAUSE"
 	tuiShowAllEnv     = "WHOP_TUI_SHOW_ALL"
+	tuiFilterEnv      = "WHOP_TUI_FILTER"
+	tuiSelectedEnv    = "WHOP_TUI_SELECTED"
 )
 
 // Version is overridden at build time with -ldflags. When empty, versionString
@@ -342,16 +344,29 @@ func runTUI(args []string, deps Deps) int {
 		waitForMacroResult(deps, tuiNotice.Text)
 	}
 
-	// A relaunch after a session inherits this value. It must override the
-	// original -all flag so toggling either direction survives the restart.
+	configPathValue := resolvePath(*configPath)
+	initialFilter := strings.Join(fs.Args(), " ")
+	initialSelected := ""
+	// A relaunch after an interactive session must restore the live list
+	// state, which may differ from the original CLI arguments.
+	if value, ok := os.LookupEnv(tuiFilterEnv); ok {
+		initialFilter = value
+		_ = os.Unsetenv(tuiFilterEnv)
+	}
+	if value, ok := os.LookupEnv(tuiSelectedEnv); ok {
+		initialSelected = value
+		_ = os.Unsetenv(tuiSelectedEnv)
+	}
 	showAllValue := *showAll
 	if _, ok := os.LookupEnv(tuiShowAllEnv); ok {
 		showAllValue = envBool(tuiShowAllEnv)
 		_ = os.Unsetenv(tuiShowAllEnv)
 	}
-
-	configPathValue := resolvePath(*configPath)
-	initialFilter := strings.Join(fs.Args(), " ")
+	listState := ui.ListState{
+		Filter:   initialFilter,
+		Selected: initialSelected,
+		ShowAll:  showAllValue,
+	}
 	metaStore, err := deps.OpenStore()
 	if err != nil {
 		fmt.Fprintf(deps.Stderr, "whop: open metadata: %v\n", err)
@@ -365,13 +380,14 @@ func runTUI(args []string, deps Deps) int {
 		var pendingSFTP *sftpRequest
 		var pendingMacro *macroRequest
 		options := ui.Options{
-			ConfigPath:    configPathValue,
-			InitialFilter: initialFilter,
-			InitialNotice: tuiNotice,
-			ShowAll:       showAllValue,
-			Record:        *record,
-			ShowAllChanged: func(showAll bool) {
-				showAllValue = showAll
+			ConfigPath:      configPathValue,
+			InitialFilter:   listState.Filter,
+			InitialSelected: listState.Selected,
+			InitialNotice:   tuiNotice,
+			ShowAll:         listState.ShowAll,
+			Record:          *record,
+			StateChanged: func(state ui.ListState) {
+				listState = state
 			},
 			Load: func() ([]sshconfig.Host, error) {
 				return loadHosts(deps, metaStore, configPathValue)
@@ -501,7 +517,7 @@ func runTUI(args []string, deps Deps) int {
 					Scope: request.host.Alias,
 				}
 			}
-			return relaunchTUI(deps, tuiNotice, showAllValue)
+			return relaunchTUI(deps, tuiNotice, listState)
 
 		case pendingForward != nil:
 			request := *pendingForward
@@ -513,7 +529,7 @@ func runTUI(args []string, deps Deps) int {
 					Level: ui.StatusError,
 					Scope: request.host.Alias,
 				}
-				return relaunchTUI(deps, tuiNotice, showAllValue)
+				return relaunchTUI(deps, tuiNotice, listState)
 			}
 			if err := runForwardInteractive(deps, request.host, hosts, request.spec); err != nil {
 				tuiNotice = ui.Notice{
@@ -528,7 +544,7 @@ func runTUI(args []string, deps Deps) int {
 					Scope: request.host.Alias,
 				}
 			}
-			return relaunchTUI(deps, tuiNotice, showAllValue)
+			return relaunchTUI(deps, tuiNotice, listState)
 
 		case pendingSFTP != nil:
 			request := *pendingSFTP
@@ -540,7 +556,7 @@ func runTUI(args []string, deps Deps) int {
 					Level: ui.StatusError,
 					Scope: request.host.Alias,
 				}
-				return relaunchTUI(deps, tuiNotice, showAllValue)
+				return relaunchTUI(deps, tuiNotice, listState)
 			}
 			if err := deps.RunSFTP(request.host, hosts, deps.UseAgent); err != nil {
 				tuiNotice = ui.Notice{
@@ -555,7 +571,7 @@ func runTUI(args []string, deps Deps) int {
 					Scope: request.host.Alias,
 				}
 			}
-			return relaunchTUI(deps, tuiNotice, showAllValue)
+			return relaunchTUI(deps, tuiNotice, listState)
 
 		case pendingMacro != nil:
 			request := *pendingMacro
@@ -565,7 +581,7 @@ func runTUI(args []string, deps Deps) int {
 			// The next process shows the macro result before reopening the TUI.
 			// Waiting here would race with Bubble Tea's old stdin reader.
 			_ = os.Setenv(tuiMacroPauseEnv, "1")
-			return relaunchTUI(deps, tuiNotice, showAllValue)
+			return relaunchTUI(deps, tuiNotice, listState)
 
 		default:
 			return 0
@@ -573,7 +589,7 @@ func runTUI(args []string, deps Deps) int {
 	}
 }
 
-func relaunchTUI(deps Deps, notice ui.Notice, showAll bool) int {
+func relaunchTUI(deps Deps, notice ui.Notice, state ui.ListState) int {
 	if notice.Text != "" {
 		_ = os.Setenv(tuiNoticeEnv, notice.Text)
 		level := "result"
@@ -591,7 +607,9 @@ func relaunchTUI(deps Deps, notice ui.Notice, showAll bool) int {
 		_ = os.Unsetenv(tuiNoticeLevelEnv)
 		_ = os.Unsetenv(tuiNoticeScopeEnv)
 	}
-	if showAll {
+	_ = os.Setenv(tuiFilterEnv, state.Filter)
+	_ = os.Setenv(tuiSelectedEnv, state.Selected)
+	if state.ShowAll {
 		_ = os.Setenv(tuiShowAllEnv, "1")
 	} else {
 		_ = os.Setenv(tuiShowAllEnv, "0")

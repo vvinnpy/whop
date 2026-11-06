@@ -302,14 +302,14 @@ func TestToggleAllIncludesGitAuth(t *testing.T) {
 }
 
 func TestToggleAllReportsStateChange(t *testing.T) {
-	var changes []bool
+	var states []ListState
 	m := New(Options{
 		ConfigPath: "~/.ssh/config",
 		Load: func() ([]sshconfig.Host, error) {
 			return testHosts(), nil
 		},
-		ShowAllChanged: func(showAll bool) {
-			changes = append(changes, showAll)
+		StateChanged: func(state ListState) {
+			states = append(states, state)
 		},
 	})
 	m.Update(m.Init()())
@@ -317,8 +317,50 @@ func TestToggleAllReportsStateChange(t *testing.T) {
 	sendKey(m, runeKey("a"))
 	sendKey(m, runeKey("a"))
 
-	if len(changes) != 2 || !changes[0] || changes[1] {
-		t.Fatalf("show-all changes = %#v, want [true false]", changes)
+	if len(states) == 0 {
+		t.Fatal("list state callback was not called")
+	}
+	last := states[len(states)-1]
+	if last.ShowAll || last.Selected != "prod-db" {
+		t.Fatalf("last list state = %+v", last)
+	}
+}
+
+func TestListStateTracksFilterAndSelection(t *testing.T) {
+	var states []ListState
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return testHosts(), nil
+		},
+		StateChanged: func(state ListState) {
+			states = append(states, state)
+		},
+	})
+	m.Update(m.Init()())
+
+	sendKey(m, runeKey("/"))
+	sendKey(m, runeKey("cache"))
+
+	last := states[len(states)-1]
+	if last.Filter != "cache" || last.Selected != "prod-cache" {
+		t.Fatalf("last list state = %+v", last)
+	}
+}
+
+func TestInitialSelectedRestoresCursor(t *testing.T) {
+	m := New(Options{
+		ConfigPath:      "~/.ssh/config",
+		InitialFilter:   "prod",
+		InitialSelected: "prod-cache",
+		Load: func() ([]sshconfig.Host, error) {
+			return testHosts(), nil
+		},
+	})
+	m.Update(m.Init()())
+
+	if got := m.selectedAlias(); got != "prod-cache" {
+		t.Fatalf("selected host = %q, want prod-cache", got)
 	}
 }
 

@@ -37,13 +37,21 @@ type MacroLoader func() ([]string, error)
 // MacroRunner starts a named macro against one host.
 type MacroRunner func(sshconfig.Host, string) tea.Cmd
 
+// ListState is the host-list state that should survive a full TUI relaunch.
+type ListState struct {
+	Filter   string
+	Selected string
+	ShowAll  bool
+}
+
 // Options configures the TUI model.
 type Options struct {
 	ConfigPath      string
 	InitialFilter   string
+	InitialSelected string
 	InitialNotice   Notice
 	ShowAll         bool
-	ShowAllChanged  func(bool)
+	StateChanged    func(ListState)
 	Record          bool
 	Load            HostLoader
 	Connect         ConnectFunc
@@ -117,14 +125,15 @@ type Model struct {
 	filtered []sshconfig.Host
 	cursor   int
 
-	filter         string
-	filterFocused  bool
-	connecting     bool
-	initialNotice  Notice
-	showAll        bool
-	showAllChanged func(bool)
-	record         bool
-	help           bool
+	filter          string
+	filterFocused   bool
+	connecting      bool
+	initialNotice   Notice
+	initialSelected string
+	showAll         bool
+	stateChanged    func(ListState)
+	record          bool
+	help            bool
 
 	width  int
 	height int
@@ -200,9 +209,10 @@ func New(opts Options) *Model {
 		setRecord:       opts.SetRecord,
 		setLoginMode:    opts.SetLoginMode,
 		filter:          opts.InitialFilter,
+		initialSelected: opts.InitialSelected,
 		initialNotice:   opts.InitialNotice,
 		showAll:         opts.ShowAll,
-		showAllChanged:  opts.ShowAllChanged,
+		stateChanged:    opts.StateChanged,
 		record:          opts.Record,
 		width:           100,
 		height:          30,
@@ -218,6 +228,7 @@ func (m *Model) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	m.notifyStateChanged()
 	return model, m.status.arm(cmd)
 }
 
@@ -237,13 +248,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.allHosts = msg.hosts
 		m.applyFilter()
+		if m.initialSelected != "" {
+			m.selectAlias(m.initialSelected)
+			m.initialSelected = ""
+		}
 		if m.status.is(StatusProgress, "reloading config...") {
 			m.status.result("config reloaded", "")
 		}
 		if m.initialNotice.Text != "" {
-			// The relaunched TUI starts at the top of the list, which may not be
-			// the host the notice refers to. Keep it visible until the first
-			// navigation; the text itself names the host.
+			// Keep the notice visible until the first navigation. The prior
+			// selection is restored when possible, but the host may have been
+			// removed or hidden since the session ended.
 			notice := m.initialNotice
 			notice.Scope = ""
 			m.status.set(notice)
@@ -414,9 +429,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status.clear()
 		m.showAll = !m.showAll
 		m.applyFilter()
-		if m.showAllChanged != nil {
-			m.showAllChanged(m.showAll)
-		}
 	case "f":
 		m.toggleSelectedFavorite()
 	case "N":
@@ -1335,10 +1347,7 @@ func (m *Model) selectedAlias() string {
 }
 
 func (m *Model) applyFilter() {
-	previous := ""
-	if host, ok := m.selected(); ok {
-		previous = host.Alias
-	}
+	previous := m.selectedAlias()
 
 	source := m.allHosts
 	if !m.showAll {
@@ -1347,15 +1356,32 @@ func (m *Model) applyFilter() {
 	source = core.SortHosts(source)
 	m.filtered = core.Filter(source, m.filter)
 	m.cursor = 0
-	if previous != "" {
-		for i, host := range m.filtered {
-			if host.Alias == previous {
-				m.cursor = i
-				break
-			}
+	m.selectAlias(previous)
+	m.clampCursor()
+}
+
+func (m *Model) selectAlias(alias string) bool {
+	if alias == "" {
+		return false
+	}
+	for i, host := range m.filtered {
+		if host.Alias == alias {
+			m.cursor = i
+			return true
 		}
 	}
-	m.clampCursor()
+	return false
+}
+
+func (m *Model) notifyStateChanged() {
+	if m.stateChanged == nil {
+		return
+	}
+	m.stateChanged(ListState{
+		Filter:   m.filter,
+		Selected: m.selectedAlias(),
+		ShowAll:  m.showAll,
+	})
 }
 
 func (m *Model) move(delta int) {

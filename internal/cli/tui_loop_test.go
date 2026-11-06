@@ -17,14 +17,18 @@ import (
 func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	td := newTestDeps()
 	t.Setenv(tuiNoticeEnv, "")
-	t.Cleanup(func() { _ = os.Unsetenv(tuiShowAllEnv) })
+	t.Cleanup(func() {
+		_ = os.Unsetenv(tuiFilterEnv)
+		_ = os.Unsetenv(tuiSelectedEnv)
+		_ = os.Unsetenv(tuiShowAllEnv)
+	})
 	calls := 0
 	td.deps.RunTUI = func(opts ui.Options) error {
 		calls++
-		if opts.ShowAllChanged == nil {
-			t.Fatal("show-all state callback is not configured")
+		if opts.StateChanged == nil {
+			t.Fatal("list state callback is not configured")
 		}
-		opts.ShowAllChanged(true)
+		opts.StateChanged(ui.ListState{Filter: "prod", Selected: "prod-cache", ShowAll: true})
 		hosts, err := opts.Load()
 		if err != nil || len(hosts) == 0 {
 			t.Fatalf("load hosts: %v %#v", err, hosts)
@@ -67,36 +71,74 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	if got := os.Getenv(tuiNoticeScopeEnv); got != "prod-db" {
 		t.Fatalf("notice scope = %q", got)
 	}
+	if got := os.Getenv(tuiFilterEnv); got != "prod" {
+		t.Fatalf("filter state = %q", got)
+	}
+	if got := os.Getenv(tuiSelectedEnv); got != "prod-cache" {
+		t.Fatalf("selected state = %q", got)
+	}
 	if got := os.Getenv(tuiShowAllEnv); got != "1" {
 		t.Fatalf("show all state = %q", got)
 	}
 }
 
-func TestTUIShowAllRelaunchStateOverridesFlag(t *testing.T) {
+func TestTUIListStateRelaunchStateOverridesArgs(t *testing.T) {
 	tests := []struct {
-		name string
-		env  string
-		args []string
-		want bool
+		name         string
+		envFilter    string
+		envSelected  string
+		envShowAll   string
+		args         []string
+		wantFilter   string
+		wantSelected string
+		wantShowAll  bool
 	}{
-		{name: "enabled overrides default flag", env: "1", want: true},
-		{name: "disabled overrides all flag", env: "0", args: []string{"-all"}, want: false},
+		{
+			name:         "restores live state",
+			envFilter:    "cache",
+			envSelected:  "prod-cache",
+			envShowAll:   "1",
+			args:         []string{"prod"},
+			wantFilter:   "cache",
+			wantSelected: "prod-cache",
+			wantShowAll:  true,
+		},
+		{
+			name:         "empty filter and all toggle override args",
+			envFilter:    "",
+			envSelected:  "",
+			envShowAll:   "0",
+			args:         []string{"-all", "prod"},
+			wantFilter:   "",
+			wantSelected: "",
+			wantShowAll:  false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			td := newTestDeps()
-			t.Setenv(tuiShowAllEnv, tt.env)
+			t.Setenv(tuiFilterEnv, tt.envFilter)
+			t.Setenv(tuiSelectedEnv, tt.envSelected)
+			t.Setenv(tuiShowAllEnv, tt.envShowAll)
 			td.deps.RunTUI = func(opts ui.Options) error {
-				if opts.ShowAll != tt.want {
-					t.Fatalf("ShowAll = %v, want %v", opts.ShowAll, tt.want)
+				if opts.InitialFilter != tt.wantFilter {
+					t.Fatalf("InitialFilter = %q, want %q", opts.InitialFilter, tt.wantFilter)
+				}
+				if opts.InitialSelected != tt.wantSelected {
+					t.Fatalf("InitialSelected = %q, want %q", opts.InitialSelected, tt.wantSelected)
+				}
+				if opts.ShowAll != tt.wantShowAll {
+					t.Fatalf("ShowAll = %v, want %v", opts.ShowAll, tt.wantShowAll)
 				}
 				return nil
 			}
 			if code := Run(tt.args, td.deps); code != 0 {
 				t.Fatalf("exit = %d: %s", code, td.stderr.String())
 			}
-			if _, exists := os.LookupEnv(tuiShowAllEnv); exists {
-				t.Fatal("relaunch show-all state should be consumed at startup")
+			for _, name := range []string{tuiFilterEnv, tuiSelectedEnv, tuiShowAllEnv} {
+				if _, exists := os.LookupEnv(name); exists {
+					t.Fatalf("relaunch state %s should be consumed at startup", name)
+				}
 			}
 		})
 	}
