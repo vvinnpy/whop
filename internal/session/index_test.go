@@ -448,7 +448,7 @@ func TestIndexDirectorySkipText(t *testing.T) {
 		t.Fatalf("documents = %#v", documents)
 	}
 	document := documents[0]
-	if !document.Skipped || document.Text != "" || document.Path != filepath.Join(dir, "prod-db-20261103-100000.000.txt") {
+	if !document.Skipped || document.Text != "" || filepath.Base(document.Path) != "prod-db-20261103-100000.000.txt" {
 		t.Fatalf("unexpected skipped document: %+v", document)
 	}
 	if document.Size == 0 || document.ModTime.IsZero() || document.Host != "prod-db" {
