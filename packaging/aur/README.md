@@ -4,7 +4,10 @@ The AUR package is `whop-bin`. It installs the Linux `amd64` or `arm64`
 binary from the matching GitHub release asset and does not require a Go
 toolchain on the target machine.
 
-## Initial AUR submission
+The package is published at
+<https://aur.archlinux.org/packages/whop-bin>.
+
+## Initial AUR submission reference
 
 The first AUR repository must be created through the AUR web interface. Use
 `whop-bin/PKGBUILD` as the initial submission, then publish the generated

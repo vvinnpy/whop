@@ -96,7 +96,7 @@ goreleaser release --snapshot --clean
 
 ## Arch Linux (AUR)
 
-Once `whop-bin` has been submitted to the AUR:
+`whop-bin` is available from the AUR:
 
 ```bash
 yay -S whop-bin
