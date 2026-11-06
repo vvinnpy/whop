@@ -99,6 +99,8 @@ footer (one row, never wraps)
   `n`, `m`, `f`, and `N` can operate on the filtered result without typing into
   the filter.
 - In list action mode, `esc` clears the active filter. Use `q` to quit.
+- The current login/all entries choice is retained when a session ends and the
+  host list reopens.
 - Initial CLI arguments act as an initial filter:
   `whop prod` opens with `prod` already applied.
 - If the initial filter matches exactly one host, the user can press `enter`

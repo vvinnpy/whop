@@ -301,6 +301,27 @@ func TestToggleAllIncludesGitAuth(t *testing.T) {
 	}
 }
 
+func TestToggleAllReportsStateChange(t *testing.T) {
+	var changes []bool
+	m := New(Options{
+		ConfigPath: "~/.ssh/config",
+		Load: func() ([]sshconfig.Host, error) {
+			return testHosts(), nil
+		},
+		ShowAllChanged: func(showAll bool) {
+			changes = append(changes, showAll)
+		},
+	})
+	m.Update(m.Init()())
+
+	sendKey(m, runeKey("a"))
+	sendKey(m, runeKey("a"))
+
+	if len(changes) != 2 || !changes[0] || changes[1] {
+		t.Fatalf("show-all changes = %#v, want [true false]", changes)
+	}
+}
+
 func TestAccessPickerSetsServiceAndHidesHost(t *testing.T) {
 	hosts := testHosts()
 	var selectedAlias string

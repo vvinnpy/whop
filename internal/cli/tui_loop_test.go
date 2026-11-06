@@ -17,9 +17,14 @@ import (
 func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	td := newTestDeps()
 	t.Setenv(tuiNoticeEnv, "")
+	t.Cleanup(func() { _ = os.Unsetenv(tuiShowAllEnv) })
 	calls := 0
 	td.deps.RunTUI = func(opts ui.Options) error {
 		calls++
+		if opts.ShowAllChanged == nil {
+			t.Fatal("show-all state callback is not configured")
+		}
+		opts.ShowAllChanged(true)
 		hosts, err := opts.Load()
 		if err != nil || len(hosts) == 0 {
 			t.Fatalf("load hosts: %v %#v", err, hosts)
@@ -61,6 +66,39 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	}
 	if got := os.Getenv(tuiNoticeScopeEnv); got != "prod-db" {
 		t.Fatalf("notice scope = %q", got)
+	}
+	if got := os.Getenv(tuiShowAllEnv); got != "1" {
+		t.Fatalf("show all state = %q", got)
+	}
+}
+
+func TestTUIShowAllRelaunchStateOverridesFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		args []string
+		want bool
+	}{
+		{name: "enabled overrides default flag", env: "1", want: true},
+		{name: "disabled overrides all flag", env: "0", args: []string{"-all"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			td := newTestDeps()
+			t.Setenv(tuiShowAllEnv, tt.env)
+			td.deps.RunTUI = func(opts ui.Options) error {
+				if opts.ShowAll != tt.want {
+					t.Fatalf("ShowAll = %v, want %v", opts.ShowAll, tt.want)
+				}
+				return nil
+			}
+			if code := Run(tt.args, td.deps); code != 0 {
+				t.Fatalf("exit = %d: %s", code, td.stderr.String())
+			}
+			if _, exists := os.LookupEnv(tuiShowAllEnv); exists {
+				t.Fatal("relaunch show-all state should be consumed at startup")
+			}
+		})
 	}
 }
 

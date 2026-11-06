@@ -43,6 +43,7 @@ type Options struct {
 	InitialFilter   string
 	InitialNotice   Notice
 	ShowAll         bool
+	ShowAllChanged  func(bool)
 	Record          bool
 	Load            HostLoader
 	Connect         ConnectFunc
@@ -116,13 +117,14 @@ type Model struct {
 	filtered []sshconfig.Host
 	cursor   int
 
-	filter        string
-	filterFocused bool
-	connecting    bool
-	initialNotice Notice
-	showAll       bool
-	record        bool
-	help          bool
+	filter         string
+	filterFocused  bool
+	connecting     bool
+	initialNotice  Notice
+	showAll        bool
+	showAllChanged func(bool)
+	record         bool
+	help           bool
 
 	width  int
 	height int
@@ -200,6 +202,7 @@ func New(opts Options) *Model {
 		filter:          opts.InitialFilter,
 		initialNotice:   opts.InitialNotice,
 		showAll:         opts.ShowAll,
+		showAllChanged:  opts.ShowAllChanged,
 		record:          opts.Record,
 		width:           100,
 		height:          30,
@@ -411,6 +414,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status.clear()
 		m.showAll = !m.showAll
 		m.applyFilter()
+		if m.showAllChanged != nil {
+			m.showAllChanged(m.showAll)
+		}
 	case "f":
 		m.toggleSelectedFavorite()
 	case "N":
