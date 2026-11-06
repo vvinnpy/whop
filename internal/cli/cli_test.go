@@ -33,17 +33,29 @@ type persistentTestStore struct {
 func (s persistentTestStore) Close() error { return nil }
 
 type fakePreparedConnect struct {
-	deps     *testDeps
-	host     sshconfig.Host
-	record   bool
-	useAgent bool
-	runErr   error
+	deps      *testDeps
+	host      sshconfig.Host
+	record    bool
+	useAgent  bool
+	runInput  string
+	runOut    string
+	runErrOut string
+	runErr    error
 }
 
-func (p *fakePreparedConnect) Run(_ context.Context, _ io.Reader, _, _ io.Writer) error {
+func (p *fakePreparedConnect) Run(_ context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 	p.deps.connected = p.host.Alias
 	p.deps.recorded = p.record
 	p.deps.useAgent = p.useAgent
+	if p.runInput != "" {
+		_, _ = io.CopyN(io.Discard, stdin, int64(len(p.runInput)))
+	}
+	if p.runOut != "" {
+		_, _ = io.WriteString(stdout, p.runOut)
+	}
+	if p.runErrOut != "" {
+		_, _ = io.WriteString(stderr, p.runErrOut)
+	}
 	return p.runErr
 }
 

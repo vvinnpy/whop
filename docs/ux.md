@@ -38,6 +38,11 @@ Row-level status is shown in the `FLAGS` column: `*` means favorite and `REC`
 means the host will record the session. Hosts without flags show `-`. Narrow
 terminals use the compact `FLG` header and `R` recording marker.
 
+When an SSH session exits without receiving any local input, the session-ended
+notice includes the last non-empty remote output line. This keeps service
+banners (for example, Git hosting endpoints) visible after returning from the
+alternate screen without adding an extra confirmation step to normal logins.
+
 ## Layout system
 
 Every persistent screen uses the same vertical grid:

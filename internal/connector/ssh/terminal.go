@@ -27,14 +27,20 @@ type terminalMode struct {
 	active   bool
 }
 
+// readerUnwrapper lets instrumented readers expose the terminal file used for
+// raw-mode setup while keeping their own Read implementation in the data path.
+type readerUnwrapper interface {
+	UnwrapReader() io.Reader
+}
+
 // prepareTerminalInput switches a local TTY to raw mode so control keys,
 // arrow-key escape sequences, Ctrl+L, Ctrl+C, and interactive applications are
 // forwarded to the remote PTY instead of being interpreted by the local line
 // discipline. Non-terminal readers are returned unchanged.
 func prepareTerminalInput(reader io.Reader) (io.Reader, *terminalMode, error) {
 	mode := &terminalMode{}
-	file, ok := reader.(*os.File)
-	if !ok || file == nil || !term.IsTerminal(int(file.Fd())) {
+	file := terminalFile(reader)
+	if file == nil || !term.IsTerminal(int(file.Fd())) {
 		return reader, mode, nil
 	}
 	state, err := term.MakeRaw(int(file.Fd()))
@@ -45,6 +51,20 @@ func prepareTerminalInput(reader io.Reader) (io.Reader, *terminalMode, error) {
 	mode.original = state
 	mode.active = true
 	return reader, mode, nil
+}
+
+func terminalFile(reader io.Reader) *os.File {
+	for depth := 0; reader != nil && depth < 8; depth++ {
+		if file, ok := reader.(*os.File); ok {
+			return file
+		}
+		unwrapper, ok := reader.(readerUnwrapper)
+		if !ok {
+			return nil
+		}
+		reader = unwrapper.UnwrapReader()
+	}
+	return nil
 }
 
 func (m *terminalMode) Suspend() error {

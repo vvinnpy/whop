@@ -496,12 +496,15 @@ func runTUI(args []string, deps Deps) int {
 			// The TUI has restored the terminal. Key-based sessions are already
 			// authenticated with their shell ready; interactive-auth hosts fall
 			// back to the normal terminal prompt flow here.
+			stdin := newSessionInputCounter(deps.Stdin)
+			stdout := newSessionOutputCapture(deps.Stdout)
+			stderr := newSessionOutputCapture(deps.Stderr)
 			var err error
 			if request.prepared != nil {
-				err = request.prepared.Run(context.Background(), deps.Stdin, deps.Stdout, deps.Stderr)
+				err = request.prepared.Run(context.Background(), stdin, stdout, stderr)
 				_ = request.prepared.Close()
 			} else {
-				err = deps.Connect(request.host, request.hosts, deps.Stdin, deps.Stdout, deps.Stderr, request.record, deps.UseAgent)
+				err = deps.Connect(request.host, request.hosts, stdin, stdout, stderr, request.record, deps.UseAgent)
 			}
 			if err != nil {
 				tuiNotice = ui.Notice{
@@ -512,7 +515,7 @@ func runTUI(args []string, deps Deps) int {
 			} else {
 				_ = metaStore.RecordConnect(request.host.Alias, time.Now())
 				tuiNotice = ui.Notice{
-					Text:  "session ended · " + request.host.Alias,
+					Text:  appendSessionSummary("session ended · "+request.host.Alias, stdin.Bytes(), stdout, stderr),
 					Level: ui.StatusResult,
 					Scope: request.host.Alias,
 				}

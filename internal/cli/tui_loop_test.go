@@ -82,6 +82,97 @@ func TestTUIConnectRelaunchesInsteadOfTeaExec(t *testing.T) {
 	}
 }
 
+func TestTUIConnectShowsOutputAfterZeroInputSession(t *testing.T) {
+	td := newTestDeps()
+	t.Setenv(tuiNoticeEnv, "")
+	t.Setenv(tuiNoticeLevelEnv, "")
+	t.Setenv(tuiNoticeScopeEnv, "")
+	t.Cleanup(func() {
+		_ = os.Unsetenv(tuiFilterEnv)
+		_ = os.Unsetenv(tuiSelectedEnv)
+		_ = os.Unsetenv(tuiShowAllEnv)
+	})
+	td.deps.PrepareConnect = func(_ context.Context, host sshconfig.Host, _ []sshconfig.Host, record, useAgent bool) (PreparedConnect, error) {
+		return &fakePreparedConnect{
+			deps:     td,
+			host:     host,
+			record:   record,
+			useAgent: useAgent,
+			runOut:   "\x1b[32mWelcome to GitLab, @user!\x1b[0m\n",
+		}, nil
+	}
+	td.deps.RunTUI = func(opts ui.Options) error {
+		hosts, err := opts.Load()
+		if err != nil || len(hosts) == 0 {
+			t.Fatalf("load hosts: %v %#v", err, hosts)
+		}
+		msg := opts.Connect(hosts[0], false)()
+		attempt, ok := msg.(ui.ConnectAttemptFinishedMsg)
+		if !ok || attempt.Err != nil {
+			t.Fatalf("connect message = %#v", msg)
+		}
+		if attempt.Handover != nil {
+			attempt.Handover()
+		}
+		return nil
+	}
+
+	if code := Run(nil, td.deps); code != 0 {
+		t.Fatalf("exit = %d: %s", code, td.stderr.String())
+	}
+	if got := os.Getenv(tuiNoticeEnv); got != "session ended · prod-db · Welcome to GitLab, @user!" {
+		t.Fatalf("notice = %q", got)
+	}
+	if !strings.Contains(td.stdout.String(), "Welcome to GitLab, @user!") {
+		t.Fatalf("original output was not forwarded: %q", td.stdout.String())
+	}
+}
+
+func TestTUIConnectHidesOutputSummaryAfterUserInput(t *testing.T) {
+	td := newTestDeps()
+	td.deps.Stdin = strings.NewReader("exit\n")
+	t.Setenv(tuiNoticeEnv, "")
+	t.Setenv(tuiNoticeLevelEnv, "")
+	t.Setenv(tuiNoticeScopeEnv, "")
+	t.Cleanup(func() {
+		_ = os.Unsetenv(tuiFilterEnv)
+		_ = os.Unsetenv(tuiSelectedEnv)
+		_ = os.Unsetenv(tuiShowAllEnv)
+	})
+	td.deps.PrepareConnect = func(_ context.Context, host sshconfig.Host, _ []sshconfig.Host, record, useAgent bool) (PreparedConnect, error) {
+		return &fakePreparedConnect{
+			deps:     td,
+			host:     host,
+			record:   record,
+			useAgent: useAgent,
+			runInput: "exit\n",
+			runOut:   "Welcome to GitLab, @user!\n",
+		}, nil
+	}
+	td.deps.RunTUI = func(opts ui.Options) error {
+		hosts, err := opts.Load()
+		if err != nil || len(hosts) == 0 {
+			t.Fatalf("load hosts: %v %#v", err, hosts)
+		}
+		msg := opts.Connect(hosts[0], false)()
+		attempt, ok := msg.(ui.ConnectAttemptFinishedMsg)
+		if !ok || attempt.Err != nil {
+			t.Fatalf("connect message = %#v", msg)
+		}
+		if attempt.Handover != nil {
+			attempt.Handover()
+		}
+		return nil
+	}
+
+	if code := Run(nil, td.deps); code != 0 {
+		t.Fatalf("exit = %d: %s", code, td.stderr.String())
+	}
+	if got := os.Getenv(tuiNoticeEnv); got != "session ended · prod-db" {
+		t.Fatalf("notice = %q", got)
+	}
+}
+
 func TestTUIListStateRelaunchStateOverridesArgs(t *testing.T) {
 	tests := []struct {
 		name         string
