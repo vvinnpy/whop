@@ -58,6 +58,15 @@ func newSessionOutputCapture(target io.Writer) *sessionOutputCapture {
 	return &sessionOutputCapture{target: target}
 }
 
+// UnwrapWriter lets the SSH terminal layer discover the real output TTY for
+// terminal-state cleanup while retaining captured output for the summary.
+func (w *sessionOutputCapture) UnwrapWriter() io.Writer {
+	if w == nil {
+		return nil
+	}
+	return w.target
+}
+
 func (w *sessionOutputCapture) Write(data []byte) (int, error) {
 	n, err := w.target.Write(data)
 	if n > 0 {

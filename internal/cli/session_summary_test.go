@@ -117,3 +117,11 @@ func TestSessionInputCounterCountsAndUnwraps(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionOutputCaptureUnwrapsWriter(t *testing.T) {
+	target := &bytes.Buffer{}
+	capture := newSessionOutputCapture(target)
+	if capture.UnwrapWriter() != target {
+		t.Fatal("UnwrapWriter did not return the original writer")
+	}
+}

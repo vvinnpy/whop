@@ -1,10 +1,12 @@
 package sshconn
 
 import (
+	"context"
 	"io"
 	"os"
 	"sync"
 
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
 
@@ -23,6 +25,7 @@ func DefaultTerminalSize() (width, height int) {
 type terminalMode struct {
 	mu       sync.Mutex
 	file     *os.File
+	fd       int
 	original *term.State
 	active   bool
 }
@@ -31,6 +34,12 @@ type terminalMode struct {
 // raw-mode setup while keeping their own Read implementation in the data path.
 type readerUnwrapper interface {
 	UnwrapReader() io.Reader
+}
+
+// writerUnwrapper lets output capture wrappers expose the terminal file used
+// for terminal-state resets without bypassing their own Write implementation.
+type writerUnwrapper interface {
+	UnwrapWriter() io.Writer
 }
 
 // prepareTerminalInput switches a local TTY to raw mode so control keys,
@@ -48,6 +57,7 @@ func prepareTerminalInput(reader io.Reader) (io.Reader, *terminalMode, error) {
 		return nil, nil, err
 	}
 	mode.file = file
+	mode.fd = int(file.Fd())
 	mode.original = state
 	mode.active = true
 	return reader, mode, nil
@@ -65,6 +75,85 @@ func terminalFile(reader io.Reader) *os.File {
 		reader = unwrapper.UnwrapReader()
 	}
 	return nil
+}
+
+func terminalWriterFile(writer io.Writer) *os.File {
+	for depth := 0; writer != nil && depth < 8; depth++ {
+		if file, ok := writer.(*os.File); ok {
+			return file
+		}
+		unwrapper, ok := writer.(writerUnwrapper)
+		if !ok {
+			return nil
+		}
+		writer = unwrapper.UnwrapWriter()
+	}
+	return nil
+}
+
+// resetTerminalStyle clears SGR attributes left by the full-screen TUI before
+// a remote shell takes over. Vim's default Visual highlight uses reverse video,
+// which can become unreadable when it inherits a dangling foreground color.
+func resetTerminalStyle(writer io.Writer) {
+	file := terminalWriterFile(writer)
+	if file == nil || !term.IsTerminal(int(file.Fd())) {
+		return
+	}
+	_, _ = io.WriteString(writer, ansi.ResetStyle)
+}
+
+func (m *terminalMode) size() (width, height int, ok bool) {
+	if m == nil {
+		return 0, 0, false
+	}
+	m.mu.Lock()
+	fd := m.fd
+	m.mu.Unlock()
+	return terminalSize(fd)
+}
+
+func terminalSize(fd int) (width, height int, ok bool) {
+	if fd <= 0 {
+		return 0, 0, false
+	}
+	width, height, err := term.GetSize(fd)
+	if err != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+// watchTerminalSize keeps the remote PTY in sync with the local terminal.
+// The first observed size is applied immediately, which also corrects a PTY
+// size captured before the TUI handed the terminal over to the shell.
+func watchTerminalSize(ctx context.Context, terminal *terminalMode, changes <-chan struct{}, apply func(width, height int) error) {
+	if terminal == nil || apply == nil {
+		return
+	}
+	lastWidth, lastHeight, ok := terminal.size()
+	if ok {
+		if err := apply(lastWidth, lastHeight); err != nil {
+			return
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, open := <-changes:
+			if !open {
+				return
+			}
+		}
+		width, height, ok := terminal.size()
+		if !ok || (width == lastWidth && height == lastHeight) {
+			continue
+		}
+		if err := apply(width, height); err != nil {
+			return
+		}
+		lastWidth, lastHeight = width, height
+	}
 }
 
 func (m *terminalMode) Suspend() error {

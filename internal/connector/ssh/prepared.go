@@ -139,6 +139,10 @@ func (p *PreparedSession) Run(ctx context.Context, stdin io.Reader, stdout, stde
 			returnErr = &StageError{Stage: "terminal", Host: p.host.Alias, Err: fmt.Errorf("restore local terminal: %w", err)}
 		}
 	}()
+	stopWindowSize := p.forwardWindowSize(ctx, terminal)
+	defer stopWindowSize()
+	resetTerminalStyle(stdout)
+	defer resetTerminalStyle(stdout)
 
 	if p.stdoutPipe != nil {
 		stdoutWriter := stdout
@@ -213,6 +217,33 @@ func (p *PreparedSession) closeStdin() {
 			_ = p.stdin.Close()
 		}
 	})
+}
+
+// forwardWindowSize keeps the remote PTY in sync with the local terminal for
+// the lifetime of the shell. The initial handoff size takes precedence over
+// the size captured while preparing the session, and later local resizes are
+// sent as SSH window-change requests.
+func (p *PreparedSession) forwardWindowSize(ctx context.Context, terminal *terminalMode) func() {
+	if p.ptyRejected || p.session == nil || terminal == nil {
+		return func() {}
+	}
+	if _, _, ok := terminal.size(); !ok {
+		return func() {}
+	}
+	resizeCtx, cancel := context.WithCancel(ctx)
+	changes, stopEvents := terminalResizeEvents()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchTerminalSize(resizeCtx, terminal, changes, func(width, height int) error {
+			return p.session.WindowChange(height, width)
+		})
+	}()
+	return func() {
+		cancel()
+		stopEvents()
+		<-done
+	}
 }
 
 // handoverWriter buffers output until the terminal is ready, while optionally
