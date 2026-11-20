@@ -3,6 +3,8 @@ package sshconn
 import (
 	"bytes"
 	"io"
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -119,5 +121,37 @@ func TestResetTerminalStyleSkipsNonTerminal(t *testing.T) {
 	resetTerminalStyle(&output)
 	if output.Len() != 0 {
 		t.Fatalf("non-terminal received %q", output.String())
+	}
+}
+
+func TestTerminalModeSizeUsesStdinFD(t *testing.T) {
+	if os.Getenv("WHOP_TERMINAL_SIZE_CHILD") == "1" {
+		_, terminal, err := prepareTerminalInput(os.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = terminal.Restore() }()
+		width, height, ok := terminal.size()
+		if !ok || width != 97 || height != 31 {
+			t.Fatalf("terminal size = %dx%d, ok=%v; want 97x31", width, height, ok)
+		}
+		return
+	}
+
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer slave.Close()
+	if err := pty.Setsize(master, &pty.Winsize{Rows: 31, Cols: 97}); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^TestTerminalModeSizeUsesStdinFD$")
+	command.Env = append(os.Environ(), "WHOP_TERMINAL_SIZE_CHILD=1")
+	command.Stdin = slave
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("stdin fd size child failed: %v\n%s", err, output)
 	}
 }

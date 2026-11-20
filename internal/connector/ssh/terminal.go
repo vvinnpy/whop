@@ -107,15 +107,16 @@ func (m *terminalMode) size() (width, height int, ok bool) {
 		return 0, 0, false
 	}
 	m.mu.Lock()
+	active := m.active
 	fd := m.fd
 	m.mu.Unlock()
+	if !active {
+		return 0, 0, false
+	}
 	return terminalSize(fd)
 }
 
 func terminalSize(fd int) (width, height int, ok bool) {
-	if fd <= 0 {
-		return 0, 0, false
-	}
 	width, height, err := term.GetSize(fd)
 	if err != nil || width <= 0 || height <= 0 {
 		return 0, 0, false
